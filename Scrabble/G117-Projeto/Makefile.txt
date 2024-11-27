@@ -1,0 +1,22 @@
+# escolha compilador
+CC= gcc
+# flags de compilação
+CFLAGS= -Wall -std=c11 -O3 -g 
+# gerar variaveis 
+SRCS=$(wildcard *.c)
+OBJS=$(patsubst %.c, %.o, $(SRCS))
+HEADERS=$(wildcard *.h)
+# nome do executavel
+TARGET= palavras
+
+# opção 'make' geral
+all: $(TARGET)
+
+$(TARGET): $(OBJS) Makefile
+# apaga o executavel antigo, compila e gera o executavel e posteriormente apaga todos os .o files
+	rm -f $(TARGET)
+	$(CC) $(CFLAGS) $(OBJS) -o $@
+	rm -f *.o
+
+%.o: %.c $(HEADERS) Makefile
+	$(CC) -c $(CFLAGS) -o $@ $<
