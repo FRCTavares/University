@@ -1,0 +1,6 @@
+{
+    "files.associations": {
+        "remote-char.h": "c",
+        "types.h": "c"
+    }
+}

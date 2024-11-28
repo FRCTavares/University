@@ -1,0 +1,9 @@
+{
+    "makefile.launchConfigurations": [
+        {
+            "cwd": "/home/jnos/SYNC-Folder/CurrentWork/Docencia/23-24/2-PSIS/labs/Web - S2 - Lab4/code/example-REQ-REP/server",
+            "binaryPath": "/home/jnos/SYNC-Folder/CurrentWork/Docencia/23-24/2-PSIS/labs/Web - S2 - Lab4/code/example-REQ-REP/server/zmq-server",
+            "binaryArgs": []
+        }
+    ]
+}

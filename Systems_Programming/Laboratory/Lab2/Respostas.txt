@@ -1,0 +1,95 @@
+Respostas para o Laboratório 2 19/11
+
+######################################################################################################################################
+Exercise 1:
+
+1.1 - What does the mkfifo function does? (hint: look ate the /tmp directory)
+How mkfifo Works:
+1. Creates a file in the filesystem:
+    - The FIFO file will appear in the specified directory (e.g., /tmp).
+    - It looks like a regular file but is marked as a special file for IPC.
+2. Permissions:
+    - The FIFO file respects UNIX file permissions, controlling which processes can read or write to it.
+3. File Attributes:
+    - The file created is not for permanent storage. Instead, it facilitates communication between processes.
+
+1.2 - What happens if the user takes too long to launch on the fifo-read after
+launching the fifo-write?
+1. fifo-write Blocks:
+The fifo-write process will block (wait) when it tries to write to the FIFO because there is no reader.
+FIFOs require a reader to be connected for the writer to proceed. This ensures synchronization between the processes.
+
+2. Process Appears to Hang:
+The fifo-write process will appear to "hang" or stop at the point where it tries to write data into the FIFO. This is because 
+it’s waiting for a corresponding fifo-read process to open the pipe and start reading.
+
+3. No Data is Lost:
+The system does not discard any data written to the FIFO; it ensures the data is delivered once the reader connects.
+
+1.3 - What happens if the user takes too long to launch on the fifo-write after
+launching the fifo-read?
+The same.
+
+1.4 - What happen during the regular execution of the programs? (when the user type
+a string of a integer in the fifo-writer)
+
+The application that reads the fifo reads the input string and the integer and prints the string alongside the maximum size of the 
+string (100 bytes) it also prints the integer and its size (4 bytes);
+
+1.5 - What happens if the fifo-read is killed? (kill this program with the Ctl-C)?
+
+The write program remains hanged but if it tries to write in to the FIFO the program leaves.
+
+1.6 - What happens if the fifo-write is killed? (kill this program with the Ctl-C)?
+
+The read program imidiatly leaves printing "success"
+
+######################################################################################################################################
+
+Exercise 2:
+
+write 1:
+fifo just opened for writing
+write a string:Teste
+write a number:2
+write a string:Outro
+write a number:4
+write a string:EStragou?
+write a number:5
+write a string:
+
+read 1:
+fifo just opened
+Str 1  (4 bytes)
+Int 2 4 (4 bytes)
+Str 3 EStragou?
+ (100 bytes)
+Int 4 5 (4 bytes)
+
+read 2:
+fifo just opened
+Str 1 Teste
+ (100 bytes)
+Int 2672 1920234831 (100 bytes)
+read : Bad file descriptor
+
+When multiple fifo-read instances are running, only one of them receives and processes the data written by fifo-write 
+because FIFOs operate on a single-writer, single-reader basis. The kernel decides which reader gets the data, usually 
+the one ready to read first, while the other readers remain idle and do not receive anything.
+
+######################################################################################################################################
+
+Exercise 3: Done
+
+compile shared library: gcc -shared -fPIC -o libfuncs.so libfuncs.c
+
+
+######################################################################################################################################
+
+Exercise 4: Done
+
+######################################################################################################################################
+
+Exercise 5: Done
+
+
