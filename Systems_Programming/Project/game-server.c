@@ -6,10 +6,14 @@
 #include <string.h>
 #include "zhelpers.h"
 #include <time.h>
+#include <stdio.h>
 
 #define WINDOW_SIZE 22
-#define MAX_PLAYERS 8
-#define ALIEN_COUNT (16 * 16 / 3)
+#define MAX_PLAYERS 10
+#define ALIEN_COUNT 16 * 16 / 3
+
+// Add a new message type for game end
+#define MSG_TYPE_GAME_END 4
 
 typedef struct ch_info_t
 {
@@ -80,13 +84,23 @@ int find_ch_info(ch_info_t char_data[], int n_char, int ch)
     return -1;
 }
 
-void move_aliens(ch_info_t aliens[], int alien_count)
+void move_aliens(WINDOW *win, ch_info_t aliens[], int *alien_count, void *publisher)
 {
-    for (int i = 0; i < alien_count; i++)
+    screen_update_t update;
+    for (int i = 0; i < *alien_count; i++)
     {
+        // Erase old position
+        wmove(win, aliens[i].pos_x, aliens[i].pos_y);
+        waddch(win, ' ');
+        wrefresh(win);
+
+        update.pos_x = aliens[i].pos_x;
+        update.pos_y = aliens[i].pos_y;
+        update.ch = ' ';
+        zmq_send(publisher, &update, sizeof(screen_update_t), 0);
+
+        // Move alien to new position
         direction_t direction = rand() % 4;
-        // Code that moves the aliens
-        // The aliens can't move outside the central 16x16 area
         switch (direction)
         {
         case UP:
@@ -115,7 +129,7 @@ void move_aliens(ch_info_t aliens[], int alien_count)
     }
 }
 
-/*void fire_laser(WINDOW *win, ch_info_t *astronaut, ch_info_t aliens[], int alien_count, ch_info_t char_data[], int n_chars, void *publisher)
+void fire_laser(WINDOW *win, ch_info_t *astronaut, ch_info_t aliens[], int *alien_count, ch_info_t char_data[], int n_chars, void *publisher)
 {
     screen_update_t update;
     int x = astronaut->pos_x;
@@ -135,13 +149,18 @@ void move_aliens(ch_info_t aliens[], int alien_count)
             zmq_send(publisher, &update, sizeof(screen_update_t), 0);
 
             // Check for aliens
-            for (int j = 0; j < alien_count; j++)
+            for (int j = 0; j < *alien_count; j++)
             {
                 if (aliens[j].pos_x == i && aliens[j].pos_y == y)
                 {
-                    aliens[j].pos_x = rand() % 18 + 1;
-                    aliens[j].pos_y = rand() % 18 + 1;
+                    // Remove alien from the list
+                    for (int k = j; k < *alien_count - 1; k++)
+                    {
+                        aliens[k] = aliens[k + 1];
+                    }
+                    (*alien_count)--;
                     astronaut->score++;
+                    break;
                 }
             }
 
@@ -169,13 +188,18 @@ void move_aliens(ch_info_t aliens[], int alien_count)
             zmq_send(publisher, &update, sizeof(screen_update_t), 0);
 
             // Check for aliens
-            for (int j = 0; j < alien_count; j++)
+            for (int j = 0; j < *alien_count; j++)
             {
                 if (aliens[j].pos_x == x && aliens[j].pos_y == i)
                 {
-                    aliens[j].pos_x = rand() % 18 + 1;
-                    aliens[j].pos_y = rand() % 18 + 1;
+                    // Remove alien from the list
+                    for (int k = j; k < *alien_count - 1; k++)
+                    {
+                        aliens[k] = aliens[k + 1];
+                    }
+                    (*alien_count)--;
                     astronaut->score++;
+                    break;
                 }
             }
 
@@ -221,7 +245,43 @@ void move_aliens(ch_info_t aliens[], int alien_count)
             zmq_send(publisher, &update, sizeof(screen_update_t), 0);
         }
     }
-}*/
+}
+
+void update_scoreboard(WINDOW *score_win, ch_info_t char_data[], int n_chars, int alien_count)
+{
+    werase(score_win);
+    box(score_win, 0, 0);
+    mvwprintw(score_win, 1, 1, "Scoreboard");
+    for (int i = 0; i < n_chars; i++)
+    {
+        mvwprintw(score_win, i + 2, 1, "Player %c: %d", char_data[i].ch, char_data[i].score);
+    }
+    mvwprintw(score_win, n_chars + 3, 1, "Aliens: %d", alien_count);
+    wrefresh(score_win);
+}
+
+void remove_astronaut(WINDOW *win, ch_info_t char_data[], int *n_chars, int ch_pos, void *publisher)
+{
+    screen_update_t update;
+
+    // Erase character from old position
+    wmove(win, char_data[ch_pos].pos_x, char_data[ch_pos].pos_y);
+    waddch(win, ' ');
+    wrefresh(win);
+
+    // Send update to clear the old position
+    update.pos_x = char_data[ch_pos].pos_x;
+    update.pos_y = char_data[ch_pos].pos_y;
+    update.ch = ' ';
+    zmq_send(publisher, &update, sizeof(screen_update_t), 0);
+
+    // Remove astronaut from the array
+    for (int i = ch_pos; i < *n_chars - 1; i++)
+    {
+        char_data[i] = char_data[i + 1];
+    }
+    (*n_chars)--;
+}
 
 int main()
 {
@@ -230,6 +290,8 @@ int main()
     ch_info_t char_data[MAX_PLAYERS];
     ch_info_t aliens[ALIEN_COUNT];
     int n_chars = 0;
+    int alien_count = ALIEN_COUNT;
+    int score = 0;
 
     // Initialize aliens
     for (int i = 0; i < ALIEN_COUNT; i++)
@@ -256,6 +318,10 @@ int main()
         return -1;
     }
 
+    // Add this after initializing the responder socket
+    void *client_publisher = zmq_socket(context, ZMQ_PUB);
+    zmq_bind(client_publisher, "tcp://*:5557");
+
     initscr();
     cbreak();
     keypad(stdscr, TRUE);
@@ -264,6 +330,10 @@ int main()
     WINDOW *my_win = newwin(WINDOW_SIZE, WINDOW_SIZE, 0, 0);
     box(my_win, 0, 0);
     wrefresh(my_win);
+
+    WINDOW *score_win = newwin(WINDOW_SIZE, 20, 0, WINDOW_SIZE + 1);
+    box(score_win, 0, 0);
+    wrefresh(score_win);
 
     int ch;
     int pos_x;
@@ -381,29 +451,16 @@ int main()
                 update.ch = ' ';
                 zmq_send(publisher, &update, sizeof(screen_update_t), 0);
 
-                // Erase old positions of all aliens
-                for (int i = 0; i < ALIEN_COUNT; i++)
-                {
-                    wmove(my_win, aliens[i].pos_x, aliens[i].pos_y);
-                    waddch(my_win, ' ');
-                    wrefresh(my_win);
-
-                    update.pos_x = aliens[i].pos_x;
-                    update.pos_y = aliens[i].pos_y;
-                    update.ch = ' ';
-                    zmq_send(publisher, &update, sizeof(screen_update_t), 0);
-                }
-
                 direction = m.direction;
                 new_position(&pos_x, &pos_y, direction, char_data[ch_pos].dir);
                 char_data[ch_pos].pos_x = pos_x;
                 char_data[ch_pos].pos_y = pos_y;
 
                 // Move aliens randomly
-                move_aliens(aliens, ALIEN_COUNT);
+                move_aliens(my_win, aliens, &alien_count, publisher);
             }
 
-            rc = zmq_send(responder, NULL, 0, 0);
+            rc = zmq_send(responder, &char_data[ch_pos].score, sizeof(int), 0);
             if (rc == -1)
             {
                 perror("Server zmq_send failed");
@@ -411,32 +468,41 @@ int main()
             }
         }
         else if (m.msg_type == 2) // Astronaut_zap
-        {                         /*
-                                     int ch_pos = find_ch_info(char_data, n_chars, m.ch);
-                                     if (ch_pos != -1 && char_data[ch_pos].stunned == 0)
-                                     {
-                                         time_t current_time = time(NULL);
-                                         if (difftime(current_time, char_data[ch_pos].last_fire_time) >= 3)
-                                         {
-                                             fire_laser(my_win, &char_data[ch_pos], aliens, ALIEN_COUNT, char_data, n_chars, publisher);
-                                             char_data[ch_pos].last_fire_time = current_time;
-                                         }
-                                     }
-                        
-                                     rc = zmq_send(responder, NULL, 0, 0);
-                                     if (rc == -1)
-                                     {
-                                         perror("Server zmq_send failed");
-                                         return -1;
-                                     }*/
+        {
+            int ch_pos = find_ch_info(char_data, n_chars, m.ch);
+            if (ch_pos != -1 && char_data[ch_pos].stunned == 0)
+            {
+                time_t current_time = time(NULL);
+                if (difftime(current_time, char_data[ch_pos].last_fire_time) >= 3)
+                {
+                    fire_laser(my_win, &char_data[ch_pos], aliens, &alien_count, char_data, n_chars, publisher);
+                    char_data[ch_pos].last_fire_time = current_time;
+                }
+            }
+
+            rc = zmq_send(responder, &char_data[ch_pos].score, sizeof(int), 0);
+            if (rc == -1)
+            {
+                perror("Server zmq_send failed");
+                return -1;
+            }
         }
         else if (m.msg_type == 3)
         { // Astronaut_disconnect
-          // Implement disconnect functionality
+            int ch_pos = find_ch_info(char_data, n_chars, m.ch);
+            if (ch_pos != -1)
+            {
+                remove_astronaut(my_win, char_data, &n_chars, ch_pos, publisher);
+            }
+            // Send a response to the client to confirm disconnection
+            int response = 0;
+            rc = zmq_send(responder, &response, sizeof(int), 0);
+            if (rc == -1)
+            {
+                perror("Server zmq_send failed");
+                return -1;
+            }
         }
-
-        // Move aliens randomly
-        move_aliens(aliens, ALIEN_COUNT);
 
         // Update display
         for (int i = 0; i < n_chars; i++)
@@ -449,10 +515,13 @@ int main()
             waddch(my_win, char_data[i].ch | A_BOLD);
         }
 
-        for (int i = 0; i < ALIEN_COUNT; i++)
+        for (int i = 0; i < alien_count; i++)
         {
-            wmove(my_win, aliens[i].pos_x, aliens[i].pos_y);
-            waddch(my_win, '*' | A_BOLD);
+            if (aliens[i].pos_x != -1 && aliens[i].pos_y != -1)
+            {
+                wmove(my_win, aliens[i].pos_x, aliens[i].pos_y);
+                waddch(my_win, '*' | A_BOLD);
+            }
         }
 
         wrefresh(my_win);
@@ -466,12 +535,41 @@ int main()
             zmq_send(publisher, &update, sizeof(screen_update_t), 0);
         }
 
-        for (int i = 0; i < ALIEN_COUNT; i++)
+        for (int i = 0; i < alien_count; i++)
         {
-            update.pos_x = aliens[i].pos_x;
-            update.pos_y = aliens[i].pos_y;
-            update.ch = '*';
-            zmq_send(publisher, &update, sizeof(screen_update_t), 0);
+            if (aliens[i].pos_x != -1 && aliens[i].pos_y != -1)
+            {
+                update.pos_x = aliens[i].pos_x;
+                update.pos_y = aliens[i].pos_y;
+                update.ch = '*';
+                zmq_send(publisher, &update, sizeof(screen_update_t), 0);
+            }
+        }
+
+        update_scoreboard(score_win, char_data, n_chars, alien_count);
+
+        // Check if all aliens are killed
+        if (alien_count == 0)
+        {
+            mvprintw(WINDOW_SIZE / 2, WINDOW_SIZE / 2 - 7, "All aliens killed");
+            refresh();
+            sleep(2); // Wait for 2 seconds to display the message
+
+            // Notify all clients about the game end
+            for (int i = 0; i < n_chars; i++)
+            {
+                remote_char_t end_msg;
+                end_msg.msg_type = MSG_TYPE_GAME_END;
+                end_msg.ch = char_data[i].ch;
+                zmq_send(responder, &end_msg, sizeof(remote_char_t), 0);
+            }
+
+            // After all aliens are killed
+            remote_char_t end_msg;
+            end_msg.msg_type = MSG_TYPE_GAME_END;
+            zmq_send(client_publisher, &end_msg, sizeof(remote_char_t), 0);
+
+            break;
         }
 
         usleep(10000); // Sleep for 10ms
