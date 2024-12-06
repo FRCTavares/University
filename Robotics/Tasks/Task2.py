@@ -2,7 +2,6 @@ import numpy as np
 import matplotlib.pyplot as plt
 from scipy.signal import medfilt, savgol_filter
 
-
 # Helper Functions
 def load_data(filename):
     """
@@ -72,7 +71,7 @@ def plot_combined_data(time, original_a, processed_a, original_w, processed_w, t
         plt.plot(time, processed_a[:, i], color=colors[i], label=f'Processed {axis_labels[i]}')
     plt.title(f"{title_prefix} - Accelerometer Data")
     plt.xlabel('Time (s)')
-    plt.ylabel('Acceleration')
+    plt.ylabel('Acceleration (mili-g)')
     plt.legend()
     plt.grid(True)
 
@@ -83,7 +82,7 @@ def plot_combined_data(time, original_a, processed_a, original_w, processed_w, t
         plt.plot(time, processed_w[:, i], color=colors[i], label=f'Processed {axis_labels[i]}')
     plt.title(f"{title_prefix} - Gyroscope Data")
     plt.xlabel('Time (s)')
-    plt.ylabel('Angular Velocity')
+    plt.ylabel('Angular Velocity (degrees/s)')
     plt.legend()
     plt.grid(True)
 

@@ -250,7 +250,6 @@ def visualize_rotation(rotation_matrix_func, num_frames):
     ax.set_xlabel('X')
     ax.set_ylabel('Y')
     ax.set_zlabel('Z')
-    ax.set_title("TItle mudar")
 
     # Função de atualização para animação
     def update(frame):
