@@ -283,7 +283,7 @@ def plot_euler_angles(time_sets, euler_angles, labels, colors, title_prefix):
             plt.plot(time, angles[idx], label=f'{angle_name} - {label}', color=color)
         plt.title(f'{angle_name} - {title_prefix}')
         plt.xlabel('Time (s)')
-        plt.ylabel('Angle (rad)')
+        plt.ylabel('Angle (degrees)')
         plt.legend()
 
     plt.tight_layout()
@@ -308,7 +308,7 @@ def plot_acceleration_comparison(time, a_data_original, a_data_without_g):
         plt.plot(time, a_data_without_g[:, i], label='Denoised Without Gravity', color='red')
         plt.title(f'Acceleration Comparison ({axes[i]}-Axis)')
         plt.xlabel('Time (s)')
-        plt.ylabel('Acceleration (mili-g)')
+        plt.ylabel('Acceleration (m/s²)')
         plt.legend()
 
     plt.tight_layout()
