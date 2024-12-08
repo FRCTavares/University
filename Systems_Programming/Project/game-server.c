@@ -1,29 +1,16 @@
 #include <ncurses.h>
-#include "remote-char.h"
+#include <time.h>
+#include <stdio.h>
 #include <unistd.h>
 #include <stdlib.h>
 #include <zmq.h>
 #include <string.h>
 #include "zhelpers.h"
-#include <time.h>
-#include <stdio.h>
+#include "protocol.h"
 
 #define WINDOW_SIZE 22
 #define MAX_PLAYERS 10
 #define ALIEN_COUNT 16 * 16 / 3
-
-// Add a new message type for game end
-#define MSG_TYPE_GAME_END 4
-
-typedef struct ch_info_t
-{
-    int ch;
-    int pos_x, pos_y;
-    int dir; // Whether character moves vertically(1) or horizontally(0)
-    int score;
-    time_t last_fire_time;
-    int stunned;
-} ch_info_t;
 
 typedef struct screen_update_t
 {
@@ -72,16 +59,16 @@ void new_position(int *x, int *y, direction_t direction, int dir)
     }
 }
 
-int find_ch_info(ch_info_t char_data[], int n_char, int ch)
+int find_ch_info(ch_info_t char_data[], int n_chars, int ch)
 {
-    for (int i = 0; i < n_char; i++)
+    for (int i = 0; i < n_chars; i++)
     {
-        if (ch == char_data[i].ch)
+        if (char_data[i].ch == ch)
         {
             return i;
         }
     }
-    return -1;
+    return -1; // Character not found
 }
 
 void move_aliens(WINDOW *win, ch_info_t aliens[], int *alien_count, void *publisher)
@@ -249,38 +236,46 @@ void fire_laser(WINDOW *win, ch_info_t *astronaut, ch_info_t aliens[], int *alie
 
 void update_scoreboard(WINDOW *score_win, ch_info_t char_data[], int n_chars, int alien_count)
 {
-    werase(score_win);
-    box(score_win, 0, 0);
-    mvwprintw(score_win, 1, 1, "Scoreboard");
+    werase(score_win); // Clear the scoreboard window
+
+    // Display header
+    mvwprintw(score_win, 1, 1, "Scoreboard:");
+    mvwprintw(score_win, 2, 1, "Aliens Remaining: %d", alien_count);
+
+    // Display each player's score
     for (int i = 0; i < n_chars; i++)
     {
-        mvwprintw(score_win, i + 2, 1, "Player %c: %d", char_data[i].ch, char_data[i].score);
+        mvwprintw(score_win, 4 + i, 1, "Player %c: %d", char_data[i].ch, char_data[i].score);
     }
-    mvwprintw(score_win, n_chars + 3, 1, "Aliens: %d", alien_count);
-    wrefresh(score_win);
+
+    box(score_win, 0, 0); // Draw the border
+    wrefresh(score_win);  // Refresh to show changes
 }
 
-void remove_astronaut(WINDOW *win, ch_info_t char_data[], int *n_chars, int ch_pos, void *publisher)
+void remove_astronaut(WINDOW *win, ch_info_t char_data[], int *n_chars, int ch_pos, void *publisher, WINDOW *score_win, int alien_count)
 {
     screen_update_t update;
 
-    // Erase character from old position
+    // Erase astronaut from the game window
     wmove(win, char_data[ch_pos].pos_x, char_data[ch_pos].pos_y);
     waddch(win, ' ');
     wrefresh(win);
 
-    // Send update to clear the old position
+    // Send update to clients to clear the character
     update.pos_x = char_data[ch_pos].pos_x;
     update.pos_y = char_data[ch_pos].pos_y;
     update.ch = ' ';
     zmq_send(publisher, &update, sizeof(screen_update_t), 0);
 
-    // Remove astronaut from the array
-    for (int i = ch_pos; i < *n_chars - 1; i++)
+    // Remove astronaut from the char_data array
+    for (int i = ch_pos; i < (*n_chars) - 1; i++)
     {
         char_data[i] = char_data[i + 1];
     }
     (*n_chars)--;
+
+    // Update the scoreboard to remove the player's score
+    update_scoreboard(score_win, char_data, *n_chars, alien_count);
 }
 
 int main()
@@ -351,8 +346,8 @@ int main()
             return -1;
         }
 
-        if (m.msg_type == 0)
-        { // Astronaut_connect
+        if (m.msg_type == MSG_TYPE_CONNECT)
+        {
             if (n_chars >= MAX_PLAYERS)
             {
                 // Send a failure response if max players reached
@@ -431,8 +426,9 @@ int main()
 
             n_chars++;
         }
-        else if (m.msg_type == 1)
-        { // Astronaut_movement
+
+        else if (m.msg_type == MSG_TYPE_MOVE)
+        {
             int ch_pos = find_ch_info(char_data, n_chars, m.ch);
             if (ch_pos != -1 && char_data[ch_pos].stunned == 0)
             {
@@ -467,7 +463,7 @@ int main()
                 return -1;
             }
         }
-        else if (m.msg_type == 2) // Astronaut_zap
+        else if (m.msg_type == MSG_TYPE_ZAP)
         {
             int ch_pos = find_ch_info(char_data, n_chars, m.ch);
             if (ch_pos != -1 && char_data[ch_pos].stunned == 0)
@@ -487,12 +483,12 @@ int main()
                 return -1;
             }
         }
-        else if (m.msg_type == 3)
-        { // Astronaut_disconnect
+        else if (m.msg_type == MSG_TYPE_DISCONNECT)
+        {
             int ch_pos = find_ch_info(char_data, n_chars, m.ch);
             if (ch_pos != -1)
             {
-                remove_astronaut(my_win, char_data, &n_chars, ch_pos, publisher);
+                remove_astronaut(my_win, char_data, &n_chars, ch_pos, publisher, score_win, alien_count);
             }
             // Send a response to the client to confirm disconnection
             int response = 0;
@@ -502,6 +498,15 @@ int main()
                 perror("Server zmq_send failed");
                 return -1;
             }
+        }
+        if (m.msg_type == MSG_TYPE_DISCONNECT)
+        {
+            int ch_pos = find_ch_info(char_data, n_chars, m.ch);
+            if (ch_pos != -1)
+            {
+                remove_astronaut(my_win, char_data, &n_chars, ch_pos, publisher, score_win, alien_count);
+            }
+            continue; // Skip to the next iteration since this client has disconnected
         }
 
         // Update display
