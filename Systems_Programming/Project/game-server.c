@@ -313,10 +313,6 @@ int main()
         return -1;
     }
 
-    // Add this after initializing the responder socket
-    void *client_publisher = zmq_socket(context, ZMQ_PUB);
-    zmq_bind(client_publisher, "tcp://*:5557");
-
     initscr();
     cbreak();
     keypad(stdscr, TRUE);
@@ -426,7 +422,42 @@ int main()
 
             n_chars++;
         }
+        else if (m.msg_type == MSG_TYPE_ZAP)
+        {
+            int ch_pos = find_ch_info(char_data, n_chars, m.ch);
+            if (ch_pos != -1 && char_data[ch_pos].stunned == 0)
+            {
+                time_t current_time = time(NULL);
+                if (difftime(current_time, char_data[ch_pos].last_fire_time) >= 3)
+                {
+                    fire_laser(my_win, &char_data[ch_pos], aliens, &alien_count, char_data, n_chars, publisher);
+                    char_data[ch_pos].last_fire_time = current_time;
+                }
+            }
 
+            rc = zmq_send(responder, &char_data[ch_pos].score, sizeof(int), 0);
+            if (rc == -1)
+            {
+                perror("Server zmq_send failed");
+                return -1;
+            }
+        }
+        else if (m.msg_type == MSG_TYPE_DISCONNECT)
+        {
+            int ch_pos = find_ch_info(char_data, n_chars, m.ch);
+            if (ch_pos != -1)
+            {
+                remove_astronaut(my_win, char_data, &n_chars, ch_pos, publisher, score_win, alien_count);
+            }
+            // Send a response to the client to confirm disconnection
+            int response = -2;
+            rc = zmq_send(responder, &response, sizeof(int), 0);
+            if (rc == -1)
+            {
+                perror("Server zmq_send failed");
+                return -1;
+            }
+        }
         else if (m.msg_type == MSG_TYPE_MOVE)
         {
             int ch_pos = find_ch_info(char_data, n_chars, m.ch);
@@ -462,51 +493,6 @@ int main()
                 perror("Server zmq_send failed");
                 return -1;
             }
-        }
-        else if (m.msg_type == MSG_TYPE_ZAP)
-        {
-            int ch_pos = find_ch_info(char_data, n_chars, m.ch);
-            if (ch_pos != -1 && char_data[ch_pos].stunned == 0)
-            {
-                time_t current_time = time(NULL);
-                if (difftime(current_time, char_data[ch_pos].last_fire_time) >= 3)
-                {
-                    fire_laser(my_win, &char_data[ch_pos], aliens, &alien_count, char_data, n_chars, publisher);
-                    char_data[ch_pos].last_fire_time = current_time;
-                }
-            }
-
-            rc = zmq_send(responder, &char_data[ch_pos].score, sizeof(int), 0);
-            if (rc == -1)
-            {
-                perror("Server zmq_send failed");
-                return -1;
-            }
-        }
-        else if (m.msg_type == MSG_TYPE_DISCONNECT)
-        {
-            int ch_pos = find_ch_info(char_data, n_chars, m.ch);
-            if (ch_pos != -1)
-            {
-                remove_astronaut(my_win, char_data, &n_chars, ch_pos, publisher, score_win, alien_count);
-            }
-            // Send a response to the client to confirm disconnection
-            int response = 0;
-            rc = zmq_send(responder, &response, sizeof(int), 0);
-            if (rc == -1)
-            {
-                perror("Server zmq_send failed");
-                return -1;
-            }
-        }
-        if (m.msg_type == MSG_TYPE_DISCONNECT)
-        {
-            int ch_pos = find_ch_info(char_data, n_chars, m.ch);
-            if (ch_pos != -1)
-            {
-                remove_astronaut(my_win, char_data, &n_chars, ch_pos, publisher, score_win, alien_count);
-            }
-            continue; // Skip to the next iteration since this client has disconnected
         }
 
         // Update display
@@ -568,12 +554,6 @@ int main()
                 end_msg.ch = char_data[i].ch;
                 zmq_send(responder, &end_msg, sizeof(remote_char_t), 0);
             }
-
-            // After all aliens are killed
-            remote_char_t end_msg;
-            end_msg.msg_type = MSG_TYPE_GAME_END;
-            zmq_send(client_publisher, &end_msg, sizeof(remote_char_t), 0);
-
             break;
         }
 

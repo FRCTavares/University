@@ -11,7 +11,6 @@ void initialize_ncurses();
 void cleanup(void *context, void *requester, void *subscriber);
 int handle_input(remote_char_t *message);
 int process_server_messages(void *requester, remote_char_t *message);
-int check_game_end(void *subscriber, ch_info_t *info);
 
 int main()
 {
@@ -62,11 +61,6 @@ int main()
                 cleanup(context, requester, subscriber);
                 return -1;
             }
-            running = 0;
-        }
-
-        if (check_game_end(subscriber, &info))
-        {
             running = 0;
         }
 
@@ -164,37 +158,19 @@ int process_server_messages(void *requester, remote_char_t *message)
         return -1;
     }
 
-    int score;
-    if (zmq_recv(requester, &score, sizeof(int), 0) == -1)
+    int reply;
+    if (zmq_recv(requester, &reply, sizeof(int), 0) == -1)
     {
         perror("Client zmq_recv failed");
         return -1;
     }
-    mvprintw(1, 0, "Your score: %d", score);
-    return 0;
-}
 
-int check_game_end(void *subscriber, ch_info_t *info)
-{
-    zmq_pollitem_t items[] = {
-        {subscriber, 0, ZMQ_POLLIN, 0}};
-    zmq_poll(items, 1, 0);
-
-    if (items[0].revents & ZMQ_POLLIN)
+    if (reply == -2) // Disconnection confirmed
     {
-        remote_char_t end_msg;
-        if (zmq_recv(subscriber, &end_msg, sizeof(remote_char_t), 0) == -1)
-        {
-            perror("Client zmq_recv failed");
-            return 1;
-        }
-        if (end_msg.msg_type == MSG_TYPE_GAME_END)
-        {
-            mvprintw(3, 0, "The game ended, your final score is: %d", info->score);
-            refresh();
-            sleep(2);
-            return 1;
-        }
+        mvprintw(3, 0, "You have been disconnected from the server");
+        return -1;
     }
+    int score = reply;
+    mvprintw(1, 0, "Your score: %d", score);
     return 0;
 }
