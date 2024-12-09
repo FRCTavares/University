@@ -200,7 +200,7 @@ void fire_laser(WINDOW *win, ch_info_t *astronaut, ch_info_t aliens[], int *alie
             {
                 if (char_data[j].pos_x == i && char_data[j].pos_y == y && char_data[j].ch != astronaut->ch)
                 {
-                    char_data[j].stunned = 10;
+                    char_data[j].stunned = time(NULL);
                 }
             }
         }
@@ -240,7 +240,7 @@ void fire_laser(WINDOW *win, ch_info_t *astronaut, ch_info_t aliens[], int *alie
             {
                 if (char_data[j].pos_x == x && char_data[j].pos_y == i && char_data[j].ch != astronaut->ch)
                 {
-                    char_data[j].stunned = 10;
+                    char_data[j].stunned = time(NULL);
                 }
             }
         }
@@ -475,10 +475,12 @@ int main()
         }
         else if (m.msg_type == MSG_TYPE_ZAP)
         {
+
             int ch_pos = find_ch_info(char_data, n_chars, m.ch);
-            if (ch_pos != -1 && char_data[ch_pos].stunned == 0)
+            time_t current_time = time(NULL);
+            if (ch_pos != -1 && difftime(current_time, char_data[ch_pos].stunned) >= 10)
             {
-                time_t current_time = time(NULL);
+                current_time = time(NULL);
                 if (difftime(current_time, char_data[ch_pos].last_fire_time) >= 3)
                 {
                     fire_laser(my_win, &char_data[ch_pos], aliens, &alien_count, char_data, n_chars, publisher, alien_grid);
@@ -512,7 +514,8 @@ int main()
         else if (m.msg_type == MSG_TYPE_MOVE)
         {
             int ch_pos = find_ch_info(char_data, n_chars, m.ch);
-            if (ch_pos != -1 && char_data[ch_pos].stunned == 0)
+            time_t current_time = time(NULL);
+            if (ch_pos != -1 && difftime(current_time, char_data[ch_pos].stunned) >= 10)
             {
                 pos_x = char_data[ch_pos].pos_x;
                 pos_y = char_data[ch_pos].pos_y;
@@ -549,10 +552,10 @@ int main()
         // Update display
         for (int i = 0; i < n_chars; i++)
         {
-            if (char_data[i].stunned > 0)
+            /*if (char_data[i].stunned > 0)
             {
                 char_data[i].stunned--;
-            }
+            }*/
             wmove(my_win, char_data[i].pos_x, char_data[i].pos_y);
             waddch(my_win, char_data[i].ch | A_BOLD);
         }

@@ -35,7 +35,7 @@ typedef struct ch_info_t
     int dir; // Whether character moves vertically(1) or horizontally(0)
     int score;
     time_t last_fire_time;
-    int stunned;
+    time_t stunned;
 } ch_info_t;
 
 typedef struct
