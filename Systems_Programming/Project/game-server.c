@@ -158,7 +158,7 @@ void move_aliens(WINDOW *win, ch_info_t aliens[], int *alien_count, void *publis
     }
 }
 
-void fire_laser(WINDOW *win, ch_info_t *astronaut, ch_info_t aliens[], int *alien_count, ch_info_t char_data[], int n_chars, void *publisher)
+void fire_laser(WINDOW *win, ch_info_t *astronaut, ch_info_t aliens[], int *alien_count, ch_info_t char_data[], int n_chars, void *publisher, int grid[16][16])
 {
     screen_update_t update;
     int x = astronaut->pos_x;
@@ -182,12 +182,14 @@ void fire_laser(WINDOW *win, ch_info_t *astronaut, ch_info_t aliens[], int *alie
             {
                 if (aliens[j].pos_x == i && aliens[j].pos_y == y)
                 {
+                    grid[aliens[j].pos_x - 3][aliens[j].pos_y - 3] =0 ;
                     // Remove alien from the list
                     for (int k = j; k < *alien_count - 1; k++)
                     {
                         aliens[k] = aliens[k + 1];
                     }
                     (*alien_count)--;
+
                     astronaut->score++;
                     break;
                 }
@@ -221,6 +223,7 @@ void fire_laser(WINDOW *win, ch_info_t *astronaut, ch_info_t aliens[], int *alie
             {
                 if (aliens[j].pos_x == x && aliens[j].pos_y == i)
                 {
+                    grid[aliens[j].pos_x - 3][aliens[j].pos_y - 3] =0 ;
                     // Remove alien from the list
                     for (int k = j; k < *alien_count - 1; k++)
                     {
@@ -478,7 +481,7 @@ int main()
                 time_t current_time = time(NULL);
                 if (difftime(current_time, char_data[ch_pos].last_fire_time) >= 3)
                 {
-                    fire_laser(my_win, &char_data[ch_pos], aliens, &alien_count, char_data, n_chars, publisher);
+                    fire_laser(my_win, &char_data[ch_pos], aliens, &alien_count, char_data, n_chars, publisher, alien_grid);
                     char_data[ch_pos].last_fire_time = current_time;
                 }
             }
