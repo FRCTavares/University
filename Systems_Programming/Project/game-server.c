@@ -1,10 +1,3 @@
-#include <ncurses.h>
-#include <time.h>
-#include <stdio.h>
-#include <unistd.h>
-#include <stdlib.h>
-#include <zmq.h>
-#include <string.h>
 #include "zhelpers.h"
 #include "protocol.h"
 
@@ -280,8 +273,9 @@ void remove_astronaut(WINDOW *win, ch_info_t char_data[], int *n_chars, int ch_p
 
 int main()
 {
-    srand(time(NULL));
+    srand(time(NULL)); // Seed the random number generator
 
+    // Initialize character & alien data
     ch_info_t char_data[MAX_PLAYERS];
     ch_info_t aliens[ALIEN_COUNT];
     int n_chars = 0;
@@ -296,7 +290,10 @@ int main()
         aliens[i].pos_y = rand() % 16 + 3;
     }
 
+    // Initialize ZeroMQ
     void *context = zmq_ctx_new();
+
+    // Socket to talk to clients
     void *responder = zmq_socket(context, ZMQ_REP);
     int rc = zmq_bind(responder, "tcp://0.0.0.0:5555");
     if (rc != 0)
@@ -305,6 +302,7 @@ int main()
         return -1;
     }
 
+    // Socket to publish updates to the display
     void *publisher = zmq_socket(context, ZMQ_PUB);
     rc = zmq_bind(publisher, "tcp://0.0.0.0:5556");
     if (rc != 0)
@@ -313,11 +311,13 @@ int main()
         return -1;
     }
 
+    // Initialize ncurses
     initscr();
     cbreak();
     keypad(stdscr, TRUE);
     noecho();
 
+    // Initialize game window and score board window
     WINDOW *my_win = newwin(WINDOW_SIZE, WINDOW_SIZE, 0, 0);
     box(my_win, 0, 0);
     wrefresh(my_win);
@@ -326,6 +326,9 @@ int main()
     box(score_win, 0, 0);
     wrefresh(score_win);
 
+    mvprintw(WINDOW_SIZE / 2, WINDOW_SIZE / 2 - 7, "Welcome to the game server");
+
+    // Display instructions
     int ch;
     int pos_x;
     int pos_y;
