@@ -2,7 +2,14 @@
 #ifndef PROTOCOL_H
 #define PROTOCOL_H
 
+#include <ncurses.h>
 #include <time.h>
+#include <stdio.h>
+#include <unistd.h>
+#include <stdlib.h>
+#include <zmq.h>
+#include <string.h>
+#include <sys/types.h>
 
 typedef enum
 {

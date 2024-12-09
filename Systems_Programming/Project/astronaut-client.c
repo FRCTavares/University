@@ -1,9 +1,3 @@
-#include <ncurses.h>
-#include <unistd.h>
-#include <stdlib.h>
-#include <ctype.h>
-#include <zmq.h>
-#include <stdio.h>
 #include "protocol.h"
 
 void initialize_zmq(void **context, void **requester, void **subscriber);
