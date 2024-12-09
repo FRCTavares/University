@@ -2,9 +2,8 @@
 
 ## Missing Items
 
-- [ ] The aliens cannot move on top of one another. They currently are.
+
 - [ ] The outer-space-display.c needs to be updated, because i (francisco) have made some changes in the protocol so it may not work properly now.
-- [ ]
 
 ### Section for Francisco
 
@@ -23,6 +22,7 @@
 - [X] The servers spawn the aliens at the beginning of the game exatcly 1/3 of 16*16, and only inside theire designated area.
 - [X] The scoreboard window is present, and it adds a player everytime it joins.
 - [X] The zap function is properly implemented it is activated when ' ' is pressed by the client and the server keeps a timer to only allow that message again in 3 seconds. All the aliens in the path of the zap are destroyed and 1 point is awarded for each alien to the client. If there is any astronaut on the path of the laser the astronaut is stunned for 10 seconds (I THINK)
+- [x] Aliens no longer overlap.
 
 
 

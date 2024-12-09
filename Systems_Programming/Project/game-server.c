@@ -64,11 +64,43 @@ int find_ch_info(ch_info_t char_data[], int n_chars, int ch)
     return -1; // Character not found
 }
 
-void move_aliens(WINDOW *win, ch_info_t aliens[], int *alien_count, void *publisher)
+
+//Initialize the alien postiotions
+void initialize_aliens(ch_info_t aliens[], int grid[16][16], int alien_count){
+
+    int x, y;
+
+    for(int i = 0; i<16; i++){
+        for(int j =0; j<16; j++){
+            grid[i][j] = 0;
+        }
+    }
+
+    for(int i = 0; i< alien_count; i++){
+        aliens[i].ch = '*';
+
+        while(1){
+            x = rand() % 16; // Aliens move within the central 16x16 area
+            y = rand() % 16;
+
+            if(grid[x][y] == 0){
+                aliens[i].pos_x = x + 3;
+                aliens[i].pos_y = y + 3;
+                grid[x][y] = 1;
+                break;
+            }
+        }
+    }
+
+}
+
+
+
+void move_aliens(WINDOW *win, ch_info_t aliens[], int *alien_count, void *publisher,int grid[16][16])
 {
     screen_update_t update;
     for (int i = 0; i < *alien_count; i++)
-    {
+    {   
         // Erase old position
         wmove(win, aliens[i].pos_x, aliens[i].pos_y);
         waddch(win, ' ');
@@ -81,27 +113,44 @@ void move_aliens(WINDOW *win, ch_info_t aliens[], int *alien_count, void *publis
 
         // Move alien to new position
         direction_t direction = rand() % 4;
+        
         switch (direction)
         {
         case UP:
-            aliens[i].pos_x--;
-            if (aliens[i].pos_x < 3)
-                aliens[i].pos_x = 3;
+            if(aliens[i].pos_x >= 4){
+                if(grid[aliens[i].pos_x - 4][aliens[i].pos_y - 3] == 0){
+                    grid[aliens[i].pos_x - 3][aliens[i].pos_y - 3] = 0;
+                    grid[aliens[i].pos_x - 4][aliens[i].pos_y - 3] = 1;
+                    aliens[i].pos_x--;
+                }  
+            }
             break;
         case DOWN:
-            aliens[i].pos_x++;
-            if (aliens[i].pos_x > 18)
-                aliens[i].pos_x = 18;
+            if(aliens[i].pos_x <=17){
+                if(grid[aliens[i].pos_x - 2][aliens[i].pos_y - 3] == 0){
+                    grid[aliens[i].pos_x - 3][aliens[i].pos_y - 3] = 0;
+                    grid[aliens[i].pos_x - 2][aliens[i].pos_y - 3] = 1;
+                    aliens[i].pos_x++;
+                }  
+            }
             break;
         case LEFT:
-            aliens[i].pos_y--;
-            if (aliens[i].pos_y < 3)
-                aliens[i].pos_y = 3;
+            if(aliens[i].pos_y >= 4){
+                if(grid[aliens[i].pos_x - 3][aliens[i].pos_y - 4] == 0){
+                    grid[aliens[i].pos_x - 3][aliens[i].pos_y - 3] = 0;
+                    grid[aliens[i].pos_x - 3][aliens[i].pos_y - 4] = 1;
+                    aliens[i].pos_y--;
+                }  
+            }
             break;
         case RIGHT:
-            aliens[i].pos_y++;
-            if (aliens[i].pos_y > 18)
-                aliens[i].pos_y = 18;
+            if(aliens[i].pos_y <=17){
+                if(grid[aliens[i].pos_x - 3][aliens[i].pos_y - 2] == 0){
+                    grid[aliens[i].pos_x - 3][aliens[i].pos_y - 3] = 0;
+                    grid[aliens[i].pos_x - 3][aliens[i].pos_y - 2] = 1;
+                    aliens[i].pos_y++;
+                }  
+            }
             break;
         default:
             break;
@@ -278,17 +327,13 @@ int main()
     // Initialize character & alien data
     ch_info_t char_data[MAX_PLAYERS];
     ch_info_t aliens[ALIEN_COUNT];
+    int alien_grid[16][16];
     int n_chars = 0;
     int alien_count = ALIEN_COUNT;
     int score = 0;
 
     // Initialize aliens
-    for (int i = 0; i < ALIEN_COUNT; i++)
-    {
-        aliens[i].ch = '*';
-        aliens[i].pos_x = rand() % 16 + 3; // Aliens move within the central 16x16 area
-        aliens[i].pos_y = rand() % 16 + 3;
-    }
+    initialize_aliens(aliens, alien_grid, alien_count);
 
     // Initialize ZeroMQ
     void *context = zmq_ctx_new();
@@ -487,7 +532,7 @@ int main()
                 char_data[ch_pos].pos_y = pos_y;
 
                 // Move aliens randomly
-                move_aliens(my_win, aliens, &alien_count, publisher);
+                move_aliens(my_win, aliens, &alien_count, publisher, alien_grid);
             }
 
             rc = zmq_send(responder, &char_data[ch_pos].score, sizeof(int), 0);
