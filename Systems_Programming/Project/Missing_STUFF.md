@@ -2,16 +2,33 @@
 
 ## Missing Items
 
-- [ ] The way the laser is displayed and shot for 0.5 seconds is making the entire server wait for that time. The server and the other aliens should move and work while the laser is displayed.
-- [ ] The outer-space-display.c needs to be updated, because i (francisco) have made some changes in the protocol so it may not work properly now.
+- [ ] **Test `outer-space-display.c`**  
+  Francisco has made changes to the protocol, so it may not work properly now.
 
-### Section for Francisco
+- [ ] **Implement Token Verification Process for Clients**  
+    The process should work as follows:
+    - In the server program, maintain a list of strings/integers containing each astronaut's token and a token for the child process, totaling 9 tokens.
+    - Initialize the child token at the beginning of the `main` function and generate it randomly.
+    - Whenever the child sends a direction, include its token in the message struct.
+    - For astronauts:
+        - Upon each connection, the server assigns a character to the client.
+        - Assign a unique token, generated randomly upon receiving a connection.
+    - On the astronaut-client side, include the assigned token in its message struct.
+    - Every time the server receives a message, verify the token:
+        - If the token is incorrect, send an offensive message indicating cheating.
+    - When a client disconnects, erase its token so it can be regenerated for future connections.
+
+- [ ] **Fix Child Process or `MSG_TYPE_ALIEN_DIRECTION` Handling**  
+    There is a bug where, sometimes when a laser is shot and aliens are destroyed, the window does not update with the new positions.
+
+- [ ] **What Happens When All the Aliens Die?**
+    1. The server closes, informing all the astronauts first with their final scores and displaying a message "Game ended, the winner is ..."
+    2. All the aliens spawn again, and the cycle continues infinitely.
+    3. 
+    4. 
 
 
-- [ ] The aliens should move every second for this i will need to implemet a fork() to the game-server.c, the parent process will be responsible for the messages from and to the clients while the child process will be responsible to update aliens position and sending that information to the parent process when asked for but allway updating the window in each second.
 
-
-### Section for Diogo
 
 
 ## What is already Done:
