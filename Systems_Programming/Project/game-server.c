@@ -260,7 +260,7 @@ int main()
 
     //Generate Game token
 
-    const int GAME_TOKEN = rand();
+    const int CHILD_TOKEN = rand() % 1000;
 
     // Initialize character & alien data
     ch_info_t char_data[MAX_PLAYERS];
@@ -339,6 +339,7 @@ int main()
 
             remote_char_t alien_move;
             alien_move.msg_type = MSG_TYPE_ALIEN_DIRECTION;
+            alien_move.GAME_TOKEN = CHILD_TOKEN;
 
             zmq_send(child_socket, &alien_move, sizeof(remote_char_t), 0);
 
@@ -494,7 +495,7 @@ int main()
                 char_data[n_chars].score = 0;
                 char_data[n_chars].last_fire_time = 0;
                 char_data[n_chars].stunned = 0;
-                char_data[n_chars].GAME_TOKEN = GAME_TOKEN;
+                char_data[n_chars].GAME_TOKEN = rand() % 1000;
 
                 rc = zmq_send(responder, &char_data[n_chars], sizeof(ch_info_t), 0);
                 if (rc == -1)
@@ -505,10 +506,21 @@ int main()
 
                 n_chars++;
             }
-            else if (m.msg_type == MSG_TYPE_ZAP && m.GAME_TOKEN == GAME_TOKEN)
+            else if (m.msg_type == MSG_TYPE_ZAP)
             {
                 int ch_pos = find_ch_info(char_data, n_chars, m.ch);
                 current_time = time(NULL);
+
+                if(char_data[ch_pos].GAME_TOKEN != m.GAME_TOKEN){
+                    rc = zmq_send(responder,NULL, 0, 0);
+                    if (rc == -1)
+                    {
+                        perror("Server zmq_send failed");
+                        return -1;
+                    }
+                    continue;
+                }
+
                 if (ch_pos != -1 && difftime(current_time, char_data[ch_pos].stunned) >= 10)
                 {
                     current_time = time(NULL);
@@ -526,9 +538,21 @@ int main()
                     return -1;
                 }
             }
-            else if (m.msg_type == MSG_TYPE_DISCONNECT && m.GAME_TOKEN == GAME_TOKEN)
+            else if (m.msg_type == MSG_TYPE_DISCONNECT)
             {
                 int ch_pos = find_ch_info(char_data, n_chars, m.ch);
+
+                if(char_data[ch_pos].GAME_TOKEN != m.GAME_TOKEN){
+                    rc = zmq_send(responder,NULL, 0, 0);
+                    if (rc == -1)
+                    {
+                        perror("Server zmq_send failed");
+                        return -1;
+                    }
+                    continue;
+                }
+
+
                 if (ch_pos != -1)
                 {
                     connected_astronauts[m.ch - 'A'] = 0;
@@ -543,10 +567,21 @@ int main()
                     return -1;
                 }
             }
-            else if (m.msg_type == MSG_TYPE_MOVE && m.GAME_TOKEN == GAME_TOKEN)
+            else if (m.msg_type == MSG_TYPE_MOVE)
             {
                 int ch_pos = find_ch_info(char_data, n_chars, m.ch);
                 current_time = time(NULL);
+
+                if(char_data[ch_pos].GAME_TOKEN != m.GAME_TOKEN){
+                    rc = zmq_send(responder, NULL, 0, 0);
+                    if (rc == -1)
+                    {
+                        perror("Server zmq_send failed");
+                        return -1;
+                    }
+                    continue;
+                }
+
                 if (ch_pos != -1 && difftime(current_time, char_data[ch_pos].stunned) >= 10)
                 {
                     pos_x = char_data[ch_pos].pos_x;
@@ -577,7 +612,7 @@ int main()
                     return -1;
                 }
             }
-            else if (m.msg_type == MSG_TYPE_ALIEN_DIRECTION)
+            else if (m.msg_type == MSG_TYPE_ALIEN_DIRECTION && m.GAME_TOKEN == CHILD_TOKEN)
             {
 
 
@@ -652,7 +687,7 @@ int main()
                         zmq_send(responder, &response, sizeof(int), 0);
                     }
                 }
-                
+
                 // Check if all aliens have moved
                 if (aliens_moved == alien_count)
                 {
@@ -663,6 +698,12 @@ int main()
                         {
                             wmove(my_win, i, j);
                             waddch(my_win, ' ');
+
+
+                            update.pos_x = i;
+                            update.pos_y = j;
+                            update.ch = ' ';
+                            zmq_send(publisher, &update, sizeof(screen_update_t), 0);
                         }
                     }
                     wrefresh(my_win);
@@ -683,15 +724,21 @@ int main()
                     aliens_moved = 0;
                 }
             }
+            //In case it is a message we want to ignore
+            else{
+                rc = zmq_send(responder, NULL, 0, 0);
+                if (rc == -1)
+                {
+                    perror("Server zmq_send failed");
+                    return -1;
+                }
+                continue;
+            }
 
             // Update display
             for (int i = 0; i < n_chars; i++)
             {
-                /*
-                if (char_data[i].stunned > 0)
-                {
-                    char_data[i].stunned--;
-                }*/
+                
                 wmove(my_win, char_data[i].pos_x, char_data[i].pos_y);
                 waddch(my_win, char_data[i].ch | A_BOLD);
             }
