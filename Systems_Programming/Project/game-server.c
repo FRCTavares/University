@@ -3,7 +3,7 @@
 
 #define WINDOW_SIZE 22
 #define MAX_PLAYERS 10
-#define ALIEN_COUNT 1
+#define ALIEN_COUNT 16 * 16 / 3
 
 typedef struct screen_update_t
 {
@@ -149,7 +149,7 @@ void fire_laser(WINDOW *win, ch_info_t *astronaut, ch_info_t aliens[], int *alie
         }
     }
 
-    usleep(5000000); // Display laser for 0.5 seconds
+    usleep(500000); // Display laser for 0.5 seconds
 
     // Clear laser
     if (astronaut->dir == 0)

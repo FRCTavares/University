@@ -2,12 +2,12 @@
 
 ## Missing Items
 
-
+- [ ] The way the laser is displayed and shot for 0.5 seconds is making the entire server wait for that time. The server and the other aliens should move and work while the laser is displayed.
 - [ ] The outer-space-display.c needs to be updated, because i (francisco) have made some changes in the protocol so it may not work properly now.
 
 ### Section for Francisco
 
-- [ ] I need to review the entire code, to see if the logic makes sense. There may be unecessary stuff that was not removed by me.
+
 - [ ] The aliens should move every second for this i will need to implemet a fork() to the game-server.c, the parent process will be responsible for the messages from and to the clients while the child process will be responsible to update aliens position and sending that information to the parent process when asked for but allway updating the window in each second.
 
 
@@ -23,6 +23,7 @@
 - [X] The scoreboard window is present, and it adds a player everytime it joins.
 - [X] The zap function is properly implemented it is activated when ' ' is pressed by the client and the server keeps a timer to only allow that message again in 3 seconds. All the aliens in the path of the zap are destroyed and 1 point is awarded for each alien to the client. If there is any astronaut on the path of the laser the astronaut is stunned for 10 seconds (I THINK)
 - [x] Aliens no longer overlap.
+- [X] I need to review the entire code, to see if the logic makes sense. There may be unecessary stuff that was not removed by me.
 
 
 
