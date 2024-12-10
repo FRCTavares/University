@@ -71,10 +71,10 @@ void initialize_zmq(void **context, void **requester, void **subscriber)
     *requester = zmq_socket(*context, ZMQ_REQ);
     *subscriber = zmq_socket(*context, ZMQ_SUB);
 
-    zmq_connect(*subscriber, "tcp://localhost:5557");
+    zmq_connect(*subscriber, CLIENT_SUBSCRIBE_ADDRESS);
     zmq_setsockopt(*subscriber, ZMQ_SUBSCRIBE, "", 0);
 
-    if (zmq_connect(*requester, "tcp://localhost:5555") != 0)
+    if (zmq_connect(*requester, CLIENT_REQUEST_ADDRESS) != 0)
     {
         perror("Client zmq_connect failed");
         cleanup(*context, *requester, *subscriber);
