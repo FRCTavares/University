@@ -2,7 +2,7 @@
 #include "protocol.h"
 
 #define WINDOW_SIZE 22
-#define MAX_PLAYERS 10
+#define MAX_PLAYERS 8
 #define ALIEN_COUNT 16 * 16 / 3
 
 typedef struct screen_update_t
@@ -187,15 +187,12 @@ void update_scoreboard(WINDOW *score_win, ch_info_t char_data[], int n_chars, in
     werase(score_win); // Clear the scoreboard window
 
     // Display header
-    mvwprintw(score_win, 1, 1, "Scoreboard:");
-
-    // Display alien count
-    mvwprintw(score_win, 2, 1, "Aliens remaining: %d", alien_count);
+    mvwprintw(score_win, 1, 3, "SCORE");
 
     // Display each player's score
     for (int i = 0; i < n_chars; i++)
     {
-        mvwprintw(score_win, 4 + i, 1, "Player %c: %d", char_data[i].ch, char_data[i].score);
+        mvwprintw(score_win, 2 + i, 3, "%c - %d", char_data[i].ch, char_data[i].score);
     }
 
     box(score_win, 0, 0); // Draw the border
@@ -297,7 +294,7 @@ int main()
         // Create new ZeroMQ context and socket
         void *child_context = zmq_ctx_new();
         void *child_socket = zmq_socket(child_context, ZMQ_REQ);
-        zmq_connect(child_socket, "tcp://localhost:5555"); // Connect to server
+        zmq_connect(child_socket, SERVER_REQUEST_ADDRESS); // Connect to server
 
         while (1)
         {
@@ -353,10 +350,11 @@ int main()
         remote_char_t m;
         screen_update_t update;
         int aliens_moved = 0;
+        int connected_astronauts[MAX_PLAYERS] = {0};
 
         // Socket to talk to clients
         void *responder = zmq_socket(context, ZMQ_REP);
-        int rc = zmq_bind(responder, "tcp://0.0.0.0:5555");
+        int rc = zmq_bind(responder, SERVER_REQUEST_ADDRESS);
         if (rc != 0)
         {
             perror("Server zmq_bind failed");
@@ -365,7 +363,7 @@ int main()
 
         // Socket to publish updates to the display
         void *publisher = zmq_socket(context, ZMQ_PUB);
-        rc = zmq_bind(publisher, "tcp://0.0.0.0:5556");
+        rc = zmq_bind(publisher, SERVER_PUBLISH_ADDRESS);
         if (rc != 0)
         {
             perror("Publisher zmq_bind failed");
@@ -395,54 +393,72 @@ int main()
                     continue;
                 }
 
-                ch = 'A' + n_chars;
-                if (n_chars == 0) // A
+                // Choose cyclically a character for the connected player
+                for (int i = 0; i < MAX_PLAYERS; i++)
+                {
+                    if (connected_astronauts[i] == 0)
+                    {
+                        connected_astronauts[i] = 1;
+                        ch = 'A' + i;
+                        break;
+                    }
+                }
+
+                // Assign positions and direction based on character
+                if (ch == 'A')
                 {
                     pos_x = 5;
                     pos_y = 1;
                     char_data[n_chars].dir = 1;
                 }
-                else if (n_chars == 1) // B
+                else if (ch == 'B')
                 {
                     pos_x = 19;
                     pos_y = 7;
                     char_data[n_chars].dir = 0;
                 }
-                else if (n_chars == 2) // C
+                else if (ch == 'C')
                 {
                     pos_x = 20;
                     pos_y = 12;
                     char_data[n_chars].dir = 0;
                 }
-                else if (n_chars == 3) // D
+                else if (ch == 'D')
                 {
                     pos_x = 10;
                     pos_y = 19;
                     char_data[n_chars].dir = 1;
                 }
-                else if (n_chars == 4) // E
+                else if (ch == 'E')
                 {
                     pos_x = 1;
                     pos_y = 8;
                     char_data[n_chars].dir = 0;
                 }
-                else if (n_chars == 5) // F
+                else if (ch == 'F')
                 {
                     pos_x = 8;
                     pos_y = 20;
                     char_data[n_chars].dir = 1;
                 }
-                else if (n_chars == 6) // G
+                else if (ch == 'G')
                 {
                     pos_x = 2;
                     pos_y = 10;
                     char_data[n_chars].dir = 0;
                 }
-                else if (n_chars == 7) // H
+                else if (ch == 'H')
                 {
                     pos_x = 11;
                     pos_y = 2;
                     char_data[n_chars].dir = 1;
+                }
+                else
+                {
+                    // Handle unexpected character
+                    pos_x = 0;
+                    pos_y = 0;
+                    char_data[n_chars].dir = 0;
                 }
 
                 char_data[n_chars].ch = ch;
@@ -486,6 +502,7 @@ int main()
                 int ch_pos = find_ch_info(char_data, n_chars, m.ch);
                 if (ch_pos != -1)
                 {
+                    connected_astronauts[m.ch - 'A'] = 0;
                     remove_astronaut(my_win, char_data, &n_chars, ch_pos, publisher, score_win, alien_count);
                 }
                 // Send a response to the client to confirm disconnection

@@ -12,6 +12,21 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 
+// Server Addresses
+#define SERVER_IP "tcp://0.0.0.0"
+#define SERVER_REQUEST_PORT "5555"
+#define SERVER_PUBLISH_PORT "5556"
+#define SERVER_REQUEST_ADDRESS SERVER_IP ":" SERVER_REQUEST_PORT
+#define SERVER_PUBLISH_ADDRESS SERVER_IP ":" SERVER_PUBLISH_PORT
+
+// Client Addresses
+#define CLIENT_SUBSCRIBE_IP "tcp://localhost"
+#define CLIENT_SUBSCRIBE_PORT "5557"
+#define CLIENT_REQUEST_IP "tcp://localhost"
+#define CLIENT_REQUEST_PORT "5555"
+#define CLIENT_SUBSCRIBE_ADDRESS CLIENT_SUBSCRIBE_IP ":" CLIENT_SUBSCRIBE_PORT
+#define CLIENT_REQUEST_ADDRESS CLIENT_REQUEST_IP ":" CLIENT_REQUEST_PORT
+
 typedef enum
 {
     MSG_TYPE_CONNECT = 0,
