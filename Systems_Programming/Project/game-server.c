@@ -69,19 +69,13 @@ void fire_laser(WINDOW *win, ch_info_t *astronaut, ch_info_t aliens[], int *alie
     screen_update_t update;
     int x = astronaut->pos_x;
     int y = astronaut->pos_y;
+    int flag;
 
     if (astronaut->dir == 0)
     { // Horizontal movement, fire vertically
         for (int i = 1; i < WINDOW_SIZE - 1; i++)
         {
-            wmove(win, i, y);
-            waddch(win, '|');
-            wrefresh(win);
-
-            update.pos_x = i;
-            update.pos_y = y;
-            update.ch = '|';
-            zmq_send(publisher, &update, sizeof(screen_update_t), 0);
+            flag=0;
 
             // Check for aliens
             for (int j = 0; j < *alien_count; j++)
@@ -93,6 +87,8 @@ void fire_laser(WINDOW *win, ch_info_t *astronaut, ch_info_t aliens[], int *alie
                     {
                         aliens[k] = aliens[k + 1];
                     }
+
+                    flag=1;
                     (*alien_count)--;
                     astronaut->score++;
                     break;
@@ -102,10 +98,23 @@ void fire_laser(WINDOW *win, ch_info_t *astronaut, ch_info_t aliens[], int *alie
             // Check for other astronauts
             for (int j = 0; j < n_chars; j++)
             {
-                if (char_data[j].pos_x == i && char_data[j].pos_y == y && char_data[j].ch != astronaut->ch)
+                if (char_data[j].pos_x == i && char_data[j].pos_y == y)
                 {
-                    char_data[j].stunned = 10;
+                    if(char_data[j].ch != astronaut->ch) char_data[j].stunned = time(NULL);
+                    flag  = 1;
                 }
+            }
+
+            //Update screen
+            if(flag == 0){
+                wmove(win, i, y);
+                waddch(win, '|');
+                wrefresh(win);
+
+                update.pos_x = i;
+                update.pos_y = y;
+                update.ch = '|';
+                zmq_send(publisher, &update, sizeof(screen_update_t), 0);
             }
         }
     }
@@ -113,14 +122,8 @@ void fire_laser(WINDOW *win, ch_info_t *astronaut, ch_info_t aliens[], int *alie
     { // Vertical movement, fire horizontally
         for (int i = 1; i < WINDOW_SIZE - 1; i++)
         {
-            wmove(win, x, i);
-            waddch(win, '-');
-            wrefresh(win);
 
-            update.pos_x = x;
-            update.pos_y = i;
-            update.ch = '-';
-            zmq_send(publisher, &update, sizeof(screen_update_t), 0);
+            flag=0;
 
             // Check for aliens
             for (int j = 0; j < *alien_count; j++)
@@ -132,6 +135,7 @@ void fire_laser(WINDOW *win, ch_info_t *astronaut, ch_info_t aliens[], int *alie
                     {
                         aliens[k] = aliens[k + 1];
                     }
+                    flag=1;
                     (*alien_count)--;
                     astronaut->score++;
                     break;
@@ -141,11 +145,25 @@ void fire_laser(WINDOW *win, ch_info_t *astronaut, ch_info_t aliens[], int *alie
             // Check for other astronauts
             for (int j = 0; j < n_chars; j++)
             {
-                if (char_data[j].pos_x == x && char_data[j].pos_y == i && char_data[j].ch != astronaut->ch)
+                if (char_data[j].pos_x == x && char_data[j].pos_y == i)
                 {
-                    char_data[j].stunned = 10;
+                    if(char_data[j].ch != astronaut->ch) char_data[j].stunned = time(NULL);
+                    flag=1;
                 }
+                
             }
+
+            if(flag == 0){
+                wmove(win, x, i);
+                waddch(win, '-');
+                wrefresh(win);
+
+                update.pos_x = x;
+                update.pos_y = i;
+                update.ch = '-';
+                zmq_send(publisher, &update, sizeof(screen_update_t), 0);
+            }
+
         }
     }
 
@@ -230,6 +248,10 @@ int main()
     /* Initializations */
 
     srand(time(NULL)); // Seed the random number generator
+
+    //Generate Game token
+
+    const int GAME_TOKEN = rand();
 
     // Initialize character & alien data
     ch_info_t char_data[MAX_PLAYERS];
@@ -346,6 +368,7 @@ int main()
         int ch;
         int pos_x;
         int pos_y;
+        time_t current_time;
         direction_t direction;
         remote_char_t m;
         screen_update_t update;
@@ -467,6 +490,7 @@ int main()
                 char_data[n_chars].score = 0;
                 char_data[n_chars].last_fire_time = 0;
                 char_data[n_chars].stunned = 0;
+                char_data[n_chars].GAME_TOKEN = GAME_TOKEN;
 
                 rc = zmq_send(responder, &char_data[n_chars], sizeof(ch_info_t), 0);
                 if (rc == -1)
@@ -477,12 +501,13 @@ int main()
 
                 n_chars++;
             }
-            else if (m.msg_type == MSG_TYPE_ZAP)
+            else if (m.msg_type == MSG_TYPE_ZAP && m.GAME_TOKEN == GAME_TOKEN)
             {
                 int ch_pos = find_ch_info(char_data, n_chars, m.ch);
-                if (ch_pos != -1 && char_data[ch_pos].stunned == 0)
+                current_time = time(NULL);
+                if (ch_pos != -1 && difftime(current_time, char_data[ch_pos].stunned) >= 10)
                 {
-                    time_t current_time = time(NULL);
+                    current_time = time(NULL);
                     if (difftime(current_time, char_data[ch_pos].last_fire_time) >= 3)
                     {
                         fire_laser(my_win, &char_data[ch_pos], aliens, &alien_count, char_data, n_chars, publisher);
@@ -497,7 +522,7 @@ int main()
                     return -1;
                 }
             }
-            else if (m.msg_type == MSG_TYPE_DISCONNECT)
+            else if (m.msg_type == MSG_TYPE_DISCONNECT && m.GAME_TOKEN == GAME_TOKEN)
             {
                 int ch_pos = find_ch_info(char_data, n_chars, m.ch);
                 if (ch_pos != -1)
@@ -514,10 +539,11 @@ int main()
                     return -1;
                 }
             }
-            else if (m.msg_type == MSG_TYPE_MOVE)
+            else if (m.msg_type == MSG_TYPE_MOVE && m.GAME_TOKEN == GAME_TOKEN)
             {
                 int ch_pos = find_ch_info(char_data, n_chars, m.ch);
-                if (ch_pos != -1 && char_data[ch_pos].stunned == 0)
+                current_time = time(NULL);
+                if (ch_pos != -1 && difftime(current_time, char_data[ch_pos].stunned) >= 10)
                 {
                     pos_x = char_data[ch_pos].pos_x;
                     pos_y = char_data[ch_pos].pos_y;
@@ -653,10 +679,11 @@ int main()
             // Update display
             for (int i = 0; i < n_chars; i++)
             {
+                /*
                 if (char_data[i].stunned > 0)
                 {
                     char_data[i].stunned--;
-                }
+                }*/
                 wmove(my_win, char_data[i].pos_x, char_data[i].pos_y);
                 waddch(my_win, char_data[i].ch | A_BOLD);
             }

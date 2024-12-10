@@ -53,6 +53,7 @@ typedef struct ch_info_t
     int score;
     time_t last_fire_time;
     time_t stunned;
+    int GAME_TOKEN;
 } ch_info_t;
 
 typedef struct
@@ -60,6 +61,7 @@ typedef struct
     msg_type_t msg_type;
     int ch;
     direction_t direction;
+    int GAME_TOKEN;
 } remote_char_t;
 
 #endif // PROTOCOL_H

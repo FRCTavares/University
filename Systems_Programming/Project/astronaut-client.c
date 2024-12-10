@@ -35,6 +35,7 @@ int main()
         return -1;
     }
     message.ch = info.ch;
+    message.GAME_TOKEN = info.GAME_TOKEN;
     mvprintw(0, 0, "You are controlling character %c", info.ch);
 
     while (running)
