@@ -10,6 +10,7 @@
 #include <zmq.h>
 #include <string.h>
 #include <sys/types.h>
+#include <sys/wait.h>
 
 typedef enum
 {
@@ -17,7 +18,8 @@ typedef enum
     MSG_TYPE_MOVE = 1,
     MSG_TYPE_ZAP = 2,
     MSG_TYPE_DISCONNECT = 3,
-    MSG_TYPE_GAME_END = 4
+    MSG_TYPE_GAME_END = 4,
+    MSG_TYPE_ALIEN_DIRECTION = 5
 } msg_type_t;
 
 typedef enum direction_t
