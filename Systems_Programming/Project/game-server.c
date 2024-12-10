@@ -64,7 +64,7 @@ int find_ch_info(ch_info_t char_data[], int n_chars, int ch)
     return -1; // Character not found
 }
 
-void fire_laser(WINDOW *win, ch_info_t *astronaut, ch_info_t aliens[], int *alien_count, ch_info_t char_data[], int n_chars, void *publisher)
+void fire_laser(WINDOW *win, ch_info_t *astronaut, ch_info_t aliens[], int *alien_count, ch_info_t char_data[], int n_chars, void *publisher, int grid[16][16])
 {
     screen_update_t update;
     int x = astronaut->pos_x;
@@ -82,6 +82,10 @@ void fire_laser(WINDOW *win, ch_info_t *astronaut, ch_info_t aliens[], int *alie
             {
                 if (aliens[j].pos_x == i && aliens[j].pos_y == y)
                 {
+
+                    //Mark grid cell as empty
+                    grid[i-3][y-3] = 0;
+
                     // Remove alien from the list
                     for (int k = j; k < *alien_count - 1; k++)
                     {
@@ -130,6 +134,11 @@ void fire_laser(WINDOW *win, ch_info_t *astronaut, ch_info_t aliens[], int *alie
             {
                 if (aliens[j].pos_x == x && aliens[j].pos_y == i)
                 {
+
+                    //Mark grid cell as empty
+                    grid[i-3][y-3] = 0;
+
+
                     // Remove alien from the list
                     for (int k = j; k < *alien_count - 1; k++)
                     {
@@ -327,36 +336,23 @@ int main()
 
             sleep(1); // Move aliens every second
 
-            for (int i = 0; i < alien_count; i++)
+
+            remote_char_t alien_move;
+            alien_move.msg_type = MSG_TYPE_ALIEN_DIRECTION;
+
+            zmq_send(child_socket, &alien_move, sizeof(remote_char_t), 0);
+
+            // Receive response from server
+            int response;
+            int rc = zmq_recv(child_socket, &response, sizeof(int), 0);
+
+            if (rc == -1)
             {
-                int move_success = 0;
-
-                // Generate a random direction
-                direction_t direction = rand() % 4; // UP, DOWN, LEFT, RIGHT
-
-                // Prepare the message
-                remote_char_t alien_move;
-                alien_move.msg_type = MSG_TYPE_ALIEN_DIRECTION;
-                alien_move.ch = i; // Alien index
-                alien_move.direction = direction;
-
-                // Send the movement to the server
-                zmq_send(child_socket, &alien_move, sizeof(remote_char_t), 0);
-
-                // Receive response from server
-                int response;
-                zmq_recv(child_socket, &response, sizeof(int), 0);
-
-                if (response == 0) // Success
-                {
-                    move_success = 1;
-                }
-                else // Failure
-                {
-                    // Generate a new direction and try again
-                    continue;
-                }
+                perror("child zmq_recv failed");
+                return -1;
             }
+
+           
         }
         // Cleanup
         zmq_close(child_socket);
@@ -387,7 +383,15 @@ int main()
         // Socket to publish updates to the display
         void *publisher = zmq_socket(context, ZMQ_PUB);
         rc = zmq_bind(publisher, SERVER_PUBLISH_ADDRESS);
-        if (rc != 0)
+        if (rc != 0)                /*if (response == 0) // Success
+                {
+                    move_success = 1;
+                }
+                else // Failure
+                {
+                    // Generate a new direction and try again
+                    continue;
+                }*/
         {
             perror("Publisher zmq_bind failed");
             return -1;
@@ -510,7 +514,7 @@ int main()
                     current_time = time(NULL);
                     if (difftime(current_time, char_data[ch_pos].last_fire_time) >= 3)
                     {
-                        fire_laser(my_win, &char_data[ch_pos], aliens, &alien_count, char_data, n_chars, publisher);
+                        fire_laser(my_win, &char_data[ch_pos], aliens, &alien_count, char_data, n_chars, publisher, grid);
                         char_data[ch_pos].last_fire_time = current_time;
                     }
                 }
@@ -575,76 +579,80 @@ int main()
             }
             else if (m.msg_type == MSG_TYPE_ALIEN_DIRECTION)
             {
-                // Receive the alien index and direction from the child process
-                int alien_index = m.ch;
-                direction_t direction = m.direction;
 
-                // Get current position
-                int x = aliens[alien_index].pos_x;
-                int y = aliens[alien_index].pos_y;
 
-                // Move alien to new position based on direction
-                int new_x = x;
-                int new_y = y;
-                int move_success = 0;
-                aliens_moved++;
+                for(int i = 0; i< alien_count; i++){
+                    // Receive the alien index and direction from the child process
+                    int alien_index = i;
+                    direction_t direction = rand() % 4;
 
-                switch (direction)
-                {
-                case UP:
-                    if (x >= 4 && grid[x - 4][y - 3] == 0)
+                    // Get current position
+                    int x = aliens[alien_index].pos_x;
+                    int y = aliens[alien_index].pos_y;
+
+                    // Move alien to new position based on direction
+                    int new_x = x;
+                    int new_y = y;
+                    int move_success = 0;
+                    aliens_moved++;
+
+                    switch (direction)
                     {
-                        new_x--;
-                        move_success = 1;
+                    case UP:
+                        if (x >= 4 && grid[x - 4][y - 3] == 0)
+                        {
+                            new_x--;
+                            move_success = 1;
+                        }
+                        break;
+                    case DOWN:
+                        if (x <= 17 && grid[x - 2][y - 3] == 0)
+                        {
+                            new_x++;
+                            move_success = 1;
+                        }
+                        break;
+                    case LEFT:
+                        if (y >= 4 && grid[x - 3][y - 4] == 0)
+                        {
+                            new_y--;
+                            move_success = 1;
+                        }
+                        break;
+                    case RIGHT:
+                        if (y <= 17 && grid[x - 3][y - 2] == 0)
+                        {
+                            new_y++;
+                            move_success = 1;
+                        }
+                        break;
+                    default:
+                        break;
                     }
-                    break;
-                case DOWN:
-                    if (x <= 17 && grid[x - 2][y - 3] == 0)
+
+                    if (move_success == 1)
                     {
-                        new_x++;
-                        move_success = 1;
+                        // Update grid to mark the old position as empty
+                        grid[x - 3][y - 3] = 0;
+
+                        // Update grid to mark the new position as occupied
+                        grid[new_x - 3][new_y - 3] = 1;
+
+                        aliens[alien_index].pos_x = new_x;
+                        aliens[alien_index].pos_y = new_y;
+
+                        // Send success response
+                        int response = 0;
+                        zmq_send(responder, &response, sizeof(int), 0);
                     }
-                    break;
-                case LEFT:
-                    if (y >= 4 && grid[x - 3][y - 4] == 0)
+                    else
                     {
-                        new_y--;
-                        move_success = 1;
+                        // Send no move response
+                        int response = -1;
+                        zmq_send(responder, &response, sizeof(int), 0);
                     }
-                    break;
-                case RIGHT:
-                    if (y <= 17 && grid[x - 3][y - 2] == 0)
-                    {
-                        new_y++;
-                        move_success = 1;
-                    }
-                    break;
-                default:
-                    break;
                 }
-
-                if (move_success == 1)
-                {
-                    // Update grid to mark the old position as empty
-                    grid[x - 3][y - 3] = 0;
-
-                    // Update grid to mark the new position as occupied
-                    grid[new_x - 3][new_y - 3] = 1;
-
-                    aliens[alien_index].pos_x = new_x;
-                    aliens[alien_index].pos_y = new_y;
-
-                    // Send success response
-                    int response = 0;
-                    zmq_send(responder, &response, sizeof(int), 0);
-                }
-                else
-                {
-                    // Send no move response
-                    int response = -1;
-                    zmq_send(responder, &response, sizeof(int), 0);
-                }
-
+                
                 // Check if all aliens have moved
                 if (aliens_moved == alien_count)
                 {
