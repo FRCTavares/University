@@ -10,6 +10,10 @@ typedef struct screen_update_t
     int pos_x;
     int pos_y;
     char ch;
+    char players[MAX_PLAYERS];
+    int scores[MAX_PLAYERS];
+    int player_count;
+
 } screen_update_t;
 
 void new_position(int *x, int *y, direction_t direction, int dir)
@@ -209,7 +213,7 @@ void fire_laser(WINDOW *win, ch_info_t *astronaut, ch_info_t aliens[], int *alie
     }
 }
 
-void update_scoreboard(WINDOW *score_win, ch_info_t char_data[], int n_chars, int alien_count)
+void update_scoreboard(WINDOW *score_win, ch_info_t char_data[], int n_chars, int alien_count, void *publisher)
 {
     werase(score_win); // Clear the scoreboard window
 
@@ -224,6 +228,22 @@ void update_scoreboard(WINDOW *score_win, ch_info_t char_data[], int n_chars, in
 
     box(score_win, 0, 0); // Draw the border
     wrefresh(score_win);  // Refresh to show changes
+
+
+    //Build the update to send to outer-space-display
+    screen_update_t update;
+
+    update.ch = 's';
+    update.player_count = n_chars;
+    
+    for(int i = 0; i < n_chars; i++){
+        update.players[i] = char_data[i].ch;
+        update.scores[i] = char_data[i].score;
+    }
+
+    zmq_send(publisher, &update, sizeof(screen_update_t), 0);
+
+
 }
 
 void remove_astronaut(WINDOW *win, ch_info_t char_data[], int *n_chars, int ch_pos, void *publisher, WINDOW *score_win, int alien_count)
@@ -249,7 +269,7 @@ void remove_astronaut(WINDOW *win, ch_info_t char_data[], int *n_chars, int ch_p
     (*n_chars)--;
 
     // Update the scoreboard to remove the player's score
-    update_scoreboard(score_win, char_data, *n_chars, alien_count);
+    update_scoreboard(score_win, char_data, *n_chars, alien_count, publisher);
 }
 
 int main()
@@ -754,7 +774,7 @@ int main()
                 zmq_send(publisher, &update, sizeof(screen_update_t), 0);
             }
 
-            update_scoreboard(score_win, char_data, n_chars, alien_count);
+            update_scoreboard(score_win, char_data, n_chars, alien_count, publisher);
 
             usleep(10000); // Sleep for 10ms
         }
