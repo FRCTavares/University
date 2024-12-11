@@ -5,7 +5,7 @@ LDFLAGS = -lncurses -lzmq
 SERVER_SRC = game-server.c
 ASTRONAUT_CLIENT_SRC = astronaut-client.c
 OUTER_SPACE_DISPLAY_SRC = outer-space-display.c
-COMMON_SRC = remote-char.h
+COMMON_SRC = protocol.h
 
 all: server astronaut-client outer-space-display
 
