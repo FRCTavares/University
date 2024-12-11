@@ -343,7 +343,11 @@ void remove_astronaut(WINDOW *win, ch_info_t char_data[], int *n_chars, int ch_p
 
 int main()
 {
-    /* Program and variables initializations */
+    /*
+    Main function to run the game server
+    */
+
+    /* Initializations */
 
     srand(time(NULL)); // Seed the random number generator
 
@@ -355,15 +359,11 @@ int main()
     int n_chars = 0;
     int alien_count = ALIEN_COUNT;
     int score = 0;
+
     int grid[16][16] = {0}; // Grid to track alien positions
 
     // Initialize ZeroMQ
     void *context = zmq_ctx_new();
-    if (context == NULL)
-    {
-        perror("Failed to create ZeroMQ context");
-        return EXIT_FAILURE;
-    }
 
     // Initialize ncurses
     initscr();
@@ -407,42 +407,20 @@ int main()
     if (pid < 0)
     {
         perror("Fork failed");
-        zmq_ctx_destroy(context);
-        return EXIT_FAILURE;
+        return -1;
     }
     else if (pid == 0)
     {
         // Child process: Handle alien movements
-        // Initial sleep to allow the parent process to initialize
-        sleep(1); // Aliens move in each second
-
+        sleep(1); // Wait for the parent to initialize the game
         // Create new ZeroMQ context and socket
         void *child_context = zmq_ctx_new();
-        if (child_context == NULL)
-        {
-            perror("Child context creation failed");
-            return EXIT_FAILURE;
-        }
-
         void *child_socket = zmq_socket(child_context, ZMQ_REQ);
-        if (child_socket == NULL)
-        {
-            perror("Child socket creation failed");
-            zmq_ctx_destroy(child_context);
-            return EXIT_FAILURE;
-        }
-
-        if (zmq_connect(child_socket, SERVER_REQUEST_ADDRESS) != 0)
-        { // Connect to server
-            perror("Child zmq_connect failed");
-            zmq_close(child_socket);
-            zmq_ctx_destroy(child_context);
-            return -1;
-        }
+        zmq_connect(child_socket, SERVER_REQUEST_ADDRESS); // Connect to server
 
         while (1)
         {
-            if (alien_count == 0) // Game Ended
+            if (alien_count == 0)
             {
                 break;
             }
@@ -453,11 +431,7 @@ int main()
             alien_move.msg_type = MSG_TYPE_ALIEN_DIRECTION;
             alien_move.GAME_TOKEN = CHILD_TOKEN;
 
-            if (zmq_send(child_socket, &alien_move, sizeof(remote_char_t), 0) == -1)
-            {
-                perror("Child zmq_send failed");
-                return -1;
-            }
+            zmq_send(child_socket, &alien_move, sizeof(remote_char_t), 0);
 
             // Receive response from server
             int response;
@@ -476,8 +450,6 @@ int main()
     else
     {
         // Parent process: Main game loop
-
-        // Parent main variables initialization
         int ch;
         int pos_x;
         int pos_y;
@@ -490,40 +462,20 @@ int main()
 
         // Socket to talk to clients
         void *responder = zmq_socket(context, ZMQ_REP);
-        if (responder == NULL)
-        {
-            perror("Server zmq_socket failed");
-            zmq_ctx_destroy(context);
-            return EXIT_FAILURE;
-        }
-
         int rc = zmq_bind(responder, SERVER_REQUEST_ADDRESS);
         if (rc != 0)
         {
             perror("Server zmq_bind failed");
-            zmq_close(responder);
-            zmq_ctx_destroy(context);
-            return EXIT_FAILURE;
+            return -1;
         }
 
         // Socket to publish updates to the display
         void *publisher = zmq_socket(context, ZMQ_PUB);
-        if (publisher == NULL)
-        {
-            perror("Publisher zmq_socket failed");
-            zmq_close(responder);
-            zmq_ctx_destroy(context);
-            return EXIT_FAILURE;
-        }
-
         rc = zmq_bind(publisher, SERVER_PUBLISH_ADDRESS);
         if (rc != 0)
         {
             perror("Publisher zmq_bind failed");
-            zmq_close(responder);
-            zmq_close(publisher);
-            zmq_ctx_destroy(context);
-            return EXIT_FAILURE;
+            return -1;
         }
 
         while (1)
@@ -532,23 +484,19 @@ int main()
             if (rc == -1)
             {
                 perror("Server zmq_recv failed");
-                continue;
+                return -1;
             }
 
             if (m.msg_type == MSG_TYPE_CONNECT)
             {
-                /*
-                Handle connection request from a new player
-                */
-
-                if (n_chars = MAX_PLAYERS)
+                if (n_chars >= MAX_PLAYERS)
                 {
                     // Send a failure response if max players reached
                     rc = zmq_send(responder, NULL, 0, 0);
                     if (rc == -1)
                     {
                         perror("Server connection response failed");
-                        return EXIT_FAILURE;
+                        return -1;
                     }
                     continue;
                 }
@@ -633,17 +581,13 @@ int main()
                 if (rc == -1)
                 {
                     perror("Server connection response failed");
-                    return EXIT_FAILURE;
+                    return -1;
                 }
 
                 n_chars++;
             }
             else if (m.msg_type == MSG_TYPE_ZAP)
             {
-                /*
-                Handle laser firing request from a player
-                */
-
                 int ch_pos = find_ch_info(char_data, n_chars, m.ch);
                 current_time = time(NULL);
 
@@ -653,7 +597,7 @@ int main()
                     if (rc == -1)
                     {
                         perror("Server zmq_send failed");
-                        return EXIT_FAILURE;
+                        return -1;
                     }
                     continue;
                 }
@@ -687,29 +631,24 @@ int main()
                 if (rc == -1)
                 {
                     perror("Server zmq_send failed");
-                    return EXIT_FAILURE;
+                    return -1;
                 }
             }
             else if (m.msg_type == MSG_TYPE_DISCONNECT)
             {
-                /*
-                Handle disconnection request from a player
-                */
                 int ch_pos = find_ch_info(char_data, n_chars, m.ch);
 
-                // Check if the game token matches
                 if (char_data[ch_pos].GAME_TOKEN != m.GAME_TOKEN)
                 {
                     rc = zmq_send(responder, NULL, 0, 0);
                     if (rc == -1)
                     {
                         perror("Server zmq_send failed");
-                        return EXIT_FAILURE;
+                        return -1;
                     }
                     continue;
                 }
 
-                // Remove the astronaut from the game
                 if (ch_pos != -1)
                 {
                     connected_astronauts[m.ch - 'A'] = 0;
@@ -721,7 +660,7 @@ int main()
                 if (rc == -1)
                 {
                     perror("Server zmq_send failed");
-                    return EXIT_FAILURE;
+                    return -1;
                 }
             }
             else if (m.msg_type == MSG_TYPE_MOVE)
@@ -772,17 +711,12 @@ int main()
             }
             else if (m.msg_type == MSG_TYPE_ALIEN_DIRECTION && m.GAME_TOKEN == CHILD_TOKEN)
             {
-                /*
-                Handle alien movement request from the child process
-
-                The child process sends a request to activate the movement of
-                all aliens in the game.
-                */
 
                 for (int i = 0; i < alien_count; i++)
                 {
+                    // Receive the alien index and direction from the child process
                     int alien_index = i;
-                    direction_t direction = rand() % 4; // Random direction
+                    direction_t direction = rand() % 4;
 
                     // Get current position
                     int x = aliens[alien_index].pos_x;
@@ -794,7 +728,6 @@ int main()
                     int move_success = 0;
                     aliens_moved++;
 
-                    // Check if the new position is valid
                     switch (direction)
                     {
                     case UP:
@@ -839,6 +772,16 @@ int main()
 
                         aliens[alien_index].pos_x = new_x;
                         aliens[alien_index].pos_y = new_y;
+
+                        // Send success response
+                        int response = 0;
+                        zmq_send(responder, &response, sizeof(int), 0);
+                    }
+                    else
+                    {
+                        // Send no move response
+                        int response = -1;
+                        zmq_send(responder, &response, sizeof(int), 0);
                     }
                 }
 
@@ -876,26 +819,15 @@ int main()
 
                     aliens_moved = 0;
                 }
-
-                // Send success response
-                int response = 0;
-                if (zmq_send(responder, &response, sizeof(int), 0) == -1)
-                {
-                    perror("Server zmq_send failed");
-                    return EXIT_FAILURE;
-                }
             }
+            // In case it is a message we want to ignore
             else
             {
-                /*
-                Handle invalid message types
-                */
-
                 rc = zmq_send(responder, NULL, 0, 0);
                 if (rc == -1)
                 {
                     perror("Server zmq_send failed");
-                    return EXIT_FAILURE;
+                    return -1;
                 }
                 continue;
             }
@@ -916,11 +848,7 @@ int main()
                 update.pos_x = char_data[i].pos_x;
                 update.pos_y = char_data[i].pos_y;
                 update.ch = char_data[i].ch;
-                if (zmq_send(publisher, &update, sizeof(screen_update_t), 0) == -1)
-                {
-                    perror("Server zmq_send failed");
-                    return EXIT_FAILURE;
-                }
+                zmq_send(publisher, &update, sizeof(screen_update_t), 0);
             }
 
             update_scoreboard(score_win, char_data, n_chars, alien_count, publisher);
