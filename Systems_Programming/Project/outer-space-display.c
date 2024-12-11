@@ -22,20 +22,23 @@ int main()
 {
 
     void *context = zmq_ctx_new();
-    if (context == NULL) {
+    if (context == NULL)
+    {
         perror("Outer space display failed to create ZeroMQ context");
         return -1;
     }
 
     // Initialize subscriber socket
     void *subscriber = zmq_socket(context, ZMQ_SUB);
-    if (subscriber == NULL) {
+    if (subscriber == NULL)
+    {
         perror("Outer space display failed to create subscriber socket");
-        zmq_ctx_term(context); 
+        zmq_ctx_term(context);
         return -1;
     }
 
-    if(zmq_connect(subscriber, SERVER_PUBLISH_ADDRESS) != 0){
+    if (zmq_connect(subscriber, SERVER_PUBLISH_ADDRESS) != 0)
+    {
         perror("Outer space display zmq_connect failed");
         if (subscriber)
             zmq_close(subscriber);
@@ -45,7 +48,8 @@ int main()
     }
 
     // Subscribe to all messages
-    if(zmq_setsockopt(subscriber, ZMQ_SUBSCRIBE, "", 0) != 0){
+    if (zmq_setsockopt(subscriber, ZMQ_SUBSCRIBE, "", 0) != 0)
+    {
         perror("Outer space display zmq_setsockopt failed");
         if (subscriber)
             zmq_close(subscriber);
@@ -61,28 +65,31 @@ int main()
     noecho();
 
     WINDOW *my_win = newwin(WINDOW_SIZE, WINDOW_SIZE, 0, 0);
-    if (my_win == NULL) {
+    if (my_win == NULL)
+    {
         endwin();
         perror("Failed to create window");
         return -1;
     }
 
     box(my_win, 0, 0);
-    if(wrefresh(my_win) == ERR){
+    if (wrefresh(my_win) == ERR)
+    {
         fprintf(stderr, "wrefresh failed\n");
         return -1;
     }
 
     WINDOW *score_win = newwin(WINDOW_SIZE, WINDOW_SIZE, 0, WINDOW_SIZE + 1);
-    if (score_win == NULL) {
+    if (score_win == NULL)
+    {
         endwin();
         perror("Failed to create window");
         return -1;
     }
 
-
     box(score_win, 0, 0);
-    if(wrefresh(score_win) == ERR){
+    if (wrefresh(score_win) == ERR)
+    {
         fprintf(stderr, "wrefresh failed\n");
         return -1;
     }
@@ -92,7 +99,7 @@ int main()
     while (1)
     {
         int rc = zmq_recv(subscriber, &update, sizeof(screen_update_t), 0);
-        
+
         if (rc == -1)
         {
             perror("Outer space display zmq_recv failed");
@@ -104,27 +111,33 @@ int main()
             return -1;
         }
 
-        //Screen Updates
-        if(update.ch != 's'){
-            if(wmove(my_win, update.pos_x, update.pos_y) == ERR){
+        // Screen Updates
+        if (update.ch != 's')
+        {
+            if (wmove(my_win, update.pos_x, update.pos_y) == ERR)
+            {
                 fprintf(stderr, "wmove failed\n");
                 return -1;
             }
 
-            if(waddch(my_win, update.ch | A_BOLD) == ERR){
+            if (waddch(my_win, update.ch | A_BOLD) == ERR)
+            {
                 fprintf(stderr, "waddch failed\n");
                 return -1;
             }
 
-            if(wrefresh(my_win) == ERR){
+            if (wrefresh(my_win) == ERR)
+            {
                 fprintf(stderr, "wrefresh failed\n");
                 return -1;
             }
         }
 
-        //Score updates
-        else{
-            if(werase(score_win) == ERR ){
+        // Score updates
+        else
+        {
+            if (werase(score_win) == ERR)
+            {
                 endwin();
                 perror("werase failed");
                 return -1;
@@ -141,7 +154,8 @@ int main()
 
             box(score_win, 0, 0); // Draw the border
 
-            if(wrefresh(score_win) == ERR){
+            if (wrefresh(score_win) == ERR)
+            {
                 fprintf(stderr, "wrefresh failed\n");
                 return -1;
             }

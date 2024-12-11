@@ -10,7 +10,7 @@ int main()
 {
     void *context = NULL;
     void *requester = NULL;
-   
+
     remote_char_t message = {0};
     ch_info_t info = {0};
     int running = 1;
@@ -69,18 +69,19 @@ int main()
 void initialize_zmq(void **context, void **requester)
 {
     *context = zmq_ctx_new();
-    if (context == NULL) {
+    if (context == NULL)
+    {
         perror("Client failed to create ZeroMQ context");
         exit(-1);
     }
 
     *requester = zmq_socket(*context, ZMQ_REQ);
-    if (requester == NULL) {
+    if (requester == NULL)
+    {
         perror("Client failed to create requester socket");
-        zmq_ctx_term(context); 
+        zmq_ctx_term(context);
         exit(-1);
     }
-    
 
     if (zmq_connect(*requester, SERVER_REQUEST_ADDRESS) != 0)
     {
