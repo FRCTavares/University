@@ -18,6 +18,19 @@ typedef struct screen_update_t
 
 void new_position(int *x, int *y, direction_t direction, int dir)
 {
+    /*
+    Function to calculate the new position of the character based on the direction of movement
+
+    Parameters:
+    x: Pointer to the x-coordinate of the character
+    y: Pointer to the y-coordinate of the character
+    direction: Direction of movement
+    dir: Whether the character moves vertically(1) or horizontally(0)
+
+    Returns:
+    None
+    */
+
     if (dir == 0)
     { // Horizontal movement
         switch (direction)
@@ -58,6 +71,17 @@ void new_position(int *x, int *y, direction_t direction, int dir)
 
 int find_ch_info(ch_info_t char_data[], int n_chars, int ch)
 {
+    /*
+    Function to find the index of a character in the char_data array
+
+    Parameters:
+    char_data: Array of character information
+    n_chars: Number of characters in the array
+    ch: Character to find
+
+    Returns:
+    Index of the character in the array, -1 if not found
+    */
     for (int i = 0; i < n_chars; i++)
     {
         if (char_data[i].ch == ch)
@@ -70,6 +94,23 @@ int find_ch_info(ch_info_t char_data[], int n_chars, int ch)
 
 void fire_laser(WINDOW *win, ch_info_t *astronaut, ch_info_t aliens[], int *alien_count, ch_info_t char_data[], int n_chars, void *publisher, int grid[16][16])
 {
+    /*
+    Function to fire a laser from the astronaut in the specified direction
+
+    Parameters:
+    win: Game window
+    astronaut: Pointer to the astronaut firing the laser
+    aliens: Array of alien information
+    alien_count: Pointer to the number of aliens
+    char_data: Array of character information
+    n_chars: Number of characters
+    publisher: ZeroMQ publisher socket
+    grid: 2D array to track alien positions
+
+    Returns:
+    None
+    */
+
     screen_update_t update;
     int x = astronaut->pos_x;
     int y = astronaut->pos_y;
@@ -79,7 +120,7 @@ void fire_laser(WINDOW *win, ch_info_t *astronaut, ch_info_t aliens[], int *alie
     { // Horizontal movement, fire vertically
         for (int i = 1; i < WINDOW_SIZE - 1; i++)
         {
-            flag=0;
+            flag = 0;
 
             // Check for aliens
             for (int j = 0; j < *alien_count; j++)
@@ -87,8 +128,8 @@ void fire_laser(WINDOW *win, ch_info_t *astronaut, ch_info_t aliens[], int *alie
                 if (aliens[j].pos_x == i && aliens[j].pos_y == y)
                 {
 
-                    //Mark grid cell as empty
-                    grid[i-3][y-3] = 0;
+                    // Mark grid cell as empty
+                    grid[i - 3][y - 3] = 0;
 
                     // Remove alien from the list
                     for (int k = j; k < *alien_count - 1; k++)
@@ -96,7 +137,7 @@ void fire_laser(WINDOW *win, ch_info_t *astronaut, ch_info_t aliens[], int *alie
                         aliens[k] = aliens[k + 1];
                     }
 
-                    flag=1;
+                    flag = 1;
                     (*alien_count)--;
                     astronaut->score++;
                     break;
@@ -108,13 +149,15 @@ void fire_laser(WINDOW *win, ch_info_t *astronaut, ch_info_t aliens[], int *alie
             {
                 if (char_data[j].pos_x == i && char_data[j].pos_y == y)
                 {
-                    if(char_data[j].ch != astronaut->ch) char_data[j].stunned = time(NULL);
-                    flag  = 1;
+                    if (char_data[j].ch != astronaut->ch)
+                        char_data[j].stunned = time(NULL);
+                    flag = 1;
                 }
             }
 
-            //Update screen
-            if(flag == 0){
+            // Update screen
+            if (flag == 0)
+            {
                 wmove(win, i, y);
                 waddch(win, '|');
                 wrefresh(win);
@@ -131,7 +174,7 @@ void fire_laser(WINDOW *win, ch_info_t *astronaut, ch_info_t aliens[], int *alie
         for (int i = 1; i < WINDOW_SIZE - 1; i++)
         {
 
-            flag=0;
+            flag = 0;
 
             // Check for aliens
             for (int j = 0; j < *alien_count; j++)
@@ -139,16 +182,15 @@ void fire_laser(WINDOW *win, ch_info_t *astronaut, ch_info_t aliens[], int *alie
                 if (aliens[j].pos_x == x && aliens[j].pos_y == i)
                 {
 
-                    //Mark grid cell as empty
-                    grid[i-3][y-3] = 0;
-
+                    // Mark grid cell as empty
+                    grid[i - 3][y - 3] = 0;
 
                     // Remove alien from the list
                     for (int k = j; k < *alien_count - 1; k++)
                     {
                         aliens[k] = aliens[k + 1];
                     }
-                    flag=1;
+                    flag = 1;
                     (*alien_count)--;
                     astronaut->score++;
                     break;
@@ -160,13 +202,14 @@ void fire_laser(WINDOW *win, ch_info_t *astronaut, ch_info_t aliens[], int *alie
             {
                 if (char_data[j].pos_x == x && char_data[j].pos_y == i)
                 {
-                    if(char_data[j].ch != astronaut->ch) char_data[j].stunned = time(NULL);
-                    flag=1;
+                    if (char_data[j].ch != astronaut->ch)
+                        char_data[j].stunned = time(NULL);
+                    flag = 1;
                 }
-                
             }
 
-            if(flag == 0){
+            if (flag == 0)
+            {
                 wmove(win, x, i);
                 waddch(win, '-');
                 wrefresh(win);
@@ -176,7 +219,6 @@ void fire_laser(WINDOW *win, ch_info_t *astronaut, ch_info_t aliens[], int *alie
                 update.ch = '-';
                 zmq_send(publisher, &update, sizeof(screen_update_t), 0);
             }
-
         }
     }
 
@@ -215,6 +257,20 @@ void fire_laser(WINDOW *win, ch_info_t *astronaut, ch_info_t aliens[], int *alie
 
 void update_scoreboard(WINDOW *score_win, ch_info_t char_data[], int n_chars, int alien_count, void *publisher)
 {
+    /*
+    Function to update the scoreboard with the current scores of all players
+
+    Parameters:
+    score_win: Scoreboard window
+    char_data: Array of character information
+    n_chars: Number of characters
+    alien_count: Number of aliens
+    publisher: ZeroMQ publisher socket
+
+    Returns:
+    None
+    */
+
     werase(score_win); // Clear the scoreboard window
 
     // Display header
@@ -229,25 +285,38 @@ void update_scoreboard(WINDOW *score_win, ch_info_t char_data[], int n_chars, in
     box(score_win, 0, 0); // Draw the border
     wrefresh(score_win);  // Refresh to show changes
 
-
-    //Build the update to send to outer-space-display
+    // Build the update to send to outer-space-display
     screen_update_t update;
 
     update.ch = 's';
     update.player_count = n_chars;
-    
-    for(int i = 0; i < n_chars; i++){
+
+    for (int i = 0; i < n_chars; i++)
+    {
         update.players[i] = char_data[i].ch;
         update.scores[i] = char_data[i].score;
     }
 
     zmq_send(publisher, &update, sizeof(screen_update_t), 0);
-
-
 }
 
 void remove_astronaut(WINDOW *win, ch_info_t char_data[], int *n_chars, int ch_pos, void *publisher, WINDOW *score_win, int alien_count)
 {
+    /*
+    Function to remove an astronaut from the game
+
+    Parameters:
+    win: Game window
+    char_data: Array of character information
+    n_chars: Pointer to the number of characters
+    ch_pos: Index of the character to remove
+    publisher: ZeroMQ publisher socket
+    score_win: Scoreboard window
+    alien_count: Number of aliens
+
+    Returns:
+    None
+    */
     screen_update_t update;
 
     // Erase astronaut from the game window
@@ -274,13 +343,15 @@ void remove_astronaut(WINDOW *win, ch_info_t char_data[], int *n_chars, int ch_p
 
 int main()
 {
+    /*
+    Main function to run the game server
+    */
+
     /* Initializations */
 
     srand(time(NULL)); // Seed the random number generator
 
-    //Generate Game token
-
-    const int CHILD_TOKEN = rand() % 1000;
+    const int CHILD_TOKEN = rand() % 1000; // Token to identify the child process
 
     // Initialize character & alien data
     ch_info_t char_data[MAX_PLAYERS];
@@ -356,7 +427,6 @@ int main()
 
             sleep(1); // Move aliens every second
 
-
             remote_char_t alien_move;
             alien_move.msg_type = MSG_TYPE_ALIEN_DIRECTION;
             alien_move.GAME_TOKEN = CHILD_TOKEN;
@@ -372,8 +442,6 @@ int main()
                 perror("child zmq_recv failed");
                 return -1;
             }
-
-           
         }
         // Cleanup
         zmq_close(child_socket);
@@ -404,15 +472,7 @@ int main()
         // Socket to publish updates to the display
         void *publisher = zmq_socket(context, ZMQ_PUB);
         rc = zmq_bind(publisher, SERVER_PUBLISH_ADDRESS);
-        if (rc != 0)                /*if (response == 0) // Success
-                {
-                    move_success = 1;
-                }
-                else // Failure
-                {
-                    // Generate a new direction and try again
-                    continue;
-                }*/
+        if (rc != 0)
         {
             perror("Publisher zmq_bind failed");
             return -1;
@@ -531,8 +591,9 @@ int main()
                 int ch_pos = find_ch_info(char_data, n_chars, m.ch);
                 current_time = time(NULL);
 
-                if(char_data[ch_pos].GAME_TOKEN != m.GAME_TOKEN){
-                    rc = zmq_send(responder,NULL, 0, 0);
+                if (char_data[ch_pos].GAME_TOKEN != m.GAME_TOKEN)
+                {
+                    rc = zmq_send(responder, NULL, 0, 0);
                     if (rc == -1)
                     {
                         perror("Server zmq_send failed");
@@ -548,6 +609,21 @@ int main()
                     {
                         fire_laser(my_win, &char_data[ch_pos], aliens, &alien_count, char_data, n_chars, publisher, grid);
                         char_data[ch_pos].last_fire_time = current_time;
+                        if (alien_count == 0)
+                        {
+                            werase(my_win);
+                            werase(score_win);
+                            mvwprintw(my_win, 10, 10, "GAME OVER");
+                            // Print final scores
+                            for (int i = 0; i < n_chars; i++)
+                            {
+                                mvwprintw(my_win, 12 + i, 10, "%c - %d", char_data[i].ch, char_data[i].score);
+                            }
+                            wrefresh(my_win);
+                            wrefresh(score_win);
+                            sleep(5);
+                            break;
+                        }
                     }
                 }
 
@@ -562,8 +638,9 @@ int main()
             {
                 int ch_pos = find_ch_info(char_data, n_chars, m.ch);
 
-                if(char_data[ch_pos].GAME_TOKEN != m.GAME_TOKEN){
-                    rc = zmq_send(responder,NULL, 0, 0);
+                if (char_data[ch_pos].GAME_TOKEN != m.GAME_TOKEN)
+                {
+                    rc = zmq_send(responder, NULL, 0, 0);
                     if (rc == -1)
                     {
                         perror("Server zmq_send failed");
@@ -571,7 +648,6 @@ int main()
                     }
                     continue;
                 }
-
 
                 if (ch_pos != -1)
                 {
@@ -592,7 +668,8 @@ int main()
                 int ch_pos = find_ch_info(char_data, n_chars, m.ch);
                 current_time = time(NULL);
 
-                if(char_data[ch_pos].GAME_TOKEN != m.GAME_TOKEN){
+                if (char_data[ch_pos].GAME_TOKEN != m.GAME_TOKEN)
+                {
                     rc = zmq_send(responder, NULL, 0, 0);
                     if (rc == -1)
                     {
@@ -635,8 +712,8 @@ int main()
             else if (m.msg_type == MSG_TYPE_ALIEN_DIRECTION && m.GAME_TOKEN == CHILD_TOKEN)
             {
 
-
-                for(int i = 0; i< alien_count; i++){
+                for (int i = 0; i < alien_count; i++)
+                {
                     // Receive the alien index and direction from the child process
                     int alien_index = i;
                     direction_t direction = rand() % 4;
@@ -719,7 +796,6 @@ int main()
                             wmove(my_win, i, j);
                             waddch(my_win, ' ');
 
-
                             update.pos_x = i;
                             update.pos_y = j;
                             update.ch = ' ';
@@ -744,8 +820,9 @@ int main()
                     aliens_moved = 0;
                 }
             }
-            //In case it is a message we want to ignore
-            else{
+            // In case it is a message we want to ignore
+            else
+            {
                 rc = zmq_send(responder, NULL, 0, 0);
                 if (rc == -1)
                 {
@@ -758,7 +835,7 @@ int main()
             // Update display
             for (int i = 0; i < n_chars; i++)
             {
-                
+
                 wmove(my_win, char_data[i].pos_x, char_data[i].pos_y);
                 waddch(my_win, char_data[i].ch | A_BOLD);
             }
@@ -784,5 +861,12 @@ int main()
         zmq_close(publisher);
         zmq_ctx_destroy(context);
         endwin();
+
+        // Terminate child process
+        if (pid > 0)
+        {
+            kill(pid, SIGKILL);
+            wait(NULL); // Wait for the child process to terminate
+        }
     }
 }
