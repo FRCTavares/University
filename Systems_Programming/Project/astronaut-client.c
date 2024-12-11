@@ -1,8 +1,8 @@
 #include "protocol.h"
 
-void initialize_zmq(void **context, void **requester, void **subscriber);
+void initialize_zmq(void **context, void **requester);
 void initialize_ncurses();
-void cleanup(void *context, void *requester, void *subscriber);
+void cleanup(void *context, void *requester);
 int handle_input(remote_char_t *message);
 int process_server_messages(void *requester, remote_char_t *message);
 
@@ -10,12 +10,12 @@ int main()
 {
     void *context = NULL;
     void *requester = NULL;
-    void *subscriber = NULL;
+   
     remote_char_t message = {0};
     ch_info_t info = {0};
     int running = 1;
 
-    initialize_zmq(&context, &requester, &subscriber);
+    initialize_zmq(&context, &requester);
     initialize_ncurses();
 
     // Send initial message to server
@@ -23,7 +23,7 @@ int main()
     if (zmq_send(requester, &message, sizeof(remote_char_t), 0) == -1)
     {
         perror("Client zmq_send failed");
-        cleanup(context, requester, subscriber);
+        cleanup(context, requester);
         return -1;
     }
 
@@ -31,7 +31,7 @@ int main()
     if (zmq_recv(requester, &info, sizeof(ch_info_t), 0) == -1)
     {
         perror("Client zmq_recv failed");
-        cleanup(context, requester, subscriber);
+        cleanup(context, requester);
         return -1;
     }
     message.ch = info.ch;
@@ -45,7 +45,7 @@ int main()
         {
             if (process_server_messages(requester, &message) == -1)
             {
-                cleanup(context, requester, subscriber);
+                cleanup(context, requester);
                 return -1;
             }
         }
@@ -53,7 +53,7 @@ int main()
         {
             if (process_server_messages(requester, &message) == -1)
             {
-                cleanup(context, requester, subscriber);
+                cleanup(context, requester);
                 return -1;
             }
             running = 0;
@@ -62,23 +62,30 @@ int main()
         refresh();
     }
 
-    cleanup(context, requester, subscriber);
+    cleanup(context, requester);
     return 0;
 }
 
-void initialize_zmq(void **context, void **requester, void **subscriber)
+void initialize_zmq(void **context, void **requester)
 {
     *context = zmq_ctx_new();
+    if (context == NULL) {
+        perror("Client failed to create ZeroMQ context");
+        exit(-1);
+    }
+
     *requester = zmq_socket(*context, ZMQ_REQ);
-    *subscriber = zmq_socket(*context, ZMQ_SUB);
+    if (requester == NULL) {
+        perror("Client failed to create requester socket");
+        zmq_ctx_term(context); 
+        exit(-1);
+    }
+    
 
-    zmq_connect(*subscriber, CLIENT_SUBSCRIBE_ADDRESS);
-    zmq_setsockopt(*subscriber, ZMQ_SUBSCRIBE, "", 0);
-
-    if (zmq_connect(*requester, CLIENT_REQUEST_ADDRESS) != 0)
+    if (zmq_connect(*requester, SERVER_REQUEST_ADDRESS) != 0)
     {
         perror("Client zmq_connect failed");
-        cleanup(*context, *requester, *subscriber);
+        cleanup(*context, *requester);
         exit(-1);
     }
 }
@@ -91,13 +98,11 @@ void initialize_ncurses()
     noecho();
 }
 
-void cleanup(void *context, void *requester, void *subscriber)
+void cleanup(void *context, void *requester)
 {
     endwin();
     if (requester)
         zmq_close(requester);
-    if (subscriber)
-        zmq_close(subscriber);
     if (context)
         zmq_ctx_destroy(context);
 }
