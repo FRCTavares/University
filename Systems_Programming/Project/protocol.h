@@ -12,6 +12,11 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 
+// Constants
+#define WINDOW_SIZE 22
+#define MAX_PLAYERS 8
+#define ALIEN_COUNT 16 * 16 / 3
+
 // Server Addresses
 #define SERVER_IP "tcp://0.0.0.0"
 #define SERVER_REQUEST_PORT "5555"
@@ -27,6 +32,7 @@
 #define CLIENT_SUBSCRIBE_ADDRESS CLIENT_SUBSCRIBE_IP ":" CLIENT_SUBSCRIBE_PORT
 #define CLIENT_REQUEST_ADDRESS CLIENT_REQUEST_IP ":" CLIENT_REQUEST_PORT
 
+// Message Types
 typedef enum
 {
     MSG_TYPE_CONNECT = 0,
@@ -37,6 +43,7 @@ typedef enum
     MSG_TYPE_ALIEN_DIRECTION = 5
 } msg_type_t;
 
+// Directions
 typedef enum direction_t
 {
     UP,
@@ -45,6 +52,7 @@ typedef enum direction_t
     RIGHT
 } direction_t;
 
+// Astronaut Information
 typedef struct ch_info_t
 {
     int ch;
@@ -56,6 +64,7 @@ typedef struct ch_info_t
     int GAME_TOKEN;
 } ch_info_t;
 
+// Message Structure
 typedef struct
 {
     msg_type_t msg_type;

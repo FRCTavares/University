@@ -1,10 +1,6 @@
 #include "zhelpers.h"
 #include "protocol.h"
 
-#define WINDOW_SIZE 22
-#define MAX_PLAYERS 8
-#define ALIEN_COUNT 16 * 16 / 3
-
 typedef struct screen_update_t
 {
     int pos_x;
@@ -16,9 +12,7 @@ typedef struct screen_update_t
 
 } screen_update_t;
 
-void new_position(int *x, int *y, direction_t direction, int dir)
-{
-    /*
+/*
     Function to calculate the new position of the character based on the direction of movement
 
     Parameters:
@@ -29,7 +23,10 @@ void new_position(int *x, int *y, direction_t direction, int dir)
 
     Returns:
     None
-    */
+*/
+
+void new_position(int *x, int *y, direction_t direction, int dir)
+{
 
     if (dir == 0)
     { // Horizontal movement
@@ -69,9 +66,7 @@ void new_position(int *x, int *y, direction_t direction, int dir)
     }
 }
 
-int find_ch_info(ch_info_t char_data[], int n_chars, int ch)
-{
-    /*
+/*
     Function to find the index of a character in the char_data array
 
     Parameters:
@@ -81,7 +76,10 @@ int find_ch_info(ch_info_t char_data[], int n_chars, int ch)
 
     Returns:
     Index of the character in the array, -1 if not found
-    */
+*/
+
+int find_ch_info(ch_info_t char_data[], int n_chars, int ch)
+{
     for (int i = 0; i < n_chars; i++)
     {
         if (char_data[i].ch == ch)
@@ -92,9 +90,7 @@ int find_ch_info(ch_info_t char_data[], int n_chars, int ch)
     return -1; // Character not found
 }
 
-void fire_laser(WINDOW *win, ch_info_t *astronaut, ch_info_t aliens[], int *alien_count, ch_info_t char_data[], int n_chars, void *publisher, int grid[16][16])
-{
-    /*
+/*
     Function to fire a laser from the astronaut in the specified direction
 
     Parameters:
@@ -109,7 +105,10 @@ void fire_laser(WINDOW *win, ch_info_t *astronaut, ch_info_t aliens[], int *alie
 
     Returns:
     None
-    */
+*/
+
+void fire_laser(WINDOW *win, ch_info_t *astronaut, ch_info_t aliens[], int *alien_count, ch_info_t char_data[], int n_chars, void *publisher, int grid[16][16])
+{
 
     screen_update_t update;
     int x = astronaut->pos_x;
@@ -255,9 +254,7 @@ void fire_laser(WINDOW *win, ch_info_t *astronaut, ch_info_t aliens[], int *alie
     }
 }
 
-void update_scoreboard(WINDOW *score_win, ch_info_t char_data[], int n_chars, int alien_count, void *publisher)
-{
-    /*
+/*
     Function to update the scoreboard with the current scores of all players
 
     Parameters:
@@ -269,7 +266,10 @@ void update_scoreboard(WINDOW *score_win, ch_info_t char_data[], int n_chars, in
 
     Returns:
     None
-    */
+*/
+
+void update_scoreboard(WINDOW *score_win, ch_info_t char_data[], int n_chars, int alien_count, void *publisher)
+{
 
     werase(score_win); // Clear the scoreboard window
 
@@ -300,9 +300,7 @@ void update_scoreboard(WINDOW *score_win, ch_info_t char_data[], int n_chars, in
     zmq_send(publisher, &update, sizeof(screen_update_t), 0);
 }
 
-void remove_astronaut(WINDOW *win, ch_info_t char_data[], int *n_chars, int ch_pos, void *publisher, WINDOW *score_win, int alien_count)
-{
-    /*
+/*
     Function to remove an astronaut from the game
 
     Parameters:
@@ -316,7 +314,11 @@ void remove_astronaut(WINDOW *win, ch_info_t char_data[], int *n_chars, int ch_p
 
     Returns:
     None
-    */
+*/
+
+void remove_astronaut(WINDOW *win, ch_info_t char_data[], int *n_chars, int ch_pos, void *publisher, WINDOW *score_win, int alien_count)
+{
+
     screen_update_t update;
 
     // Erase astronaut from the game window
@@ -340,6 +342,16 @@ void remove_astronaut(WINDOW *win, ch_info_t char_data[], int *n_chars, int ch_p
     // Update the scoreboard to remove the player's score
     update_scoreboard(score_win, char_data, *n_chars, alien_count, publisher);
 }
+
+/*
+    Main function to run the game server
+
+    Parameters:
+    None
+
+    Returns:
+    0 on success, -1 on failure
+*/
 
 int main()
 {
@@ -675,7 +687,6 @@ int main()
                                 mvwprintw(my_win, 12 + i, 10, "%c - %d", char_data[i].ch, char_data[i].score);
                             }
 
-                            
                             // Build the update to send to outer-space-display
                             screen_update_t update;
                             update.ch = 'o';
@@ -740,6 +751,9 @@ int main()
             }
             else if (m.msg_type == MSG_TYPE_MOVE)
             {
+                /*
+                Handle movement request from a player
+                */
                 int ch_pos = find_ch_info(char_data, n_chars, m.ch);
                 current_time = time(NULL);
 
@@ -955,4 +969,5 @@ int main()
             wait(NULL); // Wait for the child process to terminate
         }
     }
+    return 0;
 }

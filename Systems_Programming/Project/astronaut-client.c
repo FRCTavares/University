@@ -35,12 +35,19 @@ int main()
         return -1;
     }
 
-
-    //Update the messsage variable with the character information
-    //This information will be the same throughout the whole game
+    // Update the messsage variable with the character information
+    // This information will be the same throughout the whole game
     message.ch = info.ch;
     message.GAME_TOKEN = info.GAME_TOKEN;
-    
+
+    // if char is 0 then the server is full
+    if (info.ch == 0)
+    {
+        mvprintw(0, 0, "Server is full. Please try again later.");
+        cleanup(context, requester);
+        return -1;
+    }
+
     mvprintw(0, 0, "You are controlling character %c", info.ch);
 
     while (running)
@@ -71,10 +78,16 @@ int main()
     return 0;
 }
 
-
 /*
 Function to intialize zmq context and socket
 Connects the requester socket to the server
+
+param:
+    void **context: pointer to the zmq context
+    void **requester: pointer to the zmq requester socket
+
+return:
+    void
 */
 
 void initialize_zmq(void **context, void **requester)
@@ -104,6 +117,12 @@ void initialize_zmq(void **context, void **requester)
 
 /*
 Function to initialize the ncurses environment
+
+param:
+    void
+
+return:
+    void
 */
 
 void initialize_ncurses()
@@ -114,9 +133,15 @@ void initialize_ncurses()
     noecho();
 }
 
-
 /*
 Function to delete the necessary zmq variables
+
+param:
+    void *context: pointer to the zmq context
+    void *requester: pointer to the zmq requester socket
+
+return:
+    void
 */
 void cleanup(void *context, void *requester)
 {
@@ -127,10 +152,15 @@ void cleanup(void *context, void *requester)
         zmq_ctx_destroy(context);
 }
 
-
 /*
 Function to handke the input from the keyboard
 It detects which key is pressed and puts the necessary inormation in the message variable
+
+param:
+    remote_char_t *message: pointer to the message variable
+
+return:
+    int: 0 if the game is still running, 1 if the user wants to quit, -1 if the key is not recognized
 */
 int handle_input(remote_char_t *message)
 {
@@ -175,10 +205,16 @@ int handle_input(remote_char_t *message)
     return 0;
 }
 
-
 /*
 Function which sends message to the server and
     processes the replies sent back by the server
+
+param:
+    void *requester: pointer to the zmq requester socket
+    remote_char_t *message: pointer to the message variable
+
+return:
+    int: 0 if the game is still running, -1 if the user wants to quit
 */
 int process_server_messages(void *requester, remote_char_t *message)
 {
