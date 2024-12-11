@@ -916,7 +916,11 @@ int main()
                 update.pos_x = char_data[i].pos_x;
                 update.pos_y = char_data[i].pos_y;
                 update.ch = char_data[i].ch;
-                zmq_send(publisher, &update, sizeof(screen_update_t), 0);
+                if (zmq_send(publisher, &update, sizeof(screen_update_t), 0) == -1)
+                {
+                    perror("Server zmq_send failed");
+                    return EXIT_FAILURE;
+                }
             }
 
             update_scoreboard(score_win, char_data, n_chars, alien_count, publisher);
