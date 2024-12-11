@@ -674,6 +674,21 @@ int main()
                             {
                                 mvwprintw(my_win, 12 + i, 10, "%c - %d", char_data[i].ch, char_data[i].score);
                             }
+
+                            
+                            // Build the update to send to outer-space-display
+                            screen_update_t update;
+                            update.ch = 'o';
+                            update.player_count = n_chars;
+
+                            for (int i = 0; i < n_chars; i++)
+                            {
+                                update.players[i] = char_data[i].ch;
+                                update.scores[i] = char_data[i].score;
+                            }
+
+                            zmq_send(publisher, &update, sizeof(screen_update_t), 0);
+
                             wrefresh(my_win);
                             wrefresh(score_win);
                             sleep(5);

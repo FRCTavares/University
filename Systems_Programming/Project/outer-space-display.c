@@ -36,7 +36,6 @@ int main()
         zmq_ctx_term(context);
         return -1;
     }
-
     if (zmq_connect(subscriber, SERVER_PUBLISH_ADDRESS) != 0)
     {
         perror("Outer space display zmq_connect failed");
@@ -64,6 +63,9 @@ int main()
     keypad(stdscr, TRUE);
     noecho();
 
+    /*
+    Initialize the Game and Score windows side by side
+    */
     WINDOW *my_win = newwin(WINDOW_SIZE, WINDOW_SIZE, 0, 0);
     if (my_win == NULL)
     {
@@ -71,7 +73,6 @@ int main()
         perror("Failed to create window");
         return -1;
     }
-
     box(my_win, 0, 0);
     if (wrefresh(my_win) == ERR)
     {
@@ -86,7 +87,6 @@ int main()
         perror("Failed to create window");
         return -1;
     }
-
     box(score_win, 0, 0);
     if (wrefresh(score_win) == ERR)
     {
@@ -96,10 +96,15 @@ int main()
 
     screen_update_t update;
 
+
+    /*
+    Main loop
+    Wait to receive the published messages from the server and process them
+    */
     while (1)
     {
+        //Receive published update
         int rc = zmq_recv(subscriber, &update, sizeof(screen_update_t), 0);
-
         if (rc == -1)
         {
             perror("Outer space display zmq_recv failed");
@@ -111,30 +116,9 @@ int main()
             return -1;
         }
 
-        // Screen Updates
-        if (update.ch != 's')
-        {
-            if (wmove(my_win, update.pos_x, update.pos_y) == ERR)
-            {
-                fprintf(stderr, "wmove failed\n");
-                return -1;
-            }
-
-            if (waddch(my_win, update.ch | A_BOLD) == ERR)
-            {
-                fprintf(stderr, "waddch failed\n");
-                return -1;
-            }
-
-            if (wrefresh(my_win) == ERR)
-            {
-                fprintf(stderr, "wrefresh failed\n");
-                return -1;
-            }
-        }
-
+  
         // Score updates
-        else
+        if(update.ch == 's')
         {
             if (werase(score_win) == ERR)
             {
@@ -155,6 +139,58 @@ int main()
             box(score_win, 0, 0); // Draw the border
 
             if (wrefresh(score_win) == ERR)
+            {
+                fprintf(stderr, "wrefresh failed\n");
+                return -1;
+            }
+        }
+
+        //Game over
+        else if(update.ch == 'o'){
+            
+            werase(my_win);
+            werase(score_win);
+            mvwprintw(my_win, 10, 10, "GAME OVER");
+            // Print final scores
+            for (int i = 0; i < update.player_count; i++)
+            {
+                mvwprintw(my_win, 12 + i, 10, "%c - %d", update.players[i], update.scores[i]);
+            }
+
+            
+
+            if (wrefresh(my_win) == ERR)
+            {
+                fprintf(stderr, "wrefresh failed\n");
+                return -1;
+            }
+
+            if (wrefresh(score_win) == ERR)
+            {
+                fprintf(stderr, "wrefresh failed\n");
+                return -1;
+            }
+
+            sleep(5);
+            break;
+        }
+
+        //game window change
+        else
+        {
+            if (wmove(my_win, update.pos_x, update.pos_y) == ERR)
+            {
+                fprintf(stderr, "wmove failed\n");
+                return -1;
+            }
+
+            if (waddch(my_win, update.ch | A_BOLD) == ERR)
+            {
+                fprintf(stderr, "waddch failed\n");
+                return -1;
+            }
+
+            if (wrefresh(my_win) == ERR)
             {
                 fprintf(stderr, "wrefresh failed\n");
                 return -1;
