@@ -1,0 +1,9 @@
+{
+    "makefile.launchConfigurations": [
+        {
+            "cwd": "/home/jnos/SYNC-Folder/CurrentWork/Docencia/23-24/2-PSIS/labs/S6 - Lab 11/zmq-mt-pub-sub",
+            "binaryPath": "/home/jnos/SYNC-Folder/CurrentWork/Docencia/23-24/2-PSIS/labs/S6 - Lab 11/zmq-mt-pub-sub/zmq-mt-pub-sub",
+            "binaryArgs": []
+        }
+    ]
+}
