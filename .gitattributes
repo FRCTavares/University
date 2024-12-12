@@ -1,2 +1,4 @@
 Deep_Learning/Homework[[:space:]]1.zip filter=lfs diff=lfs merge=lfs -text
 Deep_Learning/Homework[[:space:]]1/skeleton_code/intel_landscapes.npz filter=lfs diff=lfs merge=lfs -text
+1[[:space:]]-[[:space:]]Deep[[:space:]]Learning/Homework[[:space:]]1.zip filter=lfs diff=lfs merge=lfs -text
+1[[:space:]]-[[:space:]]Deep[[:space:]]Learning/Homework[[:space:]]1/skeleton_code/intel_landscapes.npz filter=lfs diff=lfs merge=lfs -text
