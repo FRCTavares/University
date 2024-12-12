@@ -1,0 +1,17 @@
+# depslib dependency file v1.0
+1650912533 source:/home/kubuntu/Documents/palavras/main.c
+	<stdio.h>
+	<stdlib.h>
+	<string.h>
+	<stdio.h>
+	<unistd.h>
+	<getopt.h>
+
+1650912823 source:c:\martinha\ist\programacao\palavras\main.c
+	<stdio.h>
+	<stdlib.h>
+	<string.h>
+	<stdio.h>
+	<unistd.h>
+	<getopt.h>
+
