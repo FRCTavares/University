@@ -69,45 +69,61 @@ def draw_sine_waves(screen, color, width, height):
     return wave1_points, wave2_points
 
 
-def detect_collision(car_rect, wave_points):
+def detect_collision(car_mask, car_rect, wave_mask, wave_rect):
     """
-    Detect collision between the car and the sine waves.
+    Detect collision between the car and the sine waves using masks.
     """
-    for point in wave_points:
-        if car_rect.collidepoint(point):
-            collision_point = point
-            print(f"Collision at {collision_point}")
-            return collision_point
+    offset = (wave_rect.left - car_rect.left, wave_rect.top - car_rect.top)
+    overlap = car_mask.overlap(wave_mask, offset)
+    if overlap:
+        collision_point = (car_rect.left + overlap[0], car_rect.top + overlap[1])
+        print(f"Collision at {collision_point}")
+        return collision_point
     return None
 
 
+def normalize_angle(angle):
+    """
+    Normalize an angle to the range [0, 2π).
+    """
+    return angle % (2 * math.pi)
+
 def simulate_sensors(car_pos, car_angle, sensor_angles, sensor_length, screen, wave_points):
     """
-    Simulate sensors and detect if they detect the sine waves.
+    Simulate sensors fixed to the car frame and detect if they detect the sine waves.
     """
     detections = []
     for angle_offset in sensor_angles:
-        total_angle = car_angle + math.radians(angle_offset)
+        # Normalize total angle
+        total_angle = normalize_angle(car_angle + math.radians(angle_offset))
         end_x = car_pos[0] + sensor_length * math.cos(total_angle)
-        end_y = car_pos[1] - sensor_length * math.sin(total_angle)
+        end_y = car_pos[1] + sensor_length * math.sin(total_angle)
         pygame.draw.line(screen, (0, 255, 0), car_pos, (end_x, end_y), 1)
 
-        # Check for intersection with wave points
+        # Find the closest intersection point within the sensor's range and angle tolerance
+        closest_point = None
+        min_distance = sensor_length
         for point in wave_points:
             dx = point[0] - car_pos[0]
             dy = point[1] - car_pos[1]
             distance = math.hypot(dx, dy)
-            angle_point = math.atan2(-dy, dx)
-            angle_diff = abs(total_angle - angle_point)
-            if distance <= sensor_length and angle_diff < math.radians(2):
-                pygame.draw.circle(screen, (255, 255, 0), point, 5)
-                detections.append(point)
-                break
+            if distance > sensor_length:
+                continue
+            angle_point = normalize_angle(math.atan2(dy, dx))
+            # Calculate the smallest difference between angles
+            angle_diff = min(abs(total_angle - angle_point), 2 * math.pi - abs(total_angle - angle_point))
+            if angle_diff < math.radians(2):
+                if distance < min_distance:
+                    min_distance = distance
+                    closest_point = point
+        if closest_point:
+            pygame.draw.circle(screen, (255, 255, 0), closest_point, 5)
+            detections.append(closest_point)
     return detections
-
 
 # Initialize pygame
 pygame.init()
+pygame.font.init()  # Initialize the font module
 
 # Screen dimensions
 scale = 2
@@ -119,10 +135,14 @@ RED = (200, 0, 0)
 BLUE = (0, 0, 200)
 BLACK = (0, 0, 0)
 
+
 # Initialize the screen
 screen = pygame.display.set_mode((WIDTH, HEIGHT))
 pygame.display.set_caption("Car Simulation with Sensors and Collision Detection")
 
+x_button_font = pygame.font.SysFont(None, 36)
+x_button_text = x_button_font.render('X', True, WHITE)
+x_button_rect = x_button_text.get_rect(center=(50, 100))
 # Car attributes
 car_width, car_height = 100, 40
 x, y = WIDTH // 2, HEIGHT // 2
@@ -134,19 +154,21 @@ scale_m = 20
 max_phi = math.radians(30)  # Maximum steering angle in radians
 
 # Sensor attributes
-sensor_angles = [-60, -30, 0, 30, 60]  # Angles relative to the car's direction
+sensor_angles = [-60, -45, -30, -15, 0, 15, 30, 45, 60]  # Added -45°, -15°, 15°, and 45°
 sensor_length = 300  # Length of the sensor rays
 
 # Main game loop
 running = True
 clock = pygame.time.Clock()
 
+# Main game loop
 while running:
     screen.fill(BLACK)  # Clear the screen with black background
     initial_state = np.array([x, y, theta, phi])
 
-    # Draw sine waves and get their points
-    wave1_points, wave2_points = draw_sine_waves(screen, WHITE, WIDTH, HEIGHT)
+    # Draw sine waves on a separate surface
+    wave_surface = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+    wave1_points, wave2_points = draw_sine_waves(wave_surface, WHITE, WIDTH, HEIGHT)
 
     # Combine all wave points
     all_wave_points = wave1_points + wave2_points
@@ -155,6 +177,9 @@ while running:
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
             running = False
+        elif event.type == pygame.MOUSEBUTTONDOWN:
+            if x_button_rect.collidepoint(event.pos):
+                running = False
 
     # Get keys pressed
     keys = pygame.key.get_pressed()
@@ -174,6 +199,7 @@ while running:
 
     # Simulate motion
     x, y, theta, phi = simulate_motion(initial_state, V, omega, L, dt, max_phi)
+    theta = normalize_angle(theta)
 
     # Draw the car (rotated)
     car_surface = pygame.Surface((car_width, car_height), pygame.SRCALPHA)
@@ -182,14 +208,33 @@ while running:
     car_rect = rotated_car.get_rect(center=(x, y))
     screen.blit(rotated_car, car_rect.topleft)
 
+    # Draw the wheel (rotated)
+    wheel_surface = pygame.Surface((car_width / 3, car_height / 5), pygame.SRCALPHA)
+    wheel_surface.fill(BLUE)
+    rotated_wheel = pygame.transform.rotate(wheel_surface, -math.degrees(theta) - math.degrees(phi))
+    wheel_rect = rotated_wheel.get_rect(center=(x + (L / 2 - 10) * math.cos(theta), y + (L / 2 - 10) * math.sin(theta)))
+    screen.blit(rotated_wheel, wheel_rect.topleft)
+
+    # Create masks for collision detection
+    car_mask = pygame.mask.from_surface(rotated_car)
+    wave_mask = pygame.mask.from_surface(wave_surface)
+    wave_rect = wave_surface.get_rect()
+
+    # Blit the wave surface onto the main screen
+    screen.blit(wave_surface, (0, 0))
+
     # Simulate sensors
     car_pos = (x, y)
     detections = simulate_sensors(car_pos, theta, sensor_angles, sensor_length, screen, all_wave_points)
 
-    # Detect collision
-    collision_point = detect_collision(car_rect, all_wave_points)
+    # Detect collision using masks
+    collision_point = detect_collision(car_mask, car_rect, wave_mask, wave_rect)
     if collision_point:
         pygame.draw.circle(screen, (255, 0, 0), collision_point, 5)
+
+    # Draw the X button
+    pygame.draw.rect(screen, (255, 0, 0), x_button_rect)    
+    screen.blit(x_button_text, x_button_rect)
 
     # Update the display
     pygame.display.flip()
