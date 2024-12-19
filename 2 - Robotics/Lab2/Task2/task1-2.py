@@ -50,6 +50,7 @@ WIDTH, HEIGHT = 800*scale, 600*scale
 
 # Colors
 WHITE = (255, 255, 255)
+BLACK = (0, 0, 0)
 RED = (200, 0, 0)
 BLUE = (0, 0, 200)
 
@@ -74,7 +75,7 @@ running = True
 clock = pygame.time.Clock()
 
 while running:
-    screen.fill(WHITE)  # Clear the screen
+    screen.fill(BLACK)  # Clear the screen
     initial_state = np.array([x, y, theta, phi])
 
     # Event handling
