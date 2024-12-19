@@ -4,6 +4,7 @@ import pygame
 import sys
 import math
 import numpy as np
+import matplotlib.pyplot as plt
 
 
 def kinematics_matrix(theta, phi, V, omega, L):
@@ -88,7 +89,7 @@ def normalize_angle(angle):
     """
     return angle % (2 * math.pi)
 
-def simulate_sensors(car_pos, car_angle, sensor_angles, sensor_length, screen, wave_points):
+def simulate_sensors(car_pos, car_angle, sensor_angles, sensor_length, screen, all_wave_points, wave1_points, wave2_points):
     """
     Simulate sensors fixed to the car frame and detect if they detect the sine waves.
     """
@@ -103,7 +104,7 @@ def simulate_sensors(car_pos, car_angle, sensor_angles, sensor_length, screen, w
         # Find the closest intersection point within the sensor's range and angle tolerance
         closest_point = None
         min_distance = sensor_length
-        for point in wave_points:
+        for point in all_wave_points:
             dx = point[0] - car_pos[0]
             dy = point[1] - car_pos[1]
             distance = math.hypot(dx, dy)
@@ -156,6 +157,11 @@ max_phi = math.radians(30)  # Maximum steering angle in radians
 # Sensor attributes
 sensor_angles = [-60, -45, -30, -15, 0, 15, 30, 45, 60]  # Added -45°, -15°, 15°, and 45°
 sensor_length = 300  # Length of the sensor rays
+
+# Initialize data storage
+top_detections = []
+bottom_detections = []
+
 
 # Main game loop
 running = True
@@ -225,12 +231,25 @@ while running:
 
     # Simulate sensors
     car_pos = (x, y)
-    detections = simulate_sensors(car_pos, theta, sensor_angles, sensor_length, screen, all_wave_points)
+    detections = simulate_sensors(car_pos, theta, sensor_angles, sensor_length, screen, all_wave_points, wave1_points, wave2_points)
+
+    # Count top and bottom detections
+    top_count = 0
+    bottom_count = 0
+    for detection in detections:
+        if detection in wave1_points:
+            top_count += 1
+        elif detection in wave2_points:
+            bottom_count += 1
+    top_detections.append(top_count)
+    bottom_detections.append(bottom_count)
 
     # Detect collision using masks
     collision_point = detect_collision(car_mask, car_rect, wave_mask, wave_rect)
     if collision_point:
         pygame.draw.circle(screen, (255, 0, 0), collision_point, 5)
+
+    
 
     # Draw the X button
     pygame.draw.rect(screen, (255, 0, 0), x_button_rect)    
@@ -242,6 +261,14 @@ while running:
     # Limit frames per second
     clock.tick(60)
 
-# Quit pygame
+# Plot detection counts
+plt.plot(top_detections, label='Top Lane Detections')
+plt.plot(bottom_detections, label='Bottom Lane Detections')
+plt.xlabel('Time (frames)')
+plt.ylabel('Number of Detections')
+plt.title('Lane Line Detections Over Time')
+plt.legend()
+plt.show()
+
 pygame.quit()
 sys.exit()
