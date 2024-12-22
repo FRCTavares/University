@@ -88,24 +88,28 @@ def draw_center_lane(screen, color, width, height, dash_length=20, gap_length=20
 
 def draw_sine_waves(screen, color, width, height):
     """
-    Draw sine waves and the center lane on the screen.
+    Draw two sine waves across the screen and return their points.
     """
-    top_y = height // 2 - 75
-    bottom_y = top_y + 175
+    amplitude1 = 100  # Amplitude of the first wave
+    frequency1 = 1   # Frequency of the first wave
+
+    amplitude2 = 100  # Amplitude of the second wave
+    frequency2 = 2    # Frequency of the second wave
 
     wave1_points = []
     wave2_points = []
 
-    for x in range(width):
-        pygame.draw.circle(screen, color, (x, top_y), 2)
-        wave1_points.append((x, top_y))
+    # First sine wave
+    for x in range(0, width):
+        y1 = 100 + int(height // 2 + amplitude1 * math.sin(2 * math.pi * frequency1 * x / width))
+        pygame.draw.circle(screen, color, (x, y1), 2)
+        wave1_points.append((x, y1))
 
-    for x in range(width):
-        pygame.draw.circle(screen, color, (x, bottom_y), 2)
-        wave2_points.append((x, bottom_y))
-    
-    # Draw center lane
-    draw_center_lane(screen, WHITE, width, height)
+    # Second sine wave
+    for x in range(0, width):
+        y2 = -100 + int(height // 2 + amplitude1 * math.sin(2 * math.pi * frequency1 * x / width))
+        pygame.draw.circle(screen, color, (x, y2), 2)
+        wave2_points.append((x, y2))
 
     return wave1_points, wave2_points
 
@@ -159,6 +163,49 @@ def simulate_sensors(car_pos, car_angle, sensor_angles, sensor_length, screen, a
 
     return top_distance, bottom_distance
 
+def simulate_cone_sensor(
+    car_pos, car_angle, cone_half_angle_degrees, sensor_length, 
+    screen, all_wave_points, wave1_points, wave2_points
+):
+    """
+    Simulate a continuous cone sensor centered on car_angle with width of
+    2 * cone_half_angle_degrees. Returns the closest top and bottom wave
+    detections: (top_distance, top_angle, bottom_distance, bottom_angle).
+    """
+    cone_half_angle = math.radians(cone_half_angle_degrees)
+    
+    top_distance = None
+    top_angle = None
+    bottom_distance = None
+    bottom_angle = None
+
+    for point in all_wave_points:
+        dx = point[0] - car_pos[0]
+        dy = point[1] - car_pos[1]
+        dist = math.hypot(dx, dy)
+        if dist > sensor_length:
+            continue
+        
+        angle_to_point = normalize_angle(math.atan2(dy, dx))
+        angle_diff = min(
+            abs(car_angle - angle_to_point),
+            2 * math.pi - abs(car_angle - angle_to_point)
+        )
+        
+        if angle_diff <= cone_half_angle:
+            # Draw detection
+            pygame.draw.line(screen, (0,255,0), car_pos, point, 1)
+            # Keep track of closest top/bottom
+            if point in wave1_points:  # top wave
+                if top_distance is None or dist < top_distance:
+                    top_distance = dist
+                    top_angle = math.degrees(angle_diff)
+            elif point in wave2_points:  # bottom wave
+                if bottom_distance is None or dist < bottom_distance:
+                    bottom_distance = dist
+                    bottom_angle = math.degrees(angle_diff)
+    
+    return top_distance, top_angle, bottom_distance, bottom_angle
 
 def pd_controller(error, prev_error, Kp, Kd, dt):
     """
@@ -217,25 +264,16 @@ def main():
     last_top_distance = float('inf')
     last_bottom_distance = float('inf')
 
-    # PD controller parameters
     prev_error = 0
-
-    # Main game loop
     running = True
     clock = pygame.time.Clock()
 
     while running:
-        screen.fill(BLACK)  # Clear the screen with black background
-        initial_state = np.array([car.x, car.y, car.theta, car.phi])
-
-        # Draw sine waves on a separate surface
+        screen.fill(BLACK)
         wave_surface = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
         wave1_points, wave2_points = draw_sine_waves(wave_surface, WHITE, WIDTH, HEIGHT)
-
-        # Combine all wave points
         all_wave_points = wave1_points + wave2_points
 
-        # Event handling
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 running = False
@@ -243,22 +281,29 @@ def main():
                 if x_button_rect.collidepoint(event.pos):
                     running = False
 
-        # Get keys pressed
+        # Key input for movement mechanics
         keys = pygame.key.get_pressed()
-        if keys[pygame.K_UP]:  # Move forward
+        if keys[pygame.K_LEFT]:
+            car.omega = -1
+        elif keys[pygame.K_RIGHT]:
+            car.omega = 1
+        else:
+            car.omega = 0
+
+        if keys[pygame.K_UP]:
             car.V = 5 * scale_m
-        elif keys[pygame.K_DOWN]:  # Move backward
+        elif keys[pygame.K_DOWN]:
             car.V = -5 * scale_m
         else:
-            car.V = 0  # Reset linear velocity
+            car.V = 0
 
-        # Simulate motion
+        # Update car state
         car.update_state()
 
-        # Draw the car
+        # Draw car
         car.draw(screen)
 
-        # Create masks for collision detection
+        # Create masks for collision
         car_mask_surface = pygame.Surface((car_width, car_height), pygame.SRCALPHA)
         pygame.draw.rect(car_mask_surface, WHITE, (0, 0, car_width, car_height))
         rotated_car_mask = pygame.transform.rotate(car_mask_surface, -math.degrees(car.theta))
@@ -267,63 +312,57 @@ def main():
 
         wave_mask = pygame.mask.from_surface(wave_surface)
         wave_rect = wave_surface.get_rect()
-
-        # Blit the wave surface onto the main screen
         screen.blit(wave_surface, (0, 0))
 
         # Simulate sensors
-        car_pos = (car.x, car.y)
-        # Calculate front position of the car
         front_x = car.x + (car_width / 2) * math.cos(car.theta)
         front_y = car.y + (car_width / 2) * math.sin(car.theta)
         front_pos = (front_x, front_y)
+        top_distance, top_angle, bottom_distance, bottom_angle = simulate_cone_sensor(
+            front_pos, car.theta, 60, sensor_length, screen, all_wave_points, wave1_points, wave2_points
+        )
 
-        # Simulate sensors from the front of the car
-        top_distance, bottom_distance = simulate_sensors(front_pos, car.theta, sensor_angles, sensor_length, screen, all_wave_points, wave1_points, wave2_points)
-
-        # If not detected, use last known distance
         if top_distance is None:
             top_distance = last_top_distance
         if bottom_distance is None:
             bottom_distance = last_bottom_distance
 
-        # Store and remember distances
+        font = pygame.font.SysFont(None, 24)
+        if top_distance is not None and top_angle is not None:
+            top_info = font.render(f"Top: {top_distance:.2f}m @ {top_angle:.2f}°", True, WHITE)
+            screen.blit(top_info, (400, 70))
+        if bottom_distance is not None and bottom_angle is not None:
+            bottom_info = font.render(f"Bottom: {bottom_distance:.2f}m @ {bottom_angle:.2f}°", True, WHITE)
+            screen.blit(bottom_info, (400, 90))
+
         top_distances.append(top_distance)
         bottom_distances.append(bottom_distance)
         last_top_distance = top_distance
         last_bottom_distance = bottom_distance
 
-        # Calculate the distance to the lane center
         if top_distance is not None and bottom_distance is not None:
-            lane_center_distance = (top_distance + bottom_distance) / 2
-            distance_to_center = bottom_distance - lane_center_distance
+            # Swap if needed
+            if top_distance > bottom_distance:
+                top_distance, bottom_distance = bottom_distance, top_distance
 
-            # Display the distance on the screen
-            font = pygame.font.SysFont(None, 24)
-            distance_text = font.render(f'Distance to Lane Center: {distance_to_center:.2f}', True, WHITE)
-            screen.blit(distance_text, (400, 100))
+            distance_to_center = (bottom_distance - top_distance) / 2
+            dist_text = font.render(f"Distance to Lane Center: {distance_to_center:.2f}", True, WHITE)
+            screen.blit(dist_text, (400, 110))
 
-            # PD controller to adjust steering angle
             control = pd_controller(distance_to_center, prev_error, Kp, Kd, dt)
             car.phi = control
             prev_error = distance_to_center
 
-        ''' Detect collision using masks
+        # Check collision
         collision_point = detect_collision(car_mask, car_rect, wave_mask, wave_rect)
         if collision_point:
-            pygame.draw.circle(screen, (255, 0, 0), collision_point, 5)'''
+            pygame.draw.circle(screen, (255, 0, 0), collision_point, 5)
 
-        # Draw the X button
-        pygame.draw.rect(screen, (255, 0, 0), x_button_rect)    
+        pygame.draw.rect(screen, (255, 0, 0), x_button_rect)
         screen.blit(x_button_text, x_button_rect)
-
-        # Update the display
         pygame.display.flip()
-
-        # Limit frames per second
         clock.tick(60)
 
-    # After main loop, plot the distances
     plt.plot(top_distances, label='Top Lane Distance')
     plt.plot(bottom_distances, label='Bottom Lane Distance')
     plt.xlabel('Time (frames)')
