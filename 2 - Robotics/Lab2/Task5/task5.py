@@ -31,6 +31,11 @@ max_phi = math.radians(30)  # Maximum steering angle in radians
 sensor_angles = [-60, -45, -30, -15, 0, 15, 30, 45, 60]  # Added angles
 sensor_length = 300  # Length of the sensor rays
 
+# Define a safe threshold and PD controller parameters
+SAFE_THRESHOLD = 2
+Kp = 0.1
+Kd = 0.01
+
 # Colors
 WHITE = (255, 255, 255)
 RED = (200, 0, 0)
@@ -154,10 +159,7 @@ def simulate_sensors(car_pos, car_angle, sensor_angles, sensor_length, screen, a
 
     return top_distance, bottom_distance
 
-# Define a safe threshold
-SAFE_THRESHOLD = 2
 
-# PD controller to compute the steering angle correction
 def pd_controller(error, prev_error, Kp, Kd, dt):
     """
     PD controller to compute the steering angle correction.
@@ -216,8 +218,6 @@ def main():
     last_bottom_distance = float('inf')
 
     # PD controller parameters
-    Kp = 0.1
-    Kd = 0.01
     prev_error = 0
 
     # Main game loop
