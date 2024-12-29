@@ -28,18 +28,26 @@ class ConvBlock(nn.Module):
         super().__init__()
 
         # Q2.1. Initialize convolution, maxpool, activation and dropout layers 
-        
+        self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1)
+        self.relu = nn.ReLU()
+        self.pool = nn.MaxPool2d(kernel_size=2, stride=2)
+        self.dropout_layer = nn.Dropout(0.1)
         
         # Q2.2 Initialize batchnorm layer 
-        
-        raise NotImplementedError
+        #raise NotImplementedError
 
     def forward(self, x):
         # input for convolution is [b, c, w, h]
         
         # Implement execution of layers in right order
+        x = self.conv(x)
+        x = self.relu(x)
+        x = self.pool(x)
+        x = self.dropout_layer(x)
 
-        raise NotImplementedError
+        #raise NotImplementedError
+
+        return x
 
 
 class CNN(nn.Module):
@@ -52,19 +60,37 @@ class CNN(nn.Module):
         self.batch_norm = batch_norm
 
         # Initialize convolutional blocks
+        self.block1 = ConvBlock(channels[0], channels[1], 3)
+        self.block2 = ConvBlock(channels[1], channels[2], 3)
+        self.block3 = ConvBlock(channels[2], channels[3], 3)
         
         # Initialize layers for the MLP block
         # For Q2.2 initalize batch normalization
-        
+        self.fc1 = nn.Linear(128 * 6 * 6, fc1_out_dim)
+        self.relu1 = nn.ReLU()
+        self.drop1 = nn.Dropout(0.1)
+        self.fc2 = nn.Linear(fc1_out_dim, fc2_out_dim)
+        self.relu2 = nn.ReLU()
+        self.fc3 = nn.Linear(fc2_out_dim, 6)  # Example: 6 classes
 
     def forward(self, x):
         x = x.reshape(x.shape[0], 3, 48, -1)
 
         # Implement execution of convolutional blocks 
+        x = self.block1(x)
+        x = self.block2(x)
+        x = self.block3(x)
         
         # Flattent output of the last conv block
-        
+        x = x.view(x.size(0), -1)
+
         # Implement MLP part
+        x = self.fc1(x)
+        x = self.relu1(x)
+        x = self.drop1(x)
+        x = self.fc2(x)
+        x = self.relu2(x)
+        x = self.fc3(x)
         
         # For Q2.2 implement global averag pooling
         
@@ -150,7 +176,7 @@ def main():
                         choices=['sgd', 'adam'], default='sgd')
     parser.add_argument('-no_maxpool', action='store_true')
     parser.add_argument('-no_batch_norm', action='store_true')
-    parser.add_argument('-data_path', type=str, default='intel_landscapes.v2.npz',)
+    parser.add_argument('-data_path', type=str, default='intel_landscapes.npz',)
     parser.add_argument('-device', choices=['cpu', 'cuda', 'mps'], default='cpu')
 
     opt = parser.parse_args()
@@ -219,6 +245,7 @@ def main():
     plot(epochs, valid_accs, ylabel='Accuracy', name='CNN-3-valid-accuracy-{}-{}'.format(sufix, test_acc_str))
 
     print('Number of trainable parameters: ', get_number_trainable_params(model))
+
 
 if __name__ == '__main__':
     main()
