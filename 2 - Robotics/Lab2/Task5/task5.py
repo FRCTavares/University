@@ -92,6 +92,30 @@ def draw_road_lanes(screen, color, width, height):
         y_center = 0 + int(height // 2 + amplitude1 * math.sin(2 * math.pi * frequency1 * x / width))
         pygame.draw.circle(screen, color, (x, y_center), 1)
         waves_center.append((x, y_center))
+    
+    """
+    Draw to straight horizontal lines across the screen and return their points.
+    As well as its center line.
+    """
+    '''
+    # First straight horizontal line
+    for x in range(0, width):
+        y1 = 150 + int(height // 2)
+        pygame.draw.circle(screen, color, (x, y1), 2)
+        wave1_points.append((x, y1))
+
+    # Second straight horizontal line
+    for x in range(0, width):
+        y2 = -150 + int(height // 2)
+        pygame.draw.circle(screen, color, (x, y2), 2)
+        wave2_points.append((x, y2))
+
+    # Draw the center line
+    for x in range(0, width):
+        y_center = 0 + int(height // 2)
+        pygame.draw.circle(screen, color, (x, y_center), 1)
+        waves_center.append((x, y_center))'''
+
 
     return wave1_points, wave2_points
 
@@ -174,13 +198,18 @@ def main():
     x_button_rect = x_button_text.get_rect(center=(50, 100))
 
     # Initialize the car
-    car = Car(x=WIDTH // 2, y=HEIGHT // 2)
+    car = Car(x=WIDTH // 20, y=HEIGHT // 2)
 
     # Initialize data storage
     top_distances = []
     bottom_distances = []
     last_top_distance = float('inf')
     last_bottom_distance = float('inf')
+    distance_to_center = 0
+
+    Kp = 0.1 # Proportional gain
+    Kd = 0.05 # Derivative gain
+    previous_error = 0
 
     # Main loop
     running = True
@@ -204,6 +233,15 @@ def main():
         keys = pygame.key.get_pressed()
         user_steering = False  # Flag to check if user is steering
 
+        # Throttle control (manual)
+        if keys[pygame.K_UP]:
+            car.V = 6 * scale_m
+        elif keys[pygame.K_DOWN]:
+            car.V = -6 * scale_m
+        else:
+            car.V = 0
+
+        # if use manually steers, override the controller
         if keys[pygame.K_LEFT]:
             car.omega = -1
             user_steering = True
@@ -211,14 +249,12 @@ def main():
             car.omega = 1
             user_steering = True
         else:
-            car.omega = 0
+            # If no manual steering, use a simple proportional controller
+            error = distance_to_center
+            derivative = (error - previous_error) / dt
+            car.omega = -Kp * error - Kd * derivative
+            previous_error = error
 
-        if keys[pygame.K_UP]:
-            car.V = 6 * scale_m
-        elif keys[pygame.K_DOWN]:
-            car.V = -6 * scale_m
-        else:
-            car.V = 0
 
         # Update the car's state
         car.update_state()
@@ -248,7 +284,7 @@ def main():
 
         # Render and display the distance to the center of the road
         # Compute lane deviation and road alignment
-        lane_deviation = (bottom_distance - top_distance) / 2  # Signed distance to center
+        lane_deviation = (top_distance - bottom_distance) / 2  # Signed distance to center
         distance_to_center = lane_deviation  # Assuming lane_deviation represents the distance to center
         center_info = font.render(f"Distance to Center: {distance_to_center:.2f}m", True, WHITE)
         screen.blit(center_info, (400, 110))
