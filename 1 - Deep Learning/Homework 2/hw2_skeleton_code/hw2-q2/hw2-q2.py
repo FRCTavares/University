@@ -169,7 +169,9 @@ def plot(epochs, plottable, ylabel='', name=''):
 
 
 def get_number_trainable_params(model):
-    raise NotImplementedError
+    # Sum the number of elements for all trainable parameters
+    return sum(p.numel() for p in model.parameters() if p.requires_grad)
+    #raise NotImplementedError
 
 
 def plot_file_name_sufix(opt, exlude):
