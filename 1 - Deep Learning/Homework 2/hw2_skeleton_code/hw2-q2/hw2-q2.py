@@ -13,6 +13,66 @@ import numpy as np
 
 import utils
 
+class CNN_Old(nn.Module):
+    def __init__(self, dropout_prob=0.1, conv_bias=True):
+        super(CNN_Old, self).__init__()
+        channels = [3, 32, 64, 128]
+        fc1_out_dim = 1024
+        fc2_out_dim = 512
+
+        # Convolutional blocks WITHOUT batch normalization
+        self.block1 = nn.Sequential(
+            nn.Conv2d(channels[0], channels[1], kernel_size=3, stride=1, padding=1),
+            nn.ReLU(),
+            nn.MaxPool2d(kernel_size=2, stride=2),
+            nn.Dropout(dropout_prob)
+        )
+        self.block2 = nn.Sequential(
+            nn.Conv2d(channels[1], channels[2], kernel_size=3, stride=1, padding=1),
+            nn.ReLU(),
+            nn.MaxPool2d(kernel_size=2, stride=2),
+            nn.Dropout(dropout_prob)
+        )
+        self.block3 = nn.Sequential(
+            nn.Conv2d(channels[2], channels[3], kernel_size=3, stride=1, padding=1),
+            nn.ReLU(),
+            nn.MaxPool2d(kernel_size=2, stride=2),
+            nn.Dropout(dropout_prob)
+        )
+
+        # Flatten instead of global average pooling
+        # MLP part
+        self.fc1 = nn.Linear(channels[3] * (48 // 2 // 2 // 2) * (48 // 2 // 2 // 2), fc1_out_dim)
+        self.relu1 = nn.ReLU()
+        self.drop1 = nn.Dropout(dropout_prob)
+
+        self.fc2 = nn.Linear(fc1_out_dim, fc2_out_dim)
+        self.relu2 = nn.ReLU()
+
+        self.fc3 = nn.Linear(fc2_out_dim, 6)  # Example: 6 classes
+
+    def forward(self, x):
+        # x shape: (B, 3, 48, 48) if already reshaped
+        x = x.reshape(x.shape[0], 3, 48, -1)
+
+        x = self.block1(x)
+        x = self.block2(x)
+        x = self.block3(x)
+
+        # Flatten
+        x = x.view(x.size(0), -1)
+
+        x = self.fc1(x)
+        x = self.relu1(x)
+        x = self.drop1(x)
+
+        x = self.fc2(x)
+        x = self.relu2(x)
+
+        x = self.fc3(x)
+
+        return F.log_softmax(x, dim=1)
+
 
 class ConvBlock(nn.Module):
     def __init__(
@@ -185,54 +245,48 @@ def plot_file_name_sufix(opt, exlude):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('-epochs', default=40, type=int,
-                        help="""Number of epochs to train for. You should not
-                        need to change this value for your plots.""")
-    parser.add_argument('-batch_size', default=8, type=int,
-                        help="Size of training batch.")
-    parser.add_argument('-learning_rate', type=float, default=0.01,
-                        help="""Learning rate for parameter updates""")
+    parser.add_argument('-epochs', default=40, type=int)
+    parser.add_argument('-batch_size', default=8, type=int)
+    parser.add_argument('-learning_rate', type=float, default=0.01)
     parser.add_argument('-l2_decay', type=float, default=0)
     parser.add_argument('-dropout', type=float, default=0.1)
-    parser.add_argument('-optimizer',
-                        choices=['sgd', 'adam'], default='sgd')
+    parser.add_argument('-optimizer', choices=['sgd', 'adam'], default='sgd')
     parser.add_argument('-no_maxpool', action='store_true')
     parser.add_argument('-no_batch_norm', action='store_true')
-    parser.add_argument('-data_path', type=str, default='intel_landscapes.npz',)
+    parser.add_argument('-data_path', type=str, default='intel_landscapes.npz')
     parser.add_argument('-device', choices=['cpu', 'cuda', 'mps'], default='cpu')
 
-    opt = parser.parse_args()
+    # New flag to select the old or new model
+    parser.add_argument('-old_model', action='store_true',
+                        help="Use old model without BN & global avg pooling")
 
-    # Setting seed for reproducibility
+    opt = parser.parse_args()
     utils.configure_seed(seed=42)
 
-    # Load data
     data = utils.load_dataset(data_path=opt.data_path)
     dataset = utils.ClassificationDataset(data)
-    train_dataloader = DataLoader(
-        dataset, batch_size=opt.batch_size, shuffle=True)
+    train_dataloader = DataLoader(dataset, batch_size=opt.batch_size, shuffle=True)
     dev_X, dev_y = dataset.dev_X.to(opt.device), dataset.dev_y.to(opt.device)
     test_X, test_y = dataset.test_X.to(opt.device), dataset.test_y.to(opt.device)
 
-    # initialize the model
-    model = CNN(
-        opt.dropout,
-        maxpool=not opt.no_maxpool,
-        batch_norm=not opt.no_batch_norm
-    ).to(opt.device)
+    # Pick which model
+    if opt.old_model:
+        print("Using old model (no BN, flatten).")
+        model = CNN_Old(dropout_prob=opt.dropout).to(opt.device)
+    else:
+        print("Using new model (BN, global avg pooling).")
+        model = CNN(
+            dropout_prob=opt.dropout,
+            maxpool=not opt.no_maxpool,
+            batch_norm=not opt.no_batch_norm
+        ).to(opt.device)
 
-    # get an optimizer
     optims = {"adam": torch.optim.Adam, "sgd": torch.optim.SGD}
-
     optim_cls = optims[opt.optimizer]
-    optimizer = optim_cls(
-        model.parameters(), lr=opt.learning_rate, weight_decay=opt.l2_decay
-    )
-
-    # get a loss criterion
+    optimizer = optim_cls(model.parameters(), lr=opt.learning_rate, weight_decay=opt.l2_decay)
     criterion = nn.NLLLoss()
 
-    # training loop
+    # Training loop
     epochs = np.arange(1, opt.epochs + 1)
     train_mean_losses = []
     valid_accs = []
@@ -243,31 +297,27 @@ def main():
         for X_batch, y_batch in train_dataloader:
             X_batch = X_batch.to(opt.device)
             y_batch = y_batch.to(opt.device)
-            loss = train_batch(
-                X_batch, y_batch, model, optimizer, criterion)
+            loss = train_batch(X_batch, y_batch, model, optimizer, criterion)
             train_losses.append(loss)
 
         mean_loss = torch.tensor(train_losses).mean().item()
-        print('Training loss: %.4f' % (mean_loss))
-
+        print('Training loss: %.4f' % mean_loss)
         train_mean_losses.append(mean_loss)
+
         val_acc, val_loss = evaluate(model, dev_X, dev_y, criterion)
         valid_accs.append(val_acc)
         print("Valid loss: %.4f" % val_loss)
         print('Valid acc: %.4f' % val_acc)
 
     test_acc, _ = evaluate(model, test_X, test_y, criterion)
-    test_acc_perc = test_acc * 100
-    test_acc_str = '%.2f' % test_acc_perc
     print('Final Test acc: %.4f' % test_acc)
-    # plot
-    sufix = plot_file_name_sufix(opt, exlude={'data_path', 'device'})
 
-    plot(epochs, train_mean_losses, ylabel='Loss', name='CNN-3-train-loss-{}-{}'.format(sufix, test_acc_str))
-    plot(epochs, valid_accs, ylabel='Accuracy', name='CNN-3-valid-accuracy-{}-{}'.format(sufix, test_acc_str))
+    # Plot
+    sufix = plot_file_name_sufix(opt, exlude={'data_path', 'device'})
+    plot(epochs, train_mean_losses, ylabel='Loss', name='CNN-3-train-loss-{}-{:.2f}'.format(sufix, test_acc*100))
+    plot(epochs, valid_accs, ylabel='Accuracy', name='CNN-3-valid-accuracy-{}-{:.2f}'.format(sufix, test_acc*100))
 
     print('Number of trainable parameters: ', get_number_trainable_params(model))
-
 
 if __name__ == '__main__':
     main()
