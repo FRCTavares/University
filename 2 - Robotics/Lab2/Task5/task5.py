@@ -151,7 +151,6 @@ def draw_road_lanes(screen, color, width, height, curve_angle=90):
 
     return wave1_points, wave2_points
 
-
 def simulate_cone_sensor(
     car_pos,
     car_angle,
