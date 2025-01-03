@@ -4,6 +4,7 @@ import math
 import numpy as np
 import pygame
 import matplotlib.pyplot as plt
+import random
 
 # --------------------------------------------------------------------
 # INITIAL SETUP
@@ -178,6 +179,8 @@ def simulate_cone_sensor(
         dx = point[0] - car_pos[0]
         dy = point[1] - car_pos[1]
         dist = math.hypot(dx, dy)
+        noise_std = 5.0 # Standard deviation of noise
+        dist += random.gauss(0, noise_std)  # Add noise to the distance
         # Skip points beyond sensor range
         if dist > sensor_length:
             continue
