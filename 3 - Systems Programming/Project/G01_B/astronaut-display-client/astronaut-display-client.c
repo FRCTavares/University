@@ -10,6 +10,7 @@ int handle_input(remote_char_t *message);
 int process_server_messages(void *requester, remote_char_t *message);
 void *display_thread(void *context);
 
+pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
 
 typedef struct screen_update_t
 {
@@ -33,10 +34,10 @@ int main()
 
     initialize_zmq(&context, &requester);
 
-    initialize_ncurses();
+    
 
     // Send initial message to server
-    printf("Client: Sending initial message...\n");
+    //printf("Client: Sending initial message...\n");
     if (zmq_send(requester, &message, sizeof(remote_char_t), 0) == -1)
     {
         perror("Client zmq_send failed");
@@ -52,6 +53,7 @@ int main()
         return -1;
     }
 
+    initialize_ncurses();
 
 
     // Update the messsage variable with the character information
@@ -67,7 +69,7 @@ int main()
         return -1;
     }
 
-    mvprintw(30, 0, "You are controlling character %c", info.ch);
+    //mvprintw(30, 0, "You are controlling character %c", info.ch);
 
     sleep(1);
 
@@ -95,7 +97,7 @@ int main()
             running = 0;
         }
 
-        refresh();
+        //refresh();
     }
 
     cleanup(context, requester);
@@ -186,7 +188,10 @@ return:
 */
 int handle_input(remote_char_t *message)
 {
+
+    
     int key = getch();
+    
     static int n = 0;
     n++;
 
@@ -259,7 +264,7 @@ int process_server_messages(void *requester, remote_char_t *message)
         return -1;
     }
     int score = reply;
-    mvprintw(32, 0, "Your score: %d", score);
+    //mvprintw(32, 0, "Your score: %d", score);
     return 0;
 }
 
@@ -300,9 +305,13 @@ void *display_thread(void *context)
         exit(-1);
     }
 
+    
+
     /*
         Initialize the Game and Score windows side by side
         */
+
+    
     WINDOW *my_win = newwin(WINDOW_SIZE, WINDOW_SIZE, 0, 0);
     if (my_win == NULL)
     {
@@ -352,7 +361,7 @@ void *display_thread(void *context)
             exit(-1);
         }
 
-  
+        
         // Score updates
         if(update.ch == 's')
         {
@@ -432,6 +441,8 @@ void *display_thread(void *context)
                 exit(-1);
             }
         }
+
+        
     }
 
 
