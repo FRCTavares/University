@@ -1,47 +1,44 @@
-# Project Roadmap
+# Project Roadmap Part B
+
+**We will use threads and the old versions of astronaut-client.c and outer-space-dispay.c should still work with this new additions**
+
+- `astronaut-display-client.c` will be the new client program, the main difference is that there will be two concurrent programs (threads):
+    1. Like before the part where the client send messages to the server to move/disconnect the alien as well as firing the zap.
+    2. A concurrent program displays the game board in real time as well as all the scores.
+
+    This program basically merges the two old clients in one.
+
+- `game-server.c` manages the outer space (game board) and the aliens (**We can't use forks**). It recieves messages from both `astronaut-display-client.c` & `astronaut-client.c`and sends updates to them and to the `outer-space-display.c` program.
+
+    If the user presses *Q*, the corresponding program should terminate orderly, if it is the server then all the clients should disconnect and terminate.
+
+    The server will have a thread to replace the existing fork system to handle alien movement. This thread will modify the data of the aliens directly. 
+
+- `space-high-scores.c`this will be a new application that will store and display the highest scores in the game.
+
+    It recieves all score updates from the server and only display the scores of all astronauts.
+
+    This application needs to be developed in a *language different from C* and use ZeroMQ sockets and protocol buffers to comunicate with the server.
+
+**If for 10 seconds, no alien is killed then its population should increase by 10%**
+
+
+***We cannot use: fork, select, non-blocking com, active wait and signals***
+
 
 ## Missing Items
 
-- [ ] **Test `outer-space-display.c`**  
-  Francisco has made changes to the protocol, so it may not work properly now.
+- [ ] Implement threaded version of `astronaut-display-client.c` (separate threads for input vs. display).  
+- [ ] Implement concurrency in `game-server.c` to handle alien movement without forks.  
+- [ ] Implement the 10-second alien population growth rule.  
+- [ ] Develop `space-high-scores.c` in a non-C language with ZeroMQ + protocol buffers.  
 
-- [ ] **Implement Token Verification Process for Clients**  
-    The process should work as follows:
-    - In the server program, maintain a list of strings/integers containing each astronaut's token and a token for the child process, totaling 9 tokens.
-    - Initialize the child token at the beginning of the `main` function and generate it randomly.
-    - Whenever the child sends a direction, include its token in the message struct.
-    - For astronauts:
-        - Upon each connection, the server assigns a character to the client.
-        - Assign a unique token, generated randomly upon receiving a connection.
-    - On the astronaut-client side, include the assigned token in its message struct.
-    - Every time the server receives a message, verify the token:
-        - If the token is incorrect, send an offensive message indicating cheating.
-    - When a client disconnects, erase its token so it can be regenerated for future connections.
-
-- [ ] **Fix Child Process or `MSG_TYPE_ALIEN_DIRECTION` Handling**  
-    There is a bug where, sometimes when a laser is shot and aliens are destroyed, the window does not update with the new positions.
-
-- [ ] **What Happens When All the Aliens Die?**
-    1. The server closes, informing all the astronauts first with their final scores and displaying a message "Game ended, the winner is ..."
-    2. All the aliens spawn again, and the cycle continues infinitely.
-    3. 
-    4. 
-
+ 
 
 
 
 
 ## What is already Done:
-
-- [X] The server initializes and waits for a client to connect, once it recieves MSG_TYPE_CONNECT from the client it assigns and sends it a characther (A). Also the astronaut spawns in a specific spot of the board and it is assigned if it can move UP & DOWN or RIGHT & LEFT.
-- [X] The game board is of the correct size and does not allow alliens or astronauts to go to specific areas of the board.
-- [X] The server accepts MSG_TYPE_MOVE from the client and moves the astronaut according to either (RIGHT, LEFT, UP, DOWN) it also only allows Horizonal movement to astronauts (B,C,E,G) and Vertical movement to (A,D,F,H).
-- [X] The servers spawn the aliens at the beginning of the game exatcly 1/3 of 16*16, and only inside theire designated area.
-- [X] The scoreboard window is present, and it adds a player everytime it joins.
-- [X] The zap function is properly implemented it is activated when ' ' is pressed by the client and the server keeps a timer to only allow that message again in 3 seconds. All the aliens in the path of the zap are destroyed and 1 point is awarded for each alien to the client. If there is any astronaut on the path of the laser the astronaut is stunned for 10 seconds (I THINK)
-- [x] Aliens no longer overlap.
-- [X] I need to review the entire code, to see if the logic makes sense. There may be unecessary stuff that was not removed by me.
-
 
 
 
