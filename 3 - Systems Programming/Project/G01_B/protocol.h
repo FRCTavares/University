@@ -11,6 +11,7 @@
 #include <string.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <pthread.h>
 
 // Constants
 #define WINDOW_SIZE 22

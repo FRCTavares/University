@@ -32,6 +32,7 @@
 - [ ] Implement concurrency in `game-server.c` to handle alien movement without forks.  
 - [ ] Implement the 10-second alien population growth rule.  
 - [ ] Develop `space-high-scores.c` in a non-C language with ZeroMQ + protocol buffers.  
+- [ ] Don´t forget to edit the 'cleanup' function in `astronaut-display-client.c` to end the thread.
 
  
 

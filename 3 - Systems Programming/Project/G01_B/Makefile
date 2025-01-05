@@ -1,6 +1,6 @@
 CC = gcc
 CFLAGS = -g -I.
-LDFLAGS = -lncurses -lzmq
+LDFLAGS = -lncurses -lzmq -lpthread
 
 # Source files
 SERVER_SRC = server/game-server.c
@@ -11,7 +11,7 @@ SPACE_HIGH_SCORES_SRC = space-high-scores/space-high-scores.c
 COMMON_HDR = protocol.h
 
 # Targets
-all: server/server astronaut-client/astronaut-client outer-space-display/outer-space-display astronaut-display-client/astronaut-display-client space-high-scores/space-high-scores
+all: server/server astronaut-client/astronaut-client outer-space-display/outer-space-display astronaut-display-client/astronaut-display-client #space-high-scores/space-high-scores
 
 server/server: $(SERVER_SRC) $(COMMON_HDR)
 	mkdir -p server
@@ -29,9 +29,9 @@ astronaut-display-client/astronaut-display-client: $(ASTRONAUT_CLIENT_DISPLAY_SR
 	mkdir -p astronaut-display-client
 	$(CC) $(CFLAGS) -o $@ $(ASTRONAUT_CLIENT_DISPLAY_SRC) $(LDFLAGS)
 
-space-high-scores/space-high-scores: $(SPACE_HIGH_SCORES_SRC) $(COMMON_HDR)
-	mkdir -p space-high-scores
-	$(CC) $(CFLAGS) -o $@ $(SPACE_HIGH_SCORES_SRC) $(LDFLAGS)
+#space-high-scores/space-high-scores: $(SPACE_HIGH_SCORES_SRC) $(COMMON_HDR)
+#	mkdir -p space-high-scores
+#	$(CC) $(CFLAGS) -o $@ $(SPACE_HIGH_SCORES_SRC) $(LDFLAGS)
 
 clean:
 	rm -f server/server astronaut-client/astronaut-client outer-space-display/outer-space-display astronaut-display-client/astronaut-display-client space-high-scores/space-high-scores
