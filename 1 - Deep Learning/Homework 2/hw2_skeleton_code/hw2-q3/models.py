@@ -87,8 +87,14 @@ class Encoder(nn.Module):
         # - Use torch.nn.utils.rnn.pad_packed_sequence to unpack the packed sequences
         #   (after passing them to the LSTM)
         #############################################
-        
 
+        embedded = self.dropout(self.embedding(src))
+        packed = pack(embedded, lengths.cpu(), batch_first=True, enforce_sorted=False)
+        enc_output, final_hidden = self.lstm(packed)
+        enc_output, _ = unpack(enc_output, batch_first=True)
+
+        return enc_output, final_hidden
+        
         #############################################
         # END OF YOUR CODE
         #############################################
@@ -158,8 +164,24 @@ class Decoder(nn.Module):
         #         src_lengths,
         #     )
         #############################################
-        
+        embedded = self.dropout(self.embedding(tgt)) # (batch_size, max_tgt_len, hidden_size)
+        hx, cx = dec_state
+        all_outputs = []
+        for t in range(embedded.size(1)):
+            step_input = embedded[:, t:t+1, :]
+            output, (hx, cx) = self.lstm(step_input, (hx, cx))
+            if self.attn is not None:
+                output = self.attn(
+                    output,
+                    encoder_outputs,
+                    src_lengths,
+                )
+            output = self.dropout(output)
+            all_outputs.append(output)
+        outputs = torch.cat(all_outputs, dim=1)
+        dec_state = (hx, cx)
 
+        return outputs, dec_state
         #############################################
         # END OF YOUR CODE
         #############################################
