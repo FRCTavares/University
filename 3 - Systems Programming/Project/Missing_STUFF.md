@@ -28,7 +28,7 @@
 
 ## Missing Items
 
-- [ ] Implement threaded version of `astronaut-display-client.c` (separate threads for input vs. display).  
+  
 - [ ] Implement concurrency in `game-server.c` to handle alien movement without forks.  
 - [ ] Implement the 10-second alien population growth rule.  
 - [ ] Develop `space-high-scores.c` in a non-C language with ZeroMQ + protocol buffers.  
@@ -38,10 +38,53 @@
 
 
 
+**What I will do probably to the handle the alien movement with threads**
 
-## What is already Done:
+// ...existing code...
 
+typedef struct {
+    ch_info_t aliens[ALIEN_COUNT];
+    int alien_count;
+    pthread_mutex_t lock;
+    // ...other shared fields...
+} shared_data_t;
 
+void *alien_movement_thread(void *arg) {
+    shared_data_t *data = (shared_data_t *)arg;
+    while (1) {
+        pthread_mutex_lock(&data->lock);
+        // ...move aliens...
+        pthread_mutex_unlock(&data->lock);
+        sleep(1);
+    }
+    pthread_exit(NULL);
+}
+
+void *message_thread(void *arg) {
+    shared_data_t *data = (shared_data_t *)arg;
+    while (1) {
+        // ...receive messages...
+        pthread_mutex_lock(&data->lock);
+        // ...update aliens if one dies...
+        pthread_mutex_unlock(&data->lock);
+    }
+    pthread_exit(NULL);
+}
+
+int main() {
+    shared_data_t data;
+    data.alien_count = ALIEN_COUNT;
+    pthread_mutex_init(&data.lock, NULL);
+    // ...initialize data.aliens...
+    pthread_t alien_tid, message_tid;
+    pthread_create(&alien_tid, NULL, alien_movement_thread, &data);
+    pthread_create(&message_tid, NULL, message_thread, &data);
+    pthread_join(alien_tid, NULL);
+    pthread_join(message_tid, NULL);
+    pthread_mutex_destroy(&data.lock);
+    return 0;
+}
+// ...existing code...
 
 
 
