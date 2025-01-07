@@ -36,6 +36,7 @@ BLUE  = (  0,   0, 200)
 BLACK = (  0,   0,   0)
 
 # Enable interactive mode
+
 plt.ion()
 fig, ax = plt.subplots()
 line_user, = ax.plot([], [], 'r', label='User Omega')
@@ -366,6 +367,14 @@ def main():
             if event.type == pygame.QUIT:
                 running = False
 
+        # If user closes the plot window, exit loop
+        if not plt.fignum_exists(fig.number):
+            running = False
+
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                running = False
+
         # Handle keyboard inputs for user steering
         keys = pygame.key.get_pressed()
         user_steering = False
@@ -394,14 +403,14 @@ def main():
         # CONTROLLER LOGIC
         # Only act if the car is too close to top or bottom lanes
         # ----------------------------------------------------------------
-        safe_threshold = 40
+        safe_threshold = 150
         if not user_steering:
             if top_distance < safe_threshold or bottom_distance < safe_threshold:
                 error = distance_to_center
                 derivative = (error - previous_error) / dt
                 control_omega = -Kp * error - Kd * derivative
                 # Clamp controller output
-                control_omega = max(-2, min(2, control_omega))
+                control_omega = max(-2, min(control_omega, 2))
                 previous_error = error
                 controller_activated = True
 
@@ -511,15 +520,15 @@ def main():
     plt.legend()
     plt.show()
 
-    ''' Plot user vs controller steering commands
+    #Plot user vs controller steering commands
     plt.figure()
-    plt.xlabel('Time (frames)')
-    plt.ylabel('Omega (steering command)')
+    plt.xlabel('Time (frames) 60/s')
+    plt.ylabel('Omega (rad/s)')
     plt.title('User vs Controller Steering')
     plt.plot(user_omega_history, 'r', label='User Omega')
     plt.plot(controller_omega_history, 'g', label='Controller Omega')
     plt.legend()
-    plt.show()'''
+    plt.show()
 
 # --------------------------------------------------------------------
 # ENTRY POINT
