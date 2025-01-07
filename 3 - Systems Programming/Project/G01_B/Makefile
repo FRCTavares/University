@@ -1,5 +1,5 @@
 CC = gcc
-c++ = g++
+C++ = g++
 CFLAGS = -g -I.
 LDFLAGS = -lncurses -lzmq -lpthread -lprotobuf-c -lprotobuf
 
@@ -13,7 +13,7 @@ COMMON_HDR = protocol.h
 PROT_BUFF_HDR_CPP = message.pb.h
 MESSAGE_SRC_CPP = message.pb.cc
 PROT_BUFF_HDR_C = message.pb-c.h
-MESSAGE_SRC_C = message.pb-c.c
+MESSAGE_SRC_C = message.pb-c.c
 
 
 # Targets
@@ -21,7 +21,7 @@ all: server/server astronaut-client/astronaut-client outer-space-display/outer-s
 
 server/server: $(SERVER_SRC) $(COMMON_HDR) $(PROT_BUFF_HDR_C) $(MESSAGE_SRC_C)
 	mkdir -p server
-	$(CC) $(CFLAGS) -o $@ $(SERVER_SRC) $(LDFLAGS) $(MESSAGE_SRC_C)
+	$(CC) $(CFLAGS) -o $@ $(SERVER_SRC) $(MESSAGE_SRC_C) $(LDFLAGS) 
 
 astronaut-client/astronaut-client: $(ASTRONAUT_CLIENT_SRC) $(COMMON_HDR)
 	mkdir -p astronaut-client
@@ -37,7 +37,7 @@ astronaut-display-client/astronaut-display-client: $(ASTRONAUT_CLIENT_DISPLAY_SR
 
 space-high-scores/space-high-scores: $(SPACE_HIGH_SCORES_SRC) $(COMMON_HDR) $(PROT_BUFF_HDR_CPP) $(MESSAGE_SRC_CPP)
 	mkdir -p space-high-scores
-	$(C++) $(CFLAGS) -o $@ $(SPACE_HIGH_SCORES_SRC) $(MESSAGE_SRC_CPP) $(LDFLAGS)
+	$(C++) $(CFLAGS) -o $@ $(SPACE_HIGH_SCORES_SRC) $(MESSAGE_SRC_CPP) $(LDFLAGS)
 
 
 clean:

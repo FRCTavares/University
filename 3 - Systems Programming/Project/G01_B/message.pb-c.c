@@ -63,7 +63,7 @@ static const ProtobufCFieldDescriptor score_update__field_descriptors[2] =
     offsetof(ScoreUpdate, scores),
     NULL,
     NULL,
-    0,             /* flags */
+    0 | PROTOBUF_C_FIELD_FLAG_PACKED,             /* flags */
     0,NULL,NULL    /* reserved1,reserved2, etc */
   },
   {
@@ -74,7 +74,7 @@ static const ProtobufCFieldDescriptor score_update__field_descriptors[2] =
     offsetof(ScoreUpdate, n_characters),
     offsetof(ScoreUpdate, characters),
     NULL,
-    NULL,
+    &protobuf_c_empty_string,
     0,             /* flags */
     0,NULL,NULL    /* reserved1,reserved2, etc */
   },
