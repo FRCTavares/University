@@ -1,0 +1,6 @@
+syntax = "proto2";
+
+message ScoreUpdate {
+    repeated int32 scores = 1;
+    repeated string characters = 2; 
+}
