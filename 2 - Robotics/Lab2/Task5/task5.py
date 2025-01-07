@@ -35,6 +35,14 @@ RED   = (200,   0,   0)
 BLUE  = (  0,   0, 200)
 BLACK = (  0,   0,   0)
 
+# Enable interactive mode
+plt.ion()
+fig, ax = plt.subplots()
+line_user, = ax.plot([], [], 'r', label='User Omega')
+line_controller, = ax.plot([], [], 'g', label='Controller Omega')
+ax.legend()
+plt.show(block=False)
+
 # --------------------------------------------------------------------
 # UTILITY FUNCTIONS
 # --------------------------------------------------------------------
@@ -332,11 +340,24 @@ def main():
         user_omega = 0
         control_omega = 0
 
+        user_omega_history.append(user_omega)
+        controller_omega_history.append(control_omega)
+
         # Clear screen and draw background
         screen.fill(BLACK)
         wave_surface = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
         wave1_points, wave2_points = draw_road_lanes(wave_surface, WHITE, WIDTH, HEIGHT)
         all_wave_points = wave1_points + wave2_points
+
+        # Update Plot in each frame
+        line_user.set_xdata(range(len(user_omega_history)))
+        line_user.set_ydata(user_omega_history)
+        line_controller.set_xdata(range(len(controller_omega_history)))
+        line_controller.set_ydata(controller_omega_history)
+        ax.relim()
+        ax.autoscale_view()
+        plt.draw()
+        plt.pause(0.001)
 
         # Event handling
         for event in pygame.event.get():
@@ -379,7 +400,7 @@ def main():
                 error = distance_to_center
                 derivative = (error - previous_error) / dt
                 control_omega = -Kp * error - Kd * derivative
-                # Optionally clamp controller output
+                # Clamp controller output
                 control_omega = max(-2, min(2, control_omega))
                 previous_error = error
                 controller_activated = True
@@ -490,7 +511,7 @@ def main():
     plt.legend()
     plt.show()
 
-    # Plot user vs controller steering commands
+    ''' Plot user vs controller steering commands
     plt.figure()
     plt.xlabel('Time (frames)')
     plt.ylabel('Omega (steering command)')
@@ -498,7 +519,7 @@ def main():
     plt.plot(user_omega_history, 'r', label='User Omega')
     plt.plot(controller_omega_history, 'g', label='Controller Omega')
     plt.legend()
-    plt.show()
+    plt.show()'''
 
 # --------------------------------------------------------------------
 # ENTRY POINT
