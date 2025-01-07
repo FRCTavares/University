@@ -344,17 +344,16 @@ void update_scoreboard(WINDOW *score_win, ch_info_t char_data[], int n_chars, in
     score_update.n_characters = n_chars;
 
     score_update.scores = scores;
-    score_update.characters = malloc (sizeof (char*) * score_update.n_characters);
+    score_update.characters = malloc(sizeof(char *) * score_update.n_characters);
 
-
-    for(int i = 0; i< score_update.n_scores; i++){
-        score_update.characters[i] = (char*) characters[i];
+    for (int i = 0; i < score_update.n_scores; i++)
+    {
+        score_update.characters[i] = (char *)characters[i];
     }
-
 
     unsigned message_size = score_update__get_packed_size(&score_update);
 
-    void* message_data = malloc(message_size);
+    void *message_data = malloc(message_size);
 
     // Pack the message into the byte buffer
     score_update__pack(&score_update, message_data);
@@ -1045,7 +1044,7 @@ int main()
         pthread_exit(NULL);
     }
 
-    rc = zmq_bind(publisher_2, SERVER_PUBLISH_ADDRESS);
+    rc = zmq_bind(publisher_2, SERVER_PUBLISH_ADDRESS_2);
     if (rc != 0)
     {
         perror("Publisher zmq_bind failed");
