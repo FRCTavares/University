@@ -1,5 +1,6 @@
 #include "zhelpers.h"
 #include "protocol.h"
+#include "message.pb-c.h"
 
 typedef struct screen_update_t
 {
@@ -21,6 +22,7 @@ typedef struct
     WINDOW *my_win;
     WINDOW *score_win;
     void *publisher;
+    void *publisher2;
     time_t last_alien_kill;
 
     // Is there any more data that needs sharing?
@@ -290,7 +292,7 @@ void fire_laser(WINDOW *win, ch_info_t *astronaut, ch_info_t aliens[], int *alie
     None
 */
 
-void update_scoreboard(WINDOW *score_win, ch_info_t char_data[], int n_chars, int alien_count, void *publisher, pthread_mutex_t lock)
+void update_scoreboard(WINDOW *score_win, ch_info_t char_data[], int n_chars, int alien_count, void *publisher, pthread_mutex_t lock, void *publisher2)
 {
 
     werase(score_win); // Clear the scoreboard window
@@ -324,6 +326,45 @@ void update_scoreboard(WINDOW *score_win, ch_info_t char_data[], int n_chars, in
     // pthread_mutex_lock(&lock);
     zmq_send(publisher, &update, sizeof(screen_update_t), 0);
     // pthread_mutex_unlock(&lock);
+
+    // Build the update to send to outer-space-display
+    ScoreUpdate score_update = SCORE_UPDATE__INIT;
+
+    int scores[n_chars];
+    char characters[n_chars][2];
+
+    for (int i = 0; i < n_chars; i++)
+    {
+        scores[i] = char_data[i].score;
+        characters[i][0] = char_data[i].ch;
+        characters[i][1] = '\0';
+    }
+
+    score_update.n_scores = n_chars;
+    score_update.n_characters = n_chars;
+
+    score_update.scores = scores;
+    score_update.characters = malloc (sizeof (char*) * score_update.n_characters);
+
+
+    for(int i = 0; i< score_update.n_scores; i++){
+        score_update.characters[i] = (char*) characters[i];
+    }
+
+
+    unsigned message_size = score_update__get_packed_size(&score_update);
+
+    void* message_data = malloc(message_size);
+
+    // Pack the message into the byte buffer
+    score_update__pack(&score_update, message_data);
+
+    // Send the serialized message over ZeroMQ
+    zmq_send(publisher2, message_data, message_size, 0);
+
+    // Clean up
+
+    free(message_data);
 }
 
 /*
@@ -342,7 +383,7 @@ void update_scoreboard(WINDOW *score_win, ch_info_t char_data[], int n_chars, in
     None
 */
 
-void remove_astronaut(WINDOW *win, ch_info_t char_data[], int *n_chars, int ch_pos, void *publisher, WINDOW *score_win, int alien_count, pthread_mutex_t lock)
+void remove_astronaut(WINDOW *win, ch_info_t char_data[], int *n_chars, int ch_pos, void *publisher, WINDOW *score_win, int alien_count, pthread_mutex_t lock, void *publisher2)
 {
 
     screen_update_t update;
@@ -368,7 +409,7 @@ void remove_astronaut(WINDOW *win, ch_info_t char_data[], int *n_chars, int ch_p
     (*n_chars)--;
 
     // Update the scoreboard to remove the player's score
-    update_scoreboard(score_win, char_data, *n_chars, alien_count, publisher, lock);
+    update_scoreboard(score_win, char_data, *n_chars, alien_count, publisher, lock, publisher2);
 }
 
 // Main part of the Program
@@ -400,7 +441,7 @@ void *message_thread(void *arg)
     wrefresh(data->score_win);
 
     // Initial print of the scoreboard
-    update_scoreboard(data->score_win, char_data, n_chars, data->alien_count, data->publisher, data->lock);
+    update_scoreboard(data->score_win, char_data, n_chars, data->alien_count, data->publisher, data->lock, data->publisher2);
 
     // Initialize aliens
     for (int i = 0; i < ALIEN_COUNT; i++)
@@ -577,7 +618,7 @@ void *message_thread(void *arg)
             n_chars++;
 
             // Update the scoreboard with the new player's score
-            update_scoreboard(data->score_win, char_data, n_chars, data->alien_count, data->publisher, data->lock);
+            update_scoreboard(data->score_win, char_data, n_chars, data->alien_count, data->publisher, data->lock, data->publisher2);
         }
         else if (m.msg_type == MSG_TYPE_ZAP)
         {
@@ -674,7 +715,7 @@ void *message_thread(void *arg)
             if (ch_pos != -1)
             {
                 connected_astronauts[m.ch - 'A'] = 0;
-                remove_astronaut(data->my_win, char_data, &n_chars, ch_pos, data->publisher, data->score_win, data->alien_count, data->lock);
+                remove_astronaut(data->my_win, char_data, &n_chars, ch_pos, data->publisher, data->score_win, data->alien_count, data->lock, data->publisher2);
             }
             // Send a response to the client to confirm disconnection
             int response = -2;
@@ -760,7 +801,7 @@ void *message_thread(void *arg)
             waddch(data->my_win, char_data[i].ch | A_BOLD);
         }
 
-        update_scoreboard(data->score_win, char_data, n_chars, data->alien_count, data->publisher, data->lock);
+        update_scoreboard(data->score_win, char_data, n_chars, data->alien_count, data->publisher, data->lock, data->publisher2);
 
         wrefresh(data->my_win);
 
@@ -996,7 +1037,26 @@ int main()
         pthread_exit(NULL);
     }
 
+    void *publisher_2 = zmq_socket(context, ZMQ_PUB);
+    if (publisher_2 == NULL)
+    {
+        perror("Publisher zmq_socket failed");
+        zmq_ctx_destroy(context);
+        pthread_exit(NULL);
+    }
+
+    rc = zmq_bind(publisher_2, SERVER_PUBLISH_ADDRESS);
+    if (rc != 0)
+    {
+        perror("Publisher zmq_bind failed");
+        zmq_close(publisher_2);
+        zmq_close(publisher);
+        zmq_ctx_destroy(context);
+        pthread_exit(NULL);
+    }
+
     data.publisher = publisher;
+    data.publisher2 = publisher_2;
 
     pthread_t message_thread_id, alien_movement_thread_id;
 
