@@ -14,13 +14,14 @@ typedef struct screen_update_t
 
 typedef struct
 {
-    ch_info_t aliens[ALIEN_COUNT];
+    ch_info_t aliens[256];
     int alien_count;
     pthread_mutex_t lock;
     int grid[16][16];
     WINDOW *my_win;
     WINDOW *score_win;
     void *publisher;
+    time_t last_alien_kill;
 
     // Is there any more data that needs sharing?
 } shared_data_t;
@@ -120,7 +121,7 @@ int find_ch_info(ch_info_t char_data[], int n_chars, int ch)
     None
 */
 
-void fire_laser(WINDOW *win, ch_info_t *astronaut, ch_info_t aliens[], int *alien_count, ch_info_t char_data[], int n_chars, void *publisher, int grid[16][16], pthread_mutex_t lock)
+void fire_laser(WINDOW *win, ch_info_t *astronaut, ch_info_t aliens[], int *alien_count, ch_info_t char_data[], int n_chars, void *publisher, int grid[16][16], pthread_mutex_t lock, time_t last_alien_kill)
 {
 
     screen_update_t update;
@@ -139,7 +140,7 @@ void fire_laser(WINDOW *win, ch_info_t *astronaut, ch_info_t aliens[], int *alie
             {
                 if (aliens[j].pos_x == i && aliens[j].pos_y == y)
                 {
-
+                    last_alien_kill = time(NULL);
                     // Mark grid cell as empty
                     grid[i - 3][y - 3] = 0;
 
@@ -195,7 +196,7 @@ void fire_laser(WINDOW *win, ch_info_t *astronaut, ch_info_t aliens[], int *alie
             {
                 if (aliens[j].pos_x == x && aliens[j].pos_y == i)
                 {
-
+                    last_alien_kill = time(NULL);
                     // Mark grid cell as empty
                     grid[i - 3][y - 3] = 0;
 
@@ -303,12 +304,14 @@ void update_scoreboard(WINDOW *score_win, ch_info_t char_data[], int n_chars, in
         mvwprintw(score_win, 2 + i, 3, "%c - %d", char_data[i].ch, char_data[i].score);
     }
 
+    // Alien Alive Counter at the bottom of the scoreboard
+    mvwprintw(score_win, 20, 3, "Aliens Alive: %d", alien_count);
+
     box(score_win, 0, 0); // Draw the border
     wrefresh(score_win);  // Refresh to show changes
 
     // Build the update to send to outer-space-display
     screen_update_t update;
-
     update.ch = 's';
     update.player_count = n_chars;
 
@@ -368,6 +371,8 @@ void remove_astronaut(WINDOW *win, ch_info_t char_data[], int *n_chars, int ch_p
     update_scoreboard(score_win, char_data, *n_chars, alien_count, publisher, lock);
 }
 
+// Main part of the Program
+
 // PRINCIPAL
 void *message_thread(void *arg)
 {
@@ -393,6 +398,9 @@ void *message_thread(void *arg)
     data->score_win = newwin(WINDOW_SIZE, WINDOW_SIZE, 0, WINDOW_SIZE + 1);
     box(data->score_win, 0, 0);
     wrefresh(data->score_win);
+
+    // Initial print of the scoreboard
+    update_scoreboard(data->score_win, char_data, n_chars, data->alien_count, data->publisher, data->lock);
 
     // Initialize aliens
     for (int i = 0; i < ALIEN_COUNT; i++)
@@ -567,6 +575,9 @@ void *message_thread(void *arg)
             }
 
             n_chars++;
+
+            // Update the scoreboard with the new player's score
+            update_scoreboard(data->score_win, char_data, n_chars, data->alien_count, data->publisher, data->lock);
         }
         else if (m.msg_type == MSG_TYPE_ZAP)
         {
@@ -594,7 +605,7 @@ void *message_thread(void *arg)
                 if (difftime(current_time, char_data[ch_pos].last_fire_time) >= 3)
                 {
                     // pthread_mutex_lock(&data->lock);
-                    fire_laser(data->my_win, &char_data[ch_pos], data->aliens, &data->alien_count, char_data, n_chars, data->publisher, data->grid, data->lock);
+                    fire_laser(data->my_win, &char_data[ch_pos], data->aliens, &data->alien_count, char_data, n_chars, data->publisher, data->grid, data->lock, data->last_alien_kill);
                     // pthread_mutex_unlock(&data->lock);
 
                     char_data[ch_pos].last_fire_time = current_time;
@@ -745,10 +756,11 @@ void *message_thread(void *arg)
         // Update display
         for (int i = 0; i < n_chars; i++)
         {
-
             wmove(data->my_win, char_data[i].pos_x, char_data[i].pos_y);
             waddch(data->my_win, char_data[i].ch | A_BOLD);
         }
+
+        update_scoreboard(data->score_win, char_data, n_chars, data->alien_count, data->publisher, data->lock);
 
         wrefresh(data->my_win);
 
@@ -766,8 +778,6 @@ void *message_thread(void *arg)
             }
             // pthread_mutex_lock(&data->lock);
         }
-
-        update_scoreboard(data->score_win, char_data, n_chars, data->alien_count, data->publisher, data->lock);
 
         usleep(10000); // Sleep for 10ms
     }
@@ -788,7 +798,7 @@ void *alien_movement_thread(void *arg)
     {
         sleep(1);
 
-        pthread_mutex_lock(&data->lock);
+        // pthread_mutex_lock(&data->lock);
         for (int i = 0; i < data->alien_count; i++)
         {
             int alien_index = i;
@@ -892,7 +902,49 @@ void *alien_movement_thread(void *arg)
             wrefresh(data->my_win);
             aliens_moved = 0;
         }
-        pthread_mutex_unlock(&data->lock);
+
+        time_t now = time(NULL);
+        if (difftime(now, data->last_alien_kill) >= 10)
+        {
+            // Increase alien count by ~10%
+            int added = data->alien_count / 10;
+            for (int i = 0; i < added && data->alien_count < MAX_ALIENS; i++)
+            {
+                // spawn new aliens
+                int idx = data->alien_count++;
+                data->aliens[idx].ch = '*';
+
+                do
+                {
+                    data->aliens[idx].pos_x = rand() % 16 + 3;
+                    data->aliens[idx].pos_y = rand() % 16 + 3;
+                } while (data->grid[data->aliens[idx].pos_x - 3][data->aliens[idx].pos_y - 3] != 0);
+                data->grid[data->aliens[idx].pos_x - 3][data->aliens[idx].pos_y - 3] = 1;
+            }
+            data->last_alien_kill = now; // Reset the timer
+            // Immediately update scoreboard and screen so changes appear without client messages.
+            // Update number o aliens alive in the scoreboard
+            // mvwprintw(data->score_win, 20, 3, "Aliens Alive: %d", data->alien_count);
+            // Clycle that runns throught all the aliens and updates the server window for all the aliens and update the display client
+            for (int i = (data->alien_count - added); i < data->alien_count; i++)
+            {
+                // Update the display
+                wmove(data->my_win, data->aliens[i].pos_x, data->aliens[i].pos_y);
+                waddch(data->my_win, '*' | A_BOLD);
+
+                screen_update_t update;
+                update.pos_x = data->aliens[i].pos_x;
+                update.pos_y = data->aliens[i].pos_y;
+                update.ch = '*';
+                // pthread_mutex_lock(&data->lock);
+                zmq_send(data->publisher, &update, sizeof(screen_update_t), 0);
+                // pthread_mutex_unlock(&data->lock);
+            }
+
+            // Also refresh the game window here if needed.
+            wrefresh(data->my_win);
+        }
+        // pthread_mutex_unlock(&data->lock);
     }
 }
 
@@ -917,6 +969,7 @@ int main()
     memset(data.grid, 0, sizeof(data.grid));
     data.alien_count = ALIEN_COUNT;
     pthread_mutex_init(&data.lock, NULL);
+    data.last_alien_kill = time(NULL);
 
     void *context = zmq_ctx_new();
     if (context == NULL)

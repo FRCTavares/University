@@ -16,6 +16,7 @@
 // Constants
 #define WINDOW_SIZE 22
 #define MAX_PLAYERS 8
+#define MAX_ALIENS 256
 #define ALIEN_COUNT 16 * 16 / 3
 
 // Server Addresses
