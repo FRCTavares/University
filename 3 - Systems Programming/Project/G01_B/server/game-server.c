@@ -389,17 +389,20 @@ void remove_astronaut(WINDOW *win, ch_info_t char_data[], int *n_chars, int ch_p
     screen_update_t update;
 
     // Erase astronaut from the game window
+    pthread_mutex_lock(&lock);
     wmove(win, char_data[ch_pos].pos_x, char_data[ch_pos].pos_y);
     waddch(win, ' ');
     wrefresh(win);
+    pthread_mutex_unlock(&lock);
+
 
     // Send update to clients to clear the character
     update.pos_x = char_data[ch_pos].pos_x;
     update.pos_y = char_data[ch_pos].pos_y;
     update.ch = ' ';
-    // pthread_mutex_lock(&lock);
+    
     zmq_send(publisher, &update, sizeof(screen_update_t), 0);
-    // pthread_mutex_unlock(&lock);
+    
 
     // Remove astronaut from the char_data array
     for (int i = ch_pos; i < (*n_chars) - 1; i++)
@@ -645,13 +648,14 @@ void *message_thread(void *arg)
                 current_time = time(NULL);
                 if (difftime(current_time, char_data[ch_pos].last_fire_time) >= 3)
                 {
-                    // pthread_mutex_lock(&data->lock);
+                    pthread_mutex_lock(&data->lock);
                     fire_laser(data->my_win, &char_data[ch_pos], data->aliens, &data->alien_count, char_data, n_chars, data->publisher, data->grid, data->lock, data->last_alien_kill);
-                    // pthread_mutex_unlock(&data->lock);
+                    pthread_mutex_unlock(&data->lock);
 
                     char_data[ch_pos].last_fire_time = current_time;
                     if (data->alien_count == 0)
                     {
+                        pthread_mutex_lock(&data->lock);
                         werase(data->my_win);
                         werase(data->score_win);
                         mvwprintw(data->my_win, 10, 10, "GAME OVER");
@@ -672,12 +676,13 @@ void *message_thread(void *arg)
                             update.scores[i] = char_data[i].score;
                         }
 
-                        // pthread_mutex_lock(&data->lock);
+                        
                         zmq_send(data->publisher, &update, sizeof(screen_update_t), 0);
-                        // pthread_mutex_unlock(&data->lock);
+                        
 
                         wrefresh(data->my_win);
                         wrefresh(data->score_win);
+                        pthread_mutex_unlock(&data->lock);
                         sleep(5);
                         break;
                     }
@@ -753,9 +758,12 @@ void *message_thread(void *arg)
                 ch = char_data[ch_pos].ch;
 
                 // Erase character from old position
+
+                pthread_mutex_lock(&data->lock);
                 wmove(data->my_win, pos_x, pos_y);
                 waddch(data->my_win, ' ');
                 wrefresh(data->my_win);
+                pthread_mutex_unlock(&data->lock);
 
                 // Send update to clear the old position
                 update.pos_x = pos_x;
@@ -795,15 +803,23 @@ void *message_thread(void *arg)
         }
 
         // Update display
+        
+        pthread_mutex_lock(&data->lock);
         for (int i = 0; i < n_chars; i++)
         {
             wmove(data->my_win, char_data[i].pos_x, char_data[i].pos_y);
             waddch(data->my_win, char_data[i].ch | A_BOLD);
         }
 
+        wrefresh(data->my_win);
+        pthread_mutex_unlock(&data->lock);
+
+        
+
+
         update_scoreboard(data->score_win, char_data, n_chars, data->alien_count, data->publisher, data->lock, data->publisher2);
 
-        wrefresh(data->my_win);
+        
 
         // Send updates to outer-space-display
         for (int i = 0; i < n_chars; i++)
@@ -811,13 +827,13 @@ void *message_thread(void *arg)
             update.pos_x = char_data[i].pos_x;
             update.pos_y = char_data[i].pos_y;
             update.ch = char_data[i].ch;
-            // pthread_mutex_lock(&data->lock);
+            
             if (zmq_send(data->publisher, &update, sizeof(screen_update_t), 0) == -1)
             {
                 perror("Server zmq_send failed");
                 pthread_exit(NULL);
             }
-            // pthread_mutex_lock(&data->lock);
+            ;
         }
 
         usleep(10000); // Sleep for 10ms
@@ -839,7 +855,7 @@ void *alien_movement_thread(void *arg)
     {
         sleep(1);
 
-        // pthread_mutex_lock(&data->lock);
+        pthread_mutex_lock(&data->lock);
         for (int i = 0; i < data->alien_count; i++)
         {
             int alien_index = i;
@@ -985,7 +1001,7 @@ void *alien_movement_thread(void *arg)
             // Also refresh the game window here if needed.
             wrefresh(data->my_win);
         }
-        // pthread_mutex_unlock(&data->lock);
+        pthread_mutex_unlock(&data->lock);
     }
 }
 
@@ -1045,7 +1061,7 @@ int main()
         pthread_exit(NULL);
     }
 
-    rc = zmq_bind(publisher_2, SERVER_PUBLISH_ADDRESS);
+    rc = zmq_bind(publisher_2, SERVER_PUBLISH_ADDRESS_2);
     if (rc != 0)
     {
         perror("Publisher zmq_bind failed");
