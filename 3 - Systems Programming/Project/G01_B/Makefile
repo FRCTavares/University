@@ -15,9 +15,23 @@ MESSAGE_SRC_CPP = message.pb.cc
 PROT_BUFF_HDR_C = message.pb-c.h
 MESSAGE_SRC_C = message.pb-c.c
 
+# Protobuf-related
+PROTOC = protoc
+PROTOC_C = protoc-c
+PROTO_FLAGS_CPP = --cpp_out=.
+PROTO_FLAGS_C = --c_out=.
+PROTO_FILES = message.proto
+
 
 # Targets
-all: server/server astronaut-client/astronaut-client outer-space-display/outer-space-display astronaut-display-client/astronaut-display-client space-high-scores/space-high-scores
+.PHONY: all clean protoc
+
+all: protoc server/server astronaut-client/astronaut-client outer-space-display/outer-space-display astronaut-display-client/astronaut-display-client space-high-scores/space-high-scores 
+
+protoc:
+	$(PROTOC) $(PROTO_FLAGS_CPP) $(PROTO_FILES)
+	$(PROTOC_C) $(PROTO_FLAGS_C) $(PROTO_FILES)
+
 
 server/server: $(SERVER_SRC) $(COMMON_HDR) $(PROT_BUFF_HDR_C) $(MESSAGE_SRC_C)
 	mkdir -p server
@@ -42,3 +56,4 @@ space-high-scores/space-high-scores: $(SPACE_HIGH_SCORES_SRC) $(COMMON_HDR) $(PR
 
 clean:
 	rm -f server/server astronaut-client/astronaut-client outer-space-display/outer-space-display astronaut-display-client/astronaut-display-client space-high-scores/space-high-scores
+	rm -f $(MESSAGE_SRC_CPP) $(PROT_BUFF_HDR_CPP) $(MESSAGE_SRC_C) $(PROT_BUFF_HDR_C)
