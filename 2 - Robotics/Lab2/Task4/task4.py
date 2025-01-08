@@ -228,6 +228,42 @@ def detect_and_visualize_collisions(car_rect, car_surface, wave_surface, screen)
         pygame.draw.circle(screen, (255, 0, 255), collision_coords, 8)
         print(f"Collision detected at: {collision_coords}")
 
+def draw_distance_plot(screen, top_distances, bottom_distances):
+    # Define where and how big the mini-plot should be
+    plot_x, plot_y = 700, 50
+    plot_width, plot_height = 600, 300
+    max_points = 10000  # Number of recent distance points to plot
+
+    # Get the last max_points for each series
+    recent_top = top_distances[-max_points:]
+    recent_btm = bottom_distances[-max_points:]
+
+    # Avoid zero division
+    if not recent_top or not recent_btm:
+        return
+
+    # Find an approximate max for scaling
+    max_val = max(max(recent_top), max(recent_btm), 1)
+
+    # Draw a background rectangle
+    pygame.draw.rect(screen, (50, 50, 50), (plot_x, plot_y, plot_width, plot_height))
+
+    # Draw top distances line
+    for i in range(len(recent_top) - 1):
+        x1 = plot_x + (i / (len(recent_top) - 1)) * plot_width
+        y1 = plot_y + plot_height - (recent_top[i] / max_val) * plot_height
+        x2 = plot_x + ((i+1) / (len(recent_top) - 1)) * plot_width
+        y2 = plot_y + plot_height - (recent_top[i+1] / max_val) * plot_height
+        pygame.draw.line(screen, (255, 0, 0), (x1, y1), (x2, y2), 2)
+
+    # Draw bottom distances line
+    for i in range(len(recent_btm) - 1):
+        x1 = plot_x + (i / (len(recent_btm) - 1)) * plot_width
+        y1 = plot_y + plot_height - (recent_btm[i] / max_val) * plot_height
+        x2 = plot_x + ((i+1) / (len(recent_btm) - 1)) * plot_width
+        y2 = plot_y + plot_height - (recent_btm[i+1] / max_val) * plot_height
+        pygame.draw.line(screen, (0, 0, 255), (x1, y1), (x2, y2), 2)
+
 # --------------------------------------------------------------------
 # CAR CLASS
 # --------------------------------------------------------------------
@@ -395,13 +431,13 @@ def main():
             bottom_distance = last_bottom_distance
 
         # Display top/bottom distance info
-        font = pygame.font.SysFont(None, 24)
+        font = pygame.font.SysFont(None, 48)
         if top_distance is not None and top_angle is not None:
-            top_info = font.render(f"Top: {top_distance:.2f}m @ {top_angle:.2f}°", True, WHITE)
-            screen.blit(top_info, (400, 70))
+            top_info = font.render(f"Top: {top_distance:.2f}m @ {top_angle:.2f}°", True, RED)
+            screen.blit(top_info, (200, 70))
         if bottom_distance is not None and bottom_angle is not None:
-            bottom_info = font.render(f"Bottom: {bottom_distance:.2f}m @ {bottom_angle:.2f}°", True, WHITE)
-            screen.blit(bottom_info, (400, 90))
+            bottom_info = font.render(f"Bottom: {bottom_distance:.2f}m @ {bottom_angle:.2f}°", True, BLUE)
+            screen.blit(bottom_info, (200, 120))
 
 
         # Store distances for plotting
@@ -413,6 +449,10 @@ def main():
         # Draw the exit button
         pygame.draw.rect(screen, (255, 0, 0), x_button_rect)
         screen.blit(x_button_text, x_button_rect)
+
+        # Call the new draw_distance_plot function before flipping display
+        draw_distance_plot(screen, top_distances, bottom_distances)
+
 
         # Update the display
         pygame.display.flip()
@@ -427,8 +467,8 @@ def main():
     plt.figure()
     plt.plot(top_distances, label='Top Lane Distance')
     plt.plot(bottom_distances, label='Bottom Lane Distance')
-    plt.xlabel('Time (frames)')
-    plt.ylabel('Shortest Distance (pixels or scaled)')
+    plt.xlabel('Time (60 frames/s)')
+    plt.ylabel('Shortest Distance (meters)')
     plt.title('Lane Distance Over Time')
     plt.legend()
     plt.show()

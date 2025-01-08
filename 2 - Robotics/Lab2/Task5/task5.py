@@ -35,15 +35,6 @@ RED   = (200,   0,   0)
 BLUE  = (  0,   0, 200)
 BLACK = (  0,   0,   0)
 
-# Enable interactive mode
-
-plt.ion()
-fig, ax = plt.subplots()
-line_user, = ax.plot([], [], 'r', label='User Omega')
-line_controller, = ax.plot([], [], 'g', label='Controller Omega')
-ax.legend()
-plt.show(block=False)
-
 # --------------------------------------------------------------------
 # UTILITY FUNCTIONS
 # --------------------------------------------------------------------
@@ -95,49 +86,6 @@ def draw_road_lanes(screen, color, width, height, curve_angle=90):
     - height: Total height of the road drawing area.
     - curve_angle: The angle of the inclined road in degrees (default is 90 degrees).
     """
-    '''straight_length = width // 2  # Increased length of the straight road
-    inclined_start = straight_length
-    lane_offset = 125  # Distance between lanes
-    center_y = height // 2
-
-    wave1_points = []
-    wave2_points = []
-    waves_center = []
-
-    # Define incline angle
-    incline_angle_deg = 15  # Adjust as needed
-    incline_angle_rad = math.radians(incline_angle_deg)
-    slope = math.tan(incline_angle_rad)
-
-    # Draw straight road
-    for x in range(straight_length):
-        y1 = center_y + lane_offset
-        pygame.draw.circle(screen, color, (x, y1), 2)
-        wave1_points.append((x, y1))
-
-        y2 = center_y - lane_offset
-        pygame.draw.circle(screen, color, (x, y2), 2)
-        wave2_points.append((x, y2))
-
-        #y_center = center_y
-        #pygame.draw.circle(screen, color, (x, y_center), 1)
-        #waves_center.append((x, y_center))
-    
-    # Draw inclined straight road
-    for x in range(inclined_start, width):
-        delta_x = x - inclined_start
-        y1 = center_y + lane_offset - slope * delta_x
-        pygame.draw.circle(screen, color, (x, int(y1)), 2)
-        wave1_points.append((x, int(y1)))
-
-        y2 = center_y - lane_offset - slope * delta_x
-        pygame.draw.circle(screen, color, (x, int(y2)), 2)
-        wave2_points.append((x, int(y2)))
-
-        #y_center = center_y - slope * delta_x
-        #pygame.draw.circle(screen, color, (x, int(y_center)), 1)
-        #waves_center.append((x, int(y_center)))'''
-    
     amplitude1 = 100  # Amplitude of the first wave
     frequency1 = 1   # Frequency of the first wave
 
@@ -236,6 +184,65 @@ def detect_and_visualize_collisions(car_rect, car_surface, wave_surface, screen)
         # Draw fluorescent dot at the collision point
         pygame.draw.circle(screen, (255, 0, 255), collision_coords, 8)
         print(f"Collision detected at: {collision_coords}")
+
+# --------------------------------------------------------------------
+# PLOTTING FUNCTIONS
+# --------------------------------------------------------------------
+def draw_distance_plot(screen, top_distances, bottom_distances):
+    # Define where and how big the mini-plot should be
+    plot_x, plot_y = 650, 50
+    plot_width, plot_height = 600, 300
+    max_points = 10000  # Number of recent distance points to plot
+    
+    recent_top = top_distances[-max_points:]
+    recent_bottom = bottom_distances[-max_points:]
+    if not recent_top or not recent_bottom:
+        return
+    
+    max_val = max(max(recent_top), max(recent_bottom), 1)
+    pygame.draw.rect(screen, (50, 50, 50), (plot_x, plot_y, plot_width, plot_height))
+    
+    for i in range(len(recent_top) - 1):
+        x1 = plot_x + (i / (len(recent_top) - 1)) * plot_width
+        y1 = plot_y + plot_height - (recent_top[i] / max_val) * plot_height
+        x2 = plot_x + ((i+1) / (len(recent_top) - 1)) * plot_width
+        y2 = plot_y + plot_height - (recent_top[i+1] / max_val) * plot_height
+        pygame.draw.line(screen, (255, 0, 0), (x1, y1), (x2, y2), 2)
+    
+    for i in range(len(recent_bottom) - 1):
+        x1 = plot_x + (i / (len(recent_bottom) - 1)) * plot_width
+        y1 = plot_y + plot_height - (recent_bottom[i] / max_val) * plot_height
+        x2 = plot_x + ((i+1) / (len(recent_bottom) - 1)) * plot_width
+        y2 = plot_y + plot_height - (recent_bottom[i+1] / max_val) * plot_height
+        pygame.draw.line(screen, (0, 0, 255), (x1, y1), (x2, y2), 2)
+
+def draw_omega_plot(screen, user_omega_history, controller_omega_history):
+    # Define where and how big the mini-plot should be
+    plot_x, plot_y = 800, 800
+    plot_width, plot_height = 600, 300
+    max_points = 300  # Number of recent distance points to plot
+
+    recent_user = user_omega_history[-max_points:]
+    recent_ctrl = controller_omega_history[-max_points:]
+    if not recent_user or not recent_ctrl:
+        return
+    
+    max_val = max(abs(max(recent_user, default=0)), abs(max(recent_ctrl, default=0)), 1)
+    pygame.draw.rect(screen, (50, 50, 50), (plot_x, plot_y, plot_width, plot_height))
+    
+    for i in range(len(recent_user) - 1):
+        x1 = plot_x + (i / (len(recent_user) - 1)) * plot_width
+        y1 = plot_y + plot_height - ((recent_user[i] / max_val) * plot_height * 0.5 + plot_height * 0.5)
+        x2 = plot_x + ((i+1) / (len(recent_user) - 1)) * plot_width
+        y2 = plot_y + plot_height - ((recent_user[i+1] / max_val) * plot_height * 0.5 + plot_height * 0.5)
+        pygame.draw.line(screen, (255, 0, 0), (x1, y1), (x2, y2), 2)
+    
+    for i in range(len(recent_ctrl) - 1):
+        x1 = plot_x + (i / (len(recent_ctrl) - 1)) * plot_width
+        y1 = plot_y + plot_height - ((recent_ctrl[i] / max_val) * plot_height * 0.5 + plot_height * 0.5)
+        x2 = plot_x + ((i+1) / (len(recent_ctrl) - 1)) * plot_width
+        y2 = plot_y + plot_height - ((recent_ctrl[i+1] / max_val) * plot_height * 0.5 + plot_height * 0.5)
+        pygame.draw.line(screen, (0, 255, 0), (x1, y1), (x2, y2), 2)
 
 # --------------------------------------------------------------------
 # CAR CLASS
@@ -350,15 +357,6 @@ def main():
         wave1_points, wave2_points = draw_road_lanes(wave_surface, WHITE, WIDTH, HEIGHT)
         all_wave_points = wave1_points + wave2_points
 
-        # Update Plot in each frame
-        line_user.set_xdata(range(len(user_omega_history)))
-        line_user.set_ydata(user_omega_history)
-        line_controller.set_xdata(range(len(controller_omega_history)))
-        line_controller.set_ydata(controller_omega_history)
-        ax.relim()
-        ax.autoscale_view()
-        plt.draw()
-        plt.pause(0.001)
 
         # Event handling
         for event in pygame.event.get():
@@ -367,13 +365,6 @@ def main():
             if event.type == pygame.QUIT:
                 running = False
 
-        # If user closes the plot window, exit loop
-        if not plt.fignum_exists(fig.number):
-            running = False
-
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                running = False
 
         # Handle keyboard inputs for user steering
         keys = pygame.key.get_pressed()
@@ -403,7 +394,7 @@ def main():
         # CONTROLLER LOGIC
         # Only act if the car is too close to top or bottom lanes
         # ----------------------------------------------------------------
-        safe_threshold = 150
+        safe_threshold = 40
         if not user_steering:
             if top_distance < safe_threshold or bottom_distance < safe_threshold:
                 error = distance_to_center
@@ -429,7 +420,7 @@ def main():
             text_color = (255, 0, 0)  # red
 
         status_info = font_big.render(steering_text, True, text_color)
-        screen.blit(status_info, (900, 50))
+        screen.blit(status_info, (400, 925))
 
         # Log steering data for later analysis
         user_omega_history.append(user_omega)
@@ -475,21 +466,19 @@ def main():
             bottom_distance = last_bottom_distance
 
         # Display top/bottom distance info
-        font = pygame.font.SysFont(None, 24)
+        font = pygame.font.SysFont(None, 48)
         if top_distance is not None and top_angle is not None:
-            top_info = font.render(f"Top: {top_distance:.2f}m @ {top_angle:.2f}°", True, WHITE)
-            screen.blit(top_info, (400, 70))
+            top_info = font.render(f"Top: {top_distance:.2f}m @ {top_angle:.2f}°", True, RED)
+            screen.blit(top_info, (200, 70))
         if bottom_distance is not None and bottom_angle is not None:
-            bottom_info = font.render(f"Bottom: {bottom_distance:.2f}m @ {bottom_angle:.2f}°", True, WHITE)
-            screen.blit(bottom_info, (400, 90))
-
-
+            bottom_info = font.render(f"Bottom: {bottom_distance:.2f}m @ {bottom_angle:.2f}°", True, BLUE)
+            screen.blit(bottom_info, (200, 120))
 
         # Calculate distance to the center line based on top/bottom wave
         lane_deviation = (top_distance - bottom_distance) / 2  # Signed distance to center
         distance_to_center = lane_deviation
         center_info = font.render(f"Distance to Center: {distance_to_center:.2f}m", True, WHITE)
-        screen.blit(center_info, (400, 110))
+        screen.blit(center_info, (200, 170))
 
         # Store distances for plotting
         top_distances.append(top_distance)
@@ -500,6 +489,9 @@ def main():
         # Draw the exit button
         pygame.draw.rect(screen, (255, 0, 0), x_button_rect)
         screen.blit(x_button_text, x_button_rect)
+
+        draw_distance_plot(screen, top_distances, bottom_distances)
+        draw_omega_plot(screen, user_omega_history, controller_omega_history)
 
         # Update the display
         pygame.display.flip()
@@ -514,15 +506,16 @@ def main():
     plt.figure()
     plt.plot(top_distances, label='Top Lane Distance')
     plt.plot(bottom_distances, label='Bottom Lane Distance')
-    plt.xlabel('Time (frames)')
-    plt.ylabel('Shortest Distance (pixels or scaled)')
+    plt.xlabel('Time (60 frames/s)')
+    plt.ylabel('Shortest Distance (meters)')
     plt.title('Lane Distance Over Time')
     plt.legend()
     plt.show()
 
+
     #Plot user vs controller steering commands
     plt.figure()
-    plt.xlabel('Time (frames) 60/s')
+    plt.xlabel('Time (60 frames/s)')
     plt.ylabel('Omega (rad/s)')
     plt.title('User vs Controller Steering')
     plt.plot(user_omega_history, 'r', label='User Omega')
