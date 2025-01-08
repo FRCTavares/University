@@ -1,4 +1,4 @@
-syntax = "proto2";
+syntax = "proto3";
 
 message ScoreUpdate {
     repeated int32 scores = 1;
