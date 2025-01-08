@@ -173,16 +173,18 @@ void fire_laser(WINDOW *win, ch_info_t *astronaut, ch_info_t aliens[], int *alie
             // Update screen
             if (flag == 0)
             {
+                pthread_mutex_lock(&lock);
                 wmove(win, i, y);
                 waddch(win, '|');
                 wrefresh(win);
+                pthread_mutex_unlock(&lock);
 
                 update.pos_x = i;
                 update.pos_y = y;
                 update.ch = '|';
                 // pthread_mutex_lock(&lock);
                 zmq_send(publisher, &update, sizeof(screen_update_t), 0);
-                // pthread_mutex_unlock(&lock);
+                
             }
         }
     }
@@ -227,9 +229,11 @@ void fire_laser(WINDOW *win, ch_info_t *astronaut, ch_info_t aliens[], int *alie
 
             if (flag == 0)
             {
+                pthread_mutex_lock(&lock);
                 wmove(win, x, i);
                 waddch(win, '-');
                 wrefresh(win);
+                pthread_mutex_unlock(&lock);
 
                 update.pos_x = x;
                 update.pos_y = i;
@@ -248,9 +252,12 @@ void fire_laser(WINDOW *win, ch_info_t *astronaut, ch_info_t aliens[], int *alie
     {
         for (int i = 1; i < WINDOW_SIZE - 1; i++)
         {
+
+            pthread_mutex_lock(&lock);
             wmove(win, i, y);
             waddch(win, ' ');
             wrefresh(win);
+            pthread_mutex_unlock(&lock);
 
             update.pos_x = i;
             update.pos_y = y;
@@ -264,9 +271,11 @@ void fire_laser(WINDOW *win, ch_info_t *astronaut, ch_info_t aliens[], int *alie
     {
         for (int i = 1; i < WINDOW_SIZE - 1; i++)
         {
+            pthread_mutex_lock(&lock);
             wmove(win, x, i);
             waddch(win, ' ');
             wrefresh(win);
+            pthread_mutex_unlock(&lock);
 
             update.pos_x = x;
             update.pos_y = i;
@@ -647,9 +656,9 @@ void *message_thread(void *arg)
                 current_time = time(NULL);
                 if (difftime(current_time, char_data[ch_pos].last_fire_time) >= 3)
                 {
-                    pthread_mutex_lock(&data->lock);
+                    //pthread_mutex_lock(&data->lock);
                     fire_laser(data->my_win, &char_data[ch_pos], data->aliens, &data->alien_count, char_data, n_chars, data->publisher, data->grid, data->lock, data->last_alien_kill);
-                    pthread_mutex_unlock(&data->lock);
+                    //pthread_mutex_unlock(&data->lock);
 
                     char_data[ch_pos].last_fire_time = current_time;
                     if (data->alien_count == 0)
