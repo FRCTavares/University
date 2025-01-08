@@ -28,62 +28,73 @@
 
 ## Missing Items
 
-  
-- [ ] Implement the 10-second alien population growth rule.  
  
 - [ ] Don´t forget to edit the 'cleanup' function in `astronaut-display-client.c` to end the thread.
+- [ ] Arranjar maneira de que se o server termina tanto por decisão do user do server como por fim do jogo, o server avisa os clientes todos para que eles se possam desligar sem dar erro.
+- [ ] Não sei o que possa falta mais....
 
  
 
 
 
-**What I will do probably to the handle the alien movement with threads**
+**Algo assim para tratar do Q e q do server?**
 
 // ...existing code...
 
-typedef struct {
-    ch_info_t aliens[ALIEN_COUNT];
-    int alien_count;
-    pthread_mutex_t lock;
-    // ...other shared fields...
-} shared_data_t;
+static volatile int server_running = 1;
 
-void *alien_movement_thread(void *arg) {
-    shared_data_t *data = (shared_data_t *)arg;
-    while (1) {
-        pthread_mutex_lock(&data->lock);
-        // ...move aliens...
-        pthread_mutex_unlock(&data->lock);
-        sleep(1);
-    }
-    pthread_exit(NULL);
+// Broadcast a game-end message to all clients
+void broadcast_game_end(void *publisher)
+{
+    remote_char_t msg;
+    msg.msg_type = MSG_TYPE_GAME_END;
+    zmq_send(publisher, &msg, sizeof(msg), 0);
 }
 
-void *message_thread(void *arg) {
+// Thread that does a blocking getch() until 'q'/'Q' is pressed
+void *keyboard_thread(void *arg)
+{
     shared_data_t *data = (shared_data_t *)arg;
-    while (1) {
-        // ...receive messages...
-        pthread_mutex_lock(&data->lock);
-        // ...update aliens if one dies...
-        pthread_mutex_unlock(&data->lock);
+
+    // In main(), after initscr() is called, we can safely do blocking getch().
+    while (server_running)
+    {
+        int ch = getch();   // Blocks until a key is pressed
+        if (ch == 'q' || ch == 'Q')
+        {
+            broadcast_game_end(data->publisher);
+            server_running = 0;
+            break;
+        }
     }
-    pthread_exit(NULL);
+    return NULL;
 }
 
-int main() {
-    shared_data_t data;
-    data.alien_count = ALIEN_COUNT;
-    pthread_mutex_init(&data.lock, NULL);
-    // ...initialize data.aliens...
-    pthread_t alien_tid, message_tid;
-    pthread_create(&alien_tid, NULL, alien_movement_thread, &data);
-    pthread_create(&message_tid, NULL, message_thread, &data);
-    pthread_join(alien_tid, NULL);
-    pthread_join(message_tid, NULL);
-    pthread_mutex_destroy(&data.lock);
+// ...existing code...
+
+int main()
+{
+    // ...existing code...
+
+    // Initialize ncurses before creating the thread
+    initscr();
+    cbreak();
+    noecho();
+
+    pthread_t key_thread;
+    pthread_create(&key_thread, NULL, keyboard_thread, &shared_data);
+
+    // Example server loop (blocking calls to zmq_recv, etc.) as normal,
+    // but exit when server_running is pulled low
+    while (server_running)
+    {
+        // ...handle messages...
+    }
+
+    // Join the keyboard thread and clean up
+    pthread_join(key_thread, NULL);
+
+    // ...existing teardown code...
+    endwin();
     return 0;
 }
-// ...existing code...
-
-
-
