@@ -1,5 +1,6 @@
 {
     "files.associations": {
-        "protocol.h": "c"
+        "protocol.h": "c",
+        "space-high-scores.C": "cpp"
     }
 }
