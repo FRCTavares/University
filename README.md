@@ -26,7 +26,7 @@ You can explore the repository here: [University GitHub Repository](https://gith
 Feel free to explore and use these projects as a reference or source of inspiration. If you have any questions, don't hesitate to reach out!  
 
 ## 📧 Contact  
-For inquiries or collaboration, please contact me at [your email here].  
+For inquiries or collaboration, please contact me at [francisco.carreira.tavares@gmail.com].  
 
 ---  
 
