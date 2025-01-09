@@ -44,9 +44,6 @@ int main()
         return -1;
     }
 
-
-
-
     while (1)
     {
 
@@ -58,36 +55,75 @@ int main()
 
         if (score_update.ParseFromArray(message.data(), message.size()))
         {
-            if (werase(score_win) == ERR)
+
+            if (score_update.scores_size() == 9)
             {
-                endwin();
-                perror("werase failed");
-                return -1;
+
+                werase(score_win);
+
+                mvwprintw(score_win, 10, 10, "GAME OVER");
+
+                if (wrefresh(score_win) == ERR)
+                {
+                    fprintf(stderr, "wrefresh failed\n");
+                    exit(-1);
+                }
+
+                sleep(2);
+                exit(1);
             }
 
-            mvwprintw(score_win, 1, 3, "SCORE");
-
-            for (int i = 0; i < score_update.scores_size(); i++)
+            else if (score_update.scores_size() == 10)
             {
-                mvwprintw(score_win, 2 + i, 3, "%c - %d", score_update.characters(i)[0], score_update.scores(i));
+                werase(score_win);
+
+                mvwprintw(score_win, 10, 10, "SERVER HAS\n ENDED THE GAME");
+
+                if (wrefresh(score_win) == ERR)
+                {
+                    fprintf(stderr, "wrefresh failed\n");
+                    exit(-1);
+                }
+
+                sleep(2);
+                exit(1);
             }
 
-            box(score_win, 0, 0); // Draw the border
-
-            if (wrefresh(score_win) == ERR)
+            else
             {
-                fprintf(stderr, "wrefresh failed\n");
-                return -1;
+                if (werase(score_win) == ERR)
+                {
+                    endwin();
+                    perror("werase failed");
+                    return -1;
+                }
+
+                mvwprintw(score_win, 1, 3, "SCORE");
+
+                for (int i = 0; i < score_update.scores_size(); i++)
+                {
+                    mvwprintw(score_win, 2 + i, 3, "%c - %d", score_update.characters(i)[0], score_update.scores(i));
+                }
+
+                box(score_win, 0, 0); // Draw the border
+
+                if (wrefresh(score_win) == ERR)
+                {
+                    fprintf(stderr, "wrefresh failed\n");
+                    return -1;
+                }
             }
         }
+
         else
         {
             std::cerr << "Failed to parse the message!" << std::endl;
         }
     }
 
+    sleep(2);
     subscriber.close();
     context.close();
-    // endwin();
+    endwin();
     return 0;
 }

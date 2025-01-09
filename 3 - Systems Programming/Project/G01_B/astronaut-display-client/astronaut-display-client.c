@@ -34,10 +34,8 @@ int main()
 
     initialize_zmq(&context, &requester);
 
-    
-
     // Send initial message to server
-    //printf("Client: Sending initial message...\n");
+    // printf("Client: Sending initial message...\n");
     if (zmq_send(requester, &message, sizeof(remote_char_t), 0) == -1)
     {
         perror("Client zmq_send failed");
@@ -55,7 +53,6 @@ int main()
 
     initialize_ncurses();
 
-
     // Update the messsage variable with the character information
     // This information will be the same throughout the whole game
     message.ch = info.ch;
@@ -69,12 +66,12 @@ int main()
         return -1;
     }
 
-    //mvprintw(30, 0, "You are controlling character %c", info.ch);
+    // mvprintw(30, 0, "You are controlling character %c", info.ch);
 
     sleep(1);
 
     pthread_t thread;
-    pthread_create(&thread, NULL, display_thread, (void*) context);
+    pthread_create(&thread, NULL, display_thread, (void *)context);
 
     while (running)
     {
@@ -97,7 +94,7 @@ int main()
             running = 0;
         }
 
-        //refresh();
+        // refresh();
     }
 
     cleanup(context, requester);
@@ -189,9 +186,8 @@ return:
 int handle_input(remote_char_t *message)
 {
 
-    
     int key = getch();
-    
+
     static int n = 0;
     n++;
 
@@ -264,7 +260,7 @@ int process_server_messages(void *requester, remote_char_t *message)
         return -1;
     }
     int score = reply;
-    //mvprintw(32, 0, "Your score: %d", score);
+    // mvprintw(32, 0, "Your score: %d", score);
     return 0;
 }
 
@@ -305,13 +301,10 @@ void *display_thread(void *context)
         exit(-1);
     }
 
-    
-
     /*
         Initialize the Game and Score windows side by side
         */
 
-    
     WINDOW *my_win = newwin(WINDOW_SIZE, WINDOW_SIZE, 0, 0);
     if (my_win == NULL)
     {
@@ -348,7 +341,7 @@ void *display_thread(void *context)
     */
     while (1)
     {
-        //Receive published update
+        // Receive published update
         int rc = zmq_recv(subscriber, &update, sizeof(screen_update_t), 0);
         if (rc == -1)
         {
@@ -361,9 +354,8 @@ void *display_thread(void *context)
             exit(-1);
         }
 
-        
         // Score updates
-        if(update.ch == 's')
+        if (update.ch == 's')
         {
             if (werase(score_win) == ERR)
             {
@@ -390,9 +382,10 @@ void *display_thread(void *context)
             }
         }
 
-        //Game over
-        else if(update.ch == 'o'){
-            
+        // Game over
+        else if (update.ch == 'o')
+        {
+
             werase(my_win);
             werase(score_win);
             mvwprintw(my_win, 10, 10, "GAME OVER");
@@ -401,8 +394,6 @@ void *display_thread(void *context)
             {
                 mvwprintw(my_win, 12 + i, 10, "%c - %d", update.players[i], update.scores[i]);
             }
-
-            
 
             if (wrefresh(my_win) == ERR)
             {
@@ -416,11 +407,38 @@ void *display_thread(void *context)
                 exit(-1);
             }
 
-            sleep(5);
-            break;
+            sleep(2);
+
+            endwin();
+            exit(-1);
         }
 
-        //game window change
+        else if (update.ch == 'O')
+        {
+
+            werase(my_win);
+            werase(score_win);
+            mvwprintw(my_win, 10, 10, "SERVER HAS ENDED THE GAME");
+
+            if (wrefresh(my_win) == ERR)
+            {
+                fprintf(stderr, "wrefresh failed\n");
+                exit(-1);
+            }
+
+            if (wrefresh(score_win) == ERR)
+            {
+                fprintf(stderr, "wrefresh failed\n");
+                exit(-1);
+            }
+            
+            sleep(2);
+            endwin();
+            
+            exit(-1);
+        }
+
+        // game window change
         else
         {
             if (wmove(my_win, update.pos_x, update.pos_y) == ERR)
@@ -441,11 +459,9 @@ void *display_thread(void *context)
                 exit(-1);
             }
         }
-
-        
     }
 
-
-
-
+    zmq_close(subscriber);
+    zmq_ctx_destroy(context);
+    exit(1);
 }

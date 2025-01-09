@@ -21,6 +21,7 @@ typedef struct
     int grid[16][16];
     WINDOW *my_win;
     WINDOW *score_win;
+    void *ctx;
     void *publisher;
     void *publisher2;
     time_t last_alien_kill;
@@ -184,7 +185,6 @@ void fire_laser(WINDOW *win, ch_info_t *astronaut, ch_info_t aliens[], int *alie
                 update.ch = '|';
                 // pthread_mutex_lock(&lock);
                 zmq_send(publisher, &update, sizeof(screen_update_t), 0);
-                
             }
         }
     }
@@ -371,7 +371,7 @@ void update_scoreboard(WINDOW *score_win, ch_info_t char_data[], int n_chars, in
     zmq_send(publisher2, message_data, message_size, 0);
 
     // Clean up
-
+    free(score_update.characters);
     free(message_data);
 }
 
@@ -403,14 +403,12 @@ void remove_astronaut(WINDOW *win, ch_info_t char_data[], int *n_chars, int ch_p
     wrefresh(win);
     pthread_mutex_unlock(&lock);
 
-
     // Send update to clients to clear the character
     update.pos_x = char_data[ch_pos].pos_x;
     update.pos_y = char_data[ch_pos].pos_y;
     update.ch = ' ';
-    
+
     zmq_send(publisher, &update, sizeof(screen_update_t), 0);
-    
 
     // Remove astronaut from the char_data array
     for (int i = ch_pos; i < (*n_chars) - 1; i++)
@@ -436,9 +434,9 @@ void *message_thread(void *arg)
     int score = 0;
 
     // Initialize ncurses
-    initscr();
+    /*initscr();
     cbreak();
-    keypad(stdscr, TRUE);
+    keypad(stdscr, TRUE);*/
     noecho();
 
     // Initialize game window and score board window
@@ -450,6 +448,9 @@ void *message_thread(void *arg)
     data->score_win = newwin(WINDOW_SIZE, WINDOW_SIZE, 0, WINDOW_SIZE + 1);
     box(data->score_win, 0, 0);
     wrefresh(data->score_win);
+
+    box(data->my_win, 0, 0);
+    wrefresh(data->my_win);
 
     // Initial print of the scoreboard
     update_scoreboard(data->score_win, char_data, n_chars, data->alien_count, data->publisher, data->lock, data->publisher2);
@@ -477,7 +478,8 @@ void *message_thread(void *arg)
     }
 
     // Initialize ZeroMQ
-    void *context = zmq_ctx_new();
+    void *context = data->ctx;
+
     if (context == NULL)
     {
         perror("Failed to create ZeroMQ context");
@@ -518,9 +520,8 @@ void *message_thread(void *arg)
         rc = zmq_recv(responder, &m, sizeof(remote_char_t), 0);
         if (rc == -1)
         {
-            perror("Server zmq_recv failed");
-            pthread_exit(NULL);
-            ;
+            //perror("Server zmq_recv failed");
+            exit(-1);
         }
 
         if (m.msg_type == MSG_TYPE_CONNECT)
@@ -656,9 +657,9 @@ void *message_thread(void *arg)
                 current_time = time(NULL);
                 if (difftime(current_time, char_data[ch_pos].last_fire_time) >= 3)
                 {
-                    //pthread_mutex_lock(&data->lock);
+                    // pthread_mutex_lock(&data->lock);
                     fire_laser(data->my_win, &char_data[ch_pos], data->aliens, &data->alien_count, char_data, n_chars, data->publisher, data->grid, data->lock, data->last_alien_kill);
-                    //pthread_mutex_unlock(&data->lock);
+                    // pthread_mutex_unlock(&data->lock);
 
                     char_data[ch_pos].last_fire_time = current_time;
                     if (data->alien_count == 0)
@@ -684,15 +685,50 @@ void *message_thread(void *arg)
                             update.scores[i] = char_data[i].score;
                         }
 
-                        
                         zmq_send(data->publisher, &update, sizeof(screen_update_t), 0);
+
+                        ScoreUpdate score_update = SCORE_UPDATE__INIT;
+
+                        int scores[9];
+                        char characters[n_chars][2];
+
+                        for (int i = 0; i < n_chars; i++)
+                        {
+                            scores[i] = char_data[i].score;
+                            characters[i][0] = char_data[i].ch;
+                            characters[i][1] = '\0';
+                        }
+
+                        scores[8] = 0;
+
+                        score_update.n_scores = 9;
                         
+
+                        score_update.scores = scores;
+                        
+
+                        unsigned message_size = score_update__get_packed_size(&score_update);
+
+                        void *message_data = malloc(message_size);
+
+                        // Pack the message into the byte buffer
+                        score_update__pack(&score_update, message_data);
+
+                        // Send the serialized message over ZeroMQ
+                        zmq_send(data->publisher2, message_data, message_size, 0);
+
+                        // Clean up
+
+                        free(message_data);
 
                         wrefresh(data->my_win);
                         wrefresh(data->score_win);
-                        pthread_mutex_unlock(&data->lock);
-                        sleep(5);
+                        sleep(2);
+                        
                         break;
+                        pthread_mutex_unlock(&data->lock);
+                        
+                        
                     }
                 }
             }
@@ -811,7 +847,7 @@ void *message_thread(void *arg)
         }
 
         // Update display
-        
+
         pthread_mutex_lock(&data->lock);
         for (int i = 0; i < n_chars; i++)
         {
@@ -822,12 +858,7 @@ void *message_thread(void *arg)
         wrefresh(data->my_win);
         pthread_mutex_unlock(&data->lock);
 
-        
-
-
         update_scoreboard(data->score_win, char_data, n_chars, data->alien_count, data->publisher, data->lock, data->publisher2);
-
-        
 
         // Send updates to outer-space-display
         for (int i = 0; i < n_chars; i++)
@@ -835,13 +866,12 @@ void *message_thread(void *arg)
             update.pos_x = char_data[i].pos_x;
             update.pos_y = char_data[i].pos_y;
             update.ch = char_data[i].ch;
-            
+
             if (zmq_send(data->publisher, &update, sizeof(screen_update_t), 0) == -1)
             {
                 perror("Server zmq_send failed");
                 pthread_exit(NULL);
-            }
-            ;
+            };
         }
 
         usleep(10000); // Sleep for 10ms
@@ -849,6 +879,7 @@ void *message_thread(void *arg)
     // Cleanup
     zmq_close(responder);
     zmq_close(data->publisher);
+    zmq_close(data->publisher2);
     zmq_ctx_destroy(context);
     pthread_exit(NULL);
 }
@@ -859,6 +890,11 @@ void *alien_movement_thread(void *arg)
     shared_data_t *data = (shared_data_t *)arg;
     int aliens_moved = 0;
 
+
+    //initscr();
+    //cbreak();
+    //keypad(stdscr, TRUE);
+    //noecho();
     while (1)
     {
         sleep(1);
@@ -1013,6 +1049,92 @@ void *alien_movement_thread(void *arg)
     }
 }
 
+void *exit_thread(void *arg)
+{
+
+    shared_data_t *data = (shared_data_t *)arg;
+    
+    
+
+    while (1)
+    {   
+        int key = getch();
+
+        switch (key)
+        {
+        case 'q':
+        case 'Q':
+            pthread_mutex_lock(&data->lock);
+            werase(data->my_win);
+            werase(data->score_win);
+            mvwprintw(data->my_win, 10, 10, "SERVER HAS ENDED THE GAME");
+            // Print final scores
+
+            // Build the update to send to outer-space-display
+            screen_update_t update;
+            update.ch = 'O';
+            update.player_count = -1;
+
+            
+
+            zmq_send(data->publisher, &update, sizeof(screen_update_t), 0);
+
+            ScoreUpdate score_update = SCORE_UPDATE__INIT;
+
+            int scores[10];
+           
+
+            for (int i = 0; i < 10; i++)
+            {
+                scores[i] = 0;
+                
+            }
+
+
+            score_update.n_scores = 10;
+            
+
+            score_update.scores = scores;
+            
+
+            unsigned message_size = score_update__get_packed_size(&score_update);
+
+            void *message_data = malloc(message_size);
+
+            // Pack the message into the byte buffer
+            score_update__pack(&score_update, message_data);
+
+            // Send the serialized message over ZeroMQ
+            zmq_send(data->publisher2, message_data, message_size, 0);
+
+            // Clean up
+
+            free(message_data);
+
+            wrefresh(data->my_win);
+            wrefresh(data->score_win);
+
+
+            sleep(1);
+
+            endwin();
+            zmq_close(data->publisher);
+            zmq_close(data->publisher2);
+            zmq_ctx_destroy(data->ctx);
+
+            exit(-1);
+
+
+            pthread_mutex_unlock(&data->lock);
+            
+            
+
+        default:
+            continue;
+        }
+    }
+}
+
 /*
     Main function to run the game server
 
@@ -1026,6 +1148,7 @@ void *alien_movement_thread(void *arg)
 int main()
 {
     /* Program and variables initializations */
+
 
     srand(time(NULL)); // Seed the random number generator
 
@@ -1079,16 +1202,26 @@ int main()
         pthread_exit(NULL);
     }
 
+
+    initscr();
+    cbreak();
+    keypad(stdscr, TRUE);
+    noecho();
+
+
     data.publisher = publisher;
     data.publisher2 = publisher_2;
+    data.ctx = context;
 
-    pthread_t message_thread_id, alien_movement_thread_id;
+    pthread_t message_thread_id, alien_movement_thread_id, exit_thread_id;
 
     pthread_create(&message_thread_id, NULL, message_thread, &data);
     pthread_create(&alien_movement_thread_id, NULL, alien_movement_thread, &data);
+    pthread_create(&exit_thread_id, NULL, exit_thread, &data);
 
     pthread_join(message_thread_id, NULL);
     pthread_join(alien_movement_thread_id, NULL);
+    pthread_join(exit_thread_id,NULL);
     pthread_mutex_destroy(&data.lock);
     endwin();
     return 0;
