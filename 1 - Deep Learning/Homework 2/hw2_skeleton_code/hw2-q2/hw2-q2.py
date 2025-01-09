@@ -27,27 +27,21 @@ class ConvBlock(nn.Module):
         ):
         super().__init__()
 
-        # Q2.1. Initialize convolution, maxpool, activation and dropout layers 
         self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1)
         self.relu = nn.ReLU()
-        self.pool = nn.MaxPool2d(kernel_size=2, stride=2)
+        self.pool = nn.MaxPool2d(kernel_size=2, stride=2) if maxpool else nn.Identity()
         self.dropout_layer = nn.Dropout(0.1)
         
         # Q2.2 Initialize batchnorm layer 
-        # We'll implement this in the next part, for now use Identity
-        self.bn = nn.Identity()
+        self.bn = nn.BatchNorm2d(out_channels) if batch_norm else nn.Identity()
 
     def forward(self, x):
-        # input for convolution is [b, c, w, h]
-        
-        # Implement execution of layers in right order
-        x = self.conv(x)      # Convolution 
-        x = self.relu(x)      # ReLU activation
-        x = self.pool(x)      # Max pooling
-        x = self.dropout_layer(x)  # Dropout
-        
+        x = self.conv(x)
+        x = self.bn(x)       # BatchNorm after conv
+        x = self.relu(x)
+        x = self.pool(x)
+        x = self.dropout_layer(x)
         return x
-
 
 class CNN(nn.Module):
     def __init__(self, dropout_prob, maxpool=True, batch_norm=True, conv_bias=True):
@@ -58,43 +52,48 @@ class CNN(nn.Module):
         self.maxpool = maxpool
         self.batch_norm = batch_norm
 
-        # Initialize convolutional blocks
+        # Conv blocks
         self.conv_blocks = nn.ModuleList([
             ConvBlock(channels[i], channels[i+1], kernel_size=3, 
                      maxpool=maxpool, batch_norm=batch_norm, dropout=dropout_prob)
             for i in range(len(channels)-1)
         ])
         
-        # Calculate input size for first FC layer (assuming 48x48 input)
-        # After 3 conv blocks with maxpool, spatial dimensions reduced by factor of 8
-        # Final spatial size: 6x6
-        fc_input_dim = channels[-1] * 6 * 6
-
-        # Initialize layers for the MLP block
-        self.fc1 = nn.Linear(fc_input_dim, fc1_out_dim)
+        # Global average pooling
+        self.global_pool = nn.AdaptiveAvgPool2d((1, 1))
+        
+        # MLP block with batch norm
+        self.fc1 = nn.Linear(channels[-1], fc1_out_dim)
+        self.bn1 = nn.BatchNorm1d(fc1_out_dim) if batch_norm else nn.Identity()
         self.fc2 = nn.Linear(fc1_out_dim, fc2_out_dim)
-        self.fc3 = nn.Linear(fc2_out_dim, 6)  # 6 classes for Intel landscapes
+        self.bn2 = nn.BatchNorm1d(fc2_out_dim) if batch_norm else nn.Identity()
+        self.fc3 = nn.Linear(fc2_out_dim, 6)
         self.dropout = nn.Dropout(dropout_prob)
         self.relu = nn.ReLU()
 
     def forward(self, x):
         x = x.reshape(x.shape[0], 3, 48, -1)
 
-        # Pass through conv blocks
+        # Conv blocks
         for block in self.conv_blocks:
             x = block(x)
         
-        # Flatten
+        # Global average pooling
+        x = self.global_pool(x)
         x = x.view(x.size(0), -1)
         
-        # MLP part
-        x = self.relu(self.fc1(x))
+        # MLP with batch norm
+        x = self.fc1(x)
+        x = self.bn1(x)
+        x = self.relu(x)
         x = self.dropout(x)
-        x = self.relu(self.fc2(x))
+        
+        x = self.fc2(x)
+        x = self.bn2(x)
+        x = self.relu(x)
         x = self.fc3(x)
 
         return F.log_softmax(x, dim=1)
- 
 
 def train_batch(X, y, model, optimizer, criterion, **kwargs):
     """
