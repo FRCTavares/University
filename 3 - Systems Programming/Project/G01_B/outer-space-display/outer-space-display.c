@@ -1,13 +1,6 @@
-#include <ncurses.h>
-#include <unistd.h>
-#include <stdlib.h>
-#include <zmq.h>
-#include <string.h>
 #include "protocol.h"
 
-#define WINDOW_SIZE 22
-#define MAX_PLAYERS 8
-
+// DATA STRUCTURES
 typedef struct screen_update_t
 {
     int pos_x;
@@ -18,9 +11,9 @@ typedef struct screen_update_t
     int player_count;
 } screen_update_t;
 
+// MAIN FUNCTION
 int main()
 {
-
     void *context = zmq_ctx_new();
     if (context == NULL)
     {
@@ -96,14 +89,13 @@ int main()
 
     screen_update_t update;
 
-
     /*
     Main loop
     Wait to receive the published messages from the server and process them
     */
     while (1)
     {
-        //Receive published update
+        // Receive published update
         int rc = zmq_recv(subscriber, &update, sizeof(screen_update_t), 0);
         if (rc == -1)
         {
@@ -116,9 +108,8 @@ int main()
             return -1;
         }
 
-  
         // Score updates
-        if(update.ch == 's')
+        if (update.ch == 's')
         {
             if (werase(score_win) == ERR)
             {
@@ -145,9 +136,10 @@ int main()
             }
         }
 
-        //Game over
-        else if(update.ch == 'o'){
-            
+        // Game over
+        else if (update.ch == 'o')
+        {
+
             werase(my_win);
             werase(score_win);
             mvwprintw(my_win, 10, 10, "GAME OVER");
@@ -156,8 +148,6 @@ int main()
             {
                 mvwprintw(my_win, 12 + i, 10, "%c - %d", update.players[i], update.scores[i]);
             }
-
-            
 
             if (wrefresh(my_win) == ERR)
             {
@@ -175,7 +165,7 @@ int main()
             break;
         }
 
-        //game window change
+        // game window change
         else
         {
             if (wmove(my_win, update.pos_x, update.pos_y) == ERR)

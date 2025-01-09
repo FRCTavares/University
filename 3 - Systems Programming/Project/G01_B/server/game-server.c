@@ -2,6 +2,7 @@
 #include "protocol.h"
 #include "message.pb-c.h"
 
+// DATA STRUCTURES
 typedef struct screen_update_t
 {
     int pos_x;
@@ -29,6 +30,8 @@ typedef struct
     // Is there any more data that needs sharing?
 } shared_data_t;
 
+// AUXILIARY FUNCTIONS
+
 /*
     Function to calculate the new position of the character based on the direction of movement
 
@@ -41,7 +44,6 @@ typedef struct
     Returns:
     None
 */
-
 void new_position(int *x, int *y, direction_t direction, int dir)
 {
 
@@ -94,7 +96,6 @@ void new_position(int *x, int *y, direction_t direction, int dir)
     Returns:
     Index of the character in the array, -1 if not found
 */
-
 int find_ch_info(ch_info_t char_data[], int n_chars, int ch)
 {
     for (int i = 0; i < n_chars; i++)
@@ -123,7 +124,6 @@ int find_ch_info(ch_info_t char_data[], int n_chars, int ch)
     Returns:
     None
 */
-
 void fire_laser(WINDOW *win, ch_info_t *astronaut, ch_info_t aliens[], int *alien_count, ch_info_t char_data[], int n_chars, void *publisher, int grid[16][16], pthread_mutex_t lock, time_t last_alien_kill)
 {
 
@@ -300,7 +300,6 @@ void fire_laser(WINDOW *win, ch_info_t *astronaut, ch_info_t aliens[], int *alie
     Returns:
     None
 */
-
 void update_scoreboard(WINDOW *score_win, ch_info_t char_data[], int n_chars, int alien_count, void *publisher, pthread_mutex_t lock, void *publisher2)
 {
 
@@ -390,7 +389,6 @@ void update_scoreboard(WINDOW *score_win, ch_info_t char_data[], int n_chars, in
     Returns:
     None
 */
-
 void remove_astronaut(WINDOW *win, ch_info_t char_data[], int *n_chars, int ch_pos, void *publisher, WINDOW *score_win, int alien_count, pthread_mutex_t lock, void *publisher2)
 {
 
@@ -421,9 +419,17 @@ void remove_astronaut(WINDOW *win, ch_info_t char_data[], int *n_chars, int ch_p
     update_scoreboard(score_win, char_data, *n_chars, alien_count, publisher, lock, publisher2);
 }
 
-// Main part of the Program
+// MAIN THREAD FUNCTIONS
 
-// PRINCIPAL
+/*
+    Function to handle incoming client messages, including connect, zap, move, and disconnect requests.
+
+    Parameters:
+        arg: Pointer to shared_data_t structure containing shared resources and game state.
+
+    Returns:
+        NULL upon thread completion.
+*/
 void *message_thread(void *arg)
 {
     shared_data_t *data = (shared_data_t *)arg;
@@ -520,7 +526,7 @@ void *message_thread(void *arg)
         rc = zmq_recv(responder, &m, sizeof(remote_char_t), 0);
         if (rc == -1)
         {
-            //perror("Server zmq_recv failed");
+            // perror("Server zmq_recv failed");
             exit(-1);
         }
 
@@ -702,10 +708,8 @@ void *message_thread(void *arg)
                         scores[8] = 0;
 
                         score_update.n_scores = 9;
-                        
 
                         score_update.scores = scores;
-                        
 
                         unsigned message_size = score_update__get_packed_size(&score_update);
 
@@ -724,11 +728,9 @@ void *message_thread(void *arg)
                         wrefresh(data->my_win);
                         wrefresh(data->score_win);
                         sleep(2);
-                        
+
                         break;
                         pthread_mutex_unlock(&data->lock);
-                        
-                        
                     }
                 }
             }
@@ -884,17 +886,24 @@ void *message_thread(void *arg)
     pthread_exit(NULL);
 }
 
-// SECUNDÁRIO
+/*
+    Function to manage alien movements and periodically update the game state.
+
+    Parameters:
+        arg: Pointer to shared_data_t structure containing shared resources and game state.
+
+    Returns:
+        NULL upon thread completion.
+*/
 void *alien_movement_thread(void *arg)
 {
     shared_data_t *data = (shared_data_t *)arg;
     int aliens_moved = 0;
 
-
-    //initscr();
-    //cbreak();
-    //keypad(stdscr, TRUE);
-    //noecho();
+    // initscr();
+    // cbreak();
+    // keypad(stdscr, TRUE);
+    // noecho();
     while (1)
     {
         sleep(1);
@@ -1049,15 +1058,22 @@ void *alien_movement_thread(void *arg)
     }
 }
 
+/*
+    Function to monitor for exit keypresses and handle server shutdown procedures.
+
+    Parameters:
+        arg: Pointer to shared_data_t structure containing shared resources and game state.
+
+    Returns:
+        NULL upon thread completion.
+*/
 void *exit_thread(void *arg)
 {
 
     shared_data_t *data = (shared_data_t *)arg;
-    
-    
 
     while (1)
-    {   
+    {
         int key = getch();
 
         switch (key)
@@ -1075,27 +1091,20 @@ void *exit_thread(void *arg)
             update.ch = 'O';
             update.player_count = -1;
 
-            
-
             zmq_send(data->publisher, &update, sizeof(screen_update_t), 0);
 
             ScoreUpdate score_update = SCORE_UPDATE__INIT;
 
             int scores[10];
-           
 
             for (int i = 0; i < 10; i++)
             {
                 scores[i] = 0;
-                
             }
 
-
             score_update.n_scores = 10;
-            
 
             score_update.scores = scores;
-            
 
             unsigned message_size = score_update__get_packed_size(&score_update);
 
@@ -1114,7 +1123,6 @@ void *exit_thread(void *arg)
             wrefresh(data->my_win);
             wrefresh(data->score_win);
 
-
             sleep(1);
 
             endwin();
@@ -1124,10 +1132,7 @@ void *exit_thread(void *arg)
 
             exit(-1);
 
-
             pthread_mutex_unlock(&data->lock);
-            
-            
 
         default:
             continue;
@@ -1135,20 +1140,9 @@ void *exit_thread(void *arg)
     }
 }
 
-/*
-    Main function to run the game server
-
-    Parameters:
-    None
-
-    Returns:
-    0 on success, -1 on failure
-*/
-
 int main()
 {
     /* Program and variables initializations */
-
 
     srand(time(NULL)); // Seed the random number generator
 
@@ -1202,12 +1196,10 @@ int main()
         pthread_exit(NULL);
     }
 
-
     initscr();
     cbreak();
     keypad(stdscr, TRUE);
     noecho();
-
 
     data.publisher = publisher;
     data.publisher2 = publisher_2;
@@ -1215,13 +1207,45 @@ int main()
 
     pthread_t message_thread_id, alien_movement_thread_id, exit_thread_id;
 
-    pthread_create(&message_thread_id, NULL, message_thread, &data);
-    pthread_create(&alien_movement_thread_id, NULL, alien_movement_thread, &data);
-    pthread_create(&exit_thread_id, NULL, exit_thread, &data);
+    if (pthread_create(&message_thread_id, NULL, message_thread, &data) != 0)
+    {
+        perror("Failed to create message_thread");
+        zmq_close(publisher_2);
+        zmq_close(publisher);
+        zmq_ctx_destroy(context);
+        pthread_mutex_destroy(&data.lock);
+        endwin();
+        exit(EXIT_FAILURE);
+    }
+
+    if (pthread_create(&alien_movement_thread_id, NULL, alien_movement_thread, &data) != 0)
+    {
+        perror("Failed to create alien_movement_thread");
+        pthread_cancel(message_thread_id);
+        zmq_close(publisher_2);
+        zmq_close(publisher);
+        zmq_ctx_destroy(context);
+        pthread_mutex_destroy(&data.lock);
+        endwin();
+        exit(EXIT_FAILURE);
+    }
+
+    if (pthread_create(&exit_thread_id, NULL, exit_thread, &data) != 0)
+    {
+        perror("Failed to create exit_thread");
+        pthread_cancel(message_thread_id);
+        pthread_cancel(alien_movement_thread_id);
+        zmq_close(publisher_2);
+        zmq_close(publisher);
+        zmq_ctx_destroy(context);
+        pthread_mutex_destroy(&data.lock);
+        endwin();
+        exit(EXIT_FAILURE);
+    }
 
     pthread_join(message_thread_id, NULL);
     pthread_join(alien_movement_thread_id, NULL);
-    pthread_join(exit_thread_id,NULL);
+    pthread_join(exit_thread_id, NULL);
     pthread_mutex_destroy(&data.lock);
     endwin();
     return 0;
