@@ -2,6 +2,7 @@
 #ifndef PROTOCOL_H
 #define PROTOCOL_H
 
+// Includes
 #include <ncurses.h>
 #include <time.h>
 #include <stdio.h>
@@ -56,7 +57,7 @@ typedef enum direction_t
     RIGHT
 } direction_t;
 
-// Astronaut Information
+// Astronaut/Aliens Information
 typedef struct ch_info_t
 {
     int ch;

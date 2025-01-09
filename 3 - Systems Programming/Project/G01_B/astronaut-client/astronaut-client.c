@@ -1,81 +1,22 @@
 #include "protocol.h"
 
-void initialize_zmq(void **context, void **requester);
-void initialize_ncurses();
-void cleanup(void *context, void *requester);
-int handle_input(remote_char_t *message);
-int process_server_messages(void *requester, remote_char_t *message);
+/*
+Function to delete the necessary zmq variables
 
-int main()
+param:
+    void *context: pointer to the zmq context
+    void *requester: pointer to the zmq requester socket
+
+return:
+    void
+*/
+void cleanup(void *context, void *requester)
 {
-    void *context = NULL;
-    void *requester = NULL;
-
-    remote_char_t message = {0};
-    ch_info_t info = {0};
-    int running = 1;
-
-    initialize_zmq(&context, &requester);
-    initialize_ncurses();
-
-    // Send initial message to server
-    printf("Client: Sending initial message...\n");
-    if (zmq_send(requester, &message, sizeof(remote_char_t), 0) == -1)
-    {
-        perror("Client zmq_send failed");
-        cleanup(context, requester);
-        return -1;
-    }
-
-    // Receive character info from server
-    if (zmq_recv(requester, &info, sizeof(ch_info_t), 0) == -1)
-    {
-        perror("Client zmq_recv failed");
-        cleanup(context, requester);
-        return -1;
-    }
-
-    // Update the messsage variable with the character information
-    // This information will be the same throughout the whole game
-    message.ch = info.ch;
-    message.GAME_TOKEN = info.GAME_TOKEN;
-
-    // if char is 0 then the server is full
-    if (info.ch == 0)
-    {
-        mvprintw(0, 0, "Server is full. Please try again later.");
-        cleanup(context, requester);
-        return -1;
-    }
-
-    mvprintw(0, 0, "You are controlling character %c", info.ch);
-
-    while (running)
-    {
-        int input_result = handle_input(&message);
-        if (input_result == 0)
-        {
-            if (process_server_messages(requester, &message) == -1)
-            {
-                cleanup(context, requester);
-                return -1;
-            }
-        }
-        else if (input_result == 1)
-        {
-            if (process_server_messages(requester, &message) == -1)
-            {
-                cleanup(context, requester);
-                return -1;
-            }
-            running = 0;
-        }
-
-        refresh();
-    }
-
-    cleanup(context, requester);
-    return 0;
+    endwin();
+    if (requester)
+        zmq_close(requester);
+    if (context)
+        zmq_ctx_destroy(context);
 }
 
 /*
@@ -89,7 +30,6 @@ param:
 return:
     void
 */
-
 void initialize_zmq(void **context, void **requester)
 {
     *context = zmq_ctx_new();
@@ -124,32 +64,12 @@ param:
 return:
     void
 */
-
 void initialize_ncurses()
 {
     initscr();
     cbreak();
     keypad(stdscr, TRUE);
     noecho();
-}
-
-/*
-Function to delete the necessary zmq variables
-
-param:
-    void *context: pointer to the zmq context
-    void *requester: pointer to the zmq requester socket
-
-return:
-    void
-*/
-void cleanup(void *context, void *requester)
-{
-    endwin();
-    if (requester)
-        zmq_close(requester);
-    if (context)
-        zmq_ctx_destroy(context);
 }
 
 /*
@@ -238,5 +158,77 @@ int process_server_messages(void *requester, remote_char_t *message)
     }
     int score = reply;
     mvprintw(1, 0, "Your score: %d", score);
+    return 0;
+}
+
+int main()
+{
+    void *context = NULL;
+    void *requester = NULL;
+
+    remote_char_t message = {0};
+    ch_info_t info = {0};
+    int running = 1;
+
+    initialize_zmq(&context, &requester);
+    initialize_ncurses();
+
+    // Send initial message to server
+    printf("Client: Sending initial message...\n");
+    if (zmq_send(requester, &message, sizeof(remote_char_t), 0) == -1)
+    {
+        perror("Client zmq_send failed");
+        cleanup(context, requester);
+        return -1;
+    }
+
+    // Receive character info from server
+    if (zmq_recv(requester, &info, sizeof(ch_info_t), 0) == -1)
+    {
+        perror("Client zmq_recv failed");
+        cleanup(context, requester);
+        return -1;
+    }
+
+    // Update the messsage variable with the character information
+    // This information will be the same throughout the whole game
+    message.ch = info.ch;
+    message.GAME_TOKEN = info.GAME_TOKEN;
+
+    // if char is 0 then the server is full
+    if (info.ch == 0)
+    {
+        mvprintw(0, 0, "Server is full. Please try again later.");
+        cleanup(context, requester);
+        return -1;
+    }
+
+    mvprintw(0, 0, "You are controlling character %c", info.ch);
+
+    while (running)
+    {
+        int input_result = handle_input(&message);
+        if (input_result == 0)
+        {
+            if (process_server_messages(requester, &message) == -1)
+            {
+                cleanup(context, requester);
+                return -1;
+            }
+        }
+        else if (input_result == 1)
+        {
+            if (process_server_messages(requester, &message) == -1)
+            {
+                cleanup(context, requester);
+                return -1;
+            }
+            running = 0;
+        }
+
+        refresh();
+    }
+
+    cleanup(context, requester);
     return 0;
 }
