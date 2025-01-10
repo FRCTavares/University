@@ -183,7 +183,11 @@ void fire_laser(WINDOW *win, ch_info_t *astronaut, ch_info_t aliens[], int *alie
                 update.pos_y = y;
                 update.ch = '|';
 
-                zmq_send(publisher, &update, sizeof(screen_update_t), 0);
+                if (zmq_send(publisher, &update, sizeof(screen_update_t), 0) == -1)
+                {
+                    perror("Server zmq_send failed");
+                    pthread_exit(NULL);
+                }
             }
         }
     }
@@ -237,7 +241,11 @@ void fire_laser(WINDOW *win, ch_info_t *astronaut, ch_info_t aliens[], int *alie
                 update.pos_y = i;
                 update.ch = '-';
 
-                zmq_send(publisher, &update, sizeof(screen_update_t), 0);
+                if (zmq_send(publisher, &update, sizeof(screen_update_t), 0) == -1)
+                {
+                    perror("Server zmq_send failed");
+                    pthread_exit(NULL);
+                }
             }
         }
     }
@@ -262,7 +270,11 @@ void fire_laser(WINDOW *win, ch_info_t *astronaut, ch_info_t aliens[], int *alie
             update.pos_y = y;
             update.ch = ' ';
 
-            zmq_send(publisher, &update, sizeof(screen_update_t), 0);
+            if (zmq_send(publisher, &update, sizeof(screen_update_t), 0) == -1)
+            {
+                perror("Server zmq_send failed");
+                pthread_exit(NULL);
+            }
         }
     }
     else
@@ -279,7 +291,11 @@ void fire_laser(WINDOW *win, ch_info_t *astronaut, ch_info_t aliens[], int *alie
             update.pos_y = i;
             update.ch = ' ';
 
-            zmq_send(publisher, &update, sizeof(screen_update_t), 0);
+            if (zmq_send(publisher, &update, sizeof(screen_update_t), 0) == -1)
+            {
+                perror("Server zmq_send failed");
+                pthread_exit(NULL);
+            }
         }
     }
 }
@@ -328,7 +344,11 @@ void update_scoreboard(WINDOW *score_win, ch_info_t char_data[], int n_chars, in
         update.scores[i] = char_data[i].score;
     }
 
-    zmq_send(publisher, &update, sizeof(screen_update_t), 0);
+    if (zmq_send(publisher, &update, sizeof(screen_update_t), 0) == -1)
+    {
+        perror("Server zmq_send failed");
+        pthread_exit(NULL);
+    }
 
     // Build the update to send to outer-space-display
     ScoreUpdate score_update = SCORE_UPDATE__INIT;
@@ -348,6 +368,11 @@ void update_scoreboard(WINDOW *score_win, ch_info_t char_data[], int n_chars, in
 
     score_update.scores = scores;
     score_update.characters = malloc(sizeof(char *) * score_update.n_characters);
+    if (score_update.characters == NULL)
+    {
+        perror("Server malloc failed");
+        pthread_exit(NULL);
+    }
 
     for (int i = 0; i < score_update.n_scores; i++)
     {
@@ -357,12 +382,21 @@ void update_scoreboard(WINDOW *score_win, ch_info_t char_data[], int n_chars, in
     unsigned message_size = score_update__get_packed_size(&score_update);
 
     void *message_data = malloc(message_size);
+    if (message_data == NULL)
+    {
+        perror("Server malloc failed");
+        pthread_exit(NULL);
+    }
 
     // Pack the message into the byte buffer
     score_update__pack(&score_update, message_data);
 
     // Send the serialized message over ZeroMQ
-    zmq_send(publisher2, message_data, message_size, 0);
+    if (zmq_send(publisher2, message_data, message_size, 0) == -1)
+    {
+        perror("Server zmq_send failed");
+        pthread_exit(NULL);
+    }
 
     // Clean up
     free(score_update.characters);
@@ -401,7 +435,11 @@ void remove_astronaut(WINDOW *win, ch_info_t char_data[], int *n_chars, int ch_p
     update.pos_y = char_data[ch_pos].pos_y;
     update.ch = ' ';
 
-    zmq_send(publisher, &update, sizeof(screen_update_t), 0);
+    if (zmq_send(publisher, &update, sizeof(screen_update_t), 0) == -1)
+    {
+        perror("Server zmq_send failed");
+        pthread_exit(NULL);
+    }
 
     // Remove astronaut from the char_data array
     for (int i = ch_pos; i < (*n_chars) - 1; i++)
@@ -433,12 +471,6 @@ void *message_thread(void *arg)
     ch_info_t char_data[MAX_PLAYERS];
     int n_chars = 0;
     int score = 0;
-
-    // Initialize ncurses
-    /*initscr();
-    cbreak();
-    keypad(stdscr, TRUE);*/
-    noecho();
 
     // Initialize game window and score board window
 
@@ -687,7 +719,11 @@ void *message_thread(void *arg)
                             update.scores[i] = char_data[i].score;
                         }
 
-                        zmq_send(data->publisher, &update, sizeof(screen_update_t), 0);
+                        if (zmq_send(data->publisher, &update, sizeof(screen_update_t), 0) == -1)
+                        {
+                            perror("Server zmq_send failed");
+                            pthread_exit(NULL);
+                        }
 
                         ScoreUpdate score_update = SCORE_UPDATE__INIT;
 
@@ -710,12 +746,21 @@ void *message_thread(void *arg)
                         unsigned message_size = score_update__get_packed_size(&score_update);
 
                         void *message_data = malloc(message_size);
+                        if (message_data == NULL)
+                        {
+                            perror("Server malloc failed");
+                            pthread_exit(NULL);
+                        }
 
                         // Pack the message into the byte buffer
                         score_update__pack(&score_update, message_data);
 
                         // Send the serialized message over ZeroMQ
-                        zmq_send(data->publisher2, message_data, message_size, 0);
+                        if (zmq_send(data->publisher2, message_data, message_size, 0) == -1)
+                        {
+                            perror("Server zmq_send failed");
+                            pthread_exit(NULL);
+                        }
 
                         // Clean up
 
@@ -725,8 +770,8 @@ void *message_thread(void *arg)
                         wrefresh(data->score_win);
                         sleep(2);
 
-                        break;
                         pthread_mutex_unlock(&data->lock);
+                        break;
                     }
                 }
             }
@@ -812,7 +857,11 @@ void *message_thread(void *arg)
                 update.pos_y = pos_y;
                 update.ch = ' ';
 
-                zmq_send(data->publisher, &update, sizeof(screen_update_t), 0);
+                if (zmq_send(data->publisher, &update, sizeof(screen_update_t), 0) == -1)
+                {
+                    perror("Server zmq_send failed");
+                    pthread_exit(NULL);
+                }
 
                 direction = m.direction;
                 new_position(&pos_x, &pos_y, direction, char_data[ch_pos].dir);
@@ -895,10 +944,6 @@ void *alien_movement_thread(void *arg)
     shared_data_t *data = (shared_data_t *)arg;
     int aliens_moved = 0;
 
-    // initscr();
-    // cbreak();
-    // keypad(stdscr, TRUE);
-    // noecho();
     while (1)
     {
         sleep(1);
@@ -984,7 +1029,11 @@ void *alien_movement_thread(void *arg)
                     clear_update.pos_y = j;
                     clear_update.ch = ' ';
 
-                    zmq_send(data->publisher, &clear_update, sizeof(screen_update_t), 0);
+                    if (zmq_send(data->publisher, &clear_update, sizeof(screen_update_t), 0) == -1)
+                    {
+                        perror("Server zmq_send failed");
+                        pthread_exit(NULL);
+                    }
                 }
             }
             wrefresh(data->my_win);
@@ -1000,7 +1049,11 @@ void *alien_movement_thread(void *arg)
                 update.pos_y = data->aliens[i].pos_y;
                 update.ch = '*';
 
-                zmq_send(data->publisher, &update, sizeof(screen_update_t), 0);
+                if (zmq_send(data->publisher, &update, sizeof(screen_update_t), 0) == -1)
+                {
+                    perror("Server zmq_send failed");
+                    pthread_exit(NULL);
+                }
             }
             wrefresh(data->my_win);
             aliens_moved = 0;
@@ -1040,7 +1093,11 @@ void *alien_movement_thread(void *arg)
                 update.pos_y = data->aliens[i].pos_y;
                 update.ch = '*';
 
-                zmq_send(data->publisher, &update, sizeof(screen_update_t), 0);
+                if (zmq_send(data->publisher, &update, sizeof(screen_update_t), 0) == -1)
+                {
+                    perror("Server zmq_send failed");
+                    pthread_exit(NULL);
+                }
             }
 
             // Also refresh the game window here if needed.
@@ -1083,7 +1140,11 @@ void *exit_thread(void *arg)
             update.ch = 'O';
             update.player_count = -1;
 
-            zmq_send(data->publisher, &update, sizeof(screen_update_t), 0);
+            if (zmq_send(data->publisher, &update, sizeof(screen_update_t), 0) == -1)
+            {
+                perror("Server zmq_send failed");
+                pthread_exit(NULL);
+            }
 
             ScoreUpdate score_update = SCORE_UPDATE__INIT;
 
@@ -1101,12 +1162,21 @@ void *exit_thread(void *arg)
             unsigned message_size = score_update__get_packed_size(&score_update);
 
             void *message_data = malloc(message_size);
+            if (message_data == NULL)
+            {
+                perror("Server malloc failed");
+                pthread_exit(NULL);
+            }
 
             // Pack the message into the byte buffer
             score_update__pack(&score_update, message_data);
 
             // Send the serialized message over ZeroMQ
-            zmq_send(data->publisher2, message_data, message_size, 0);
+            if (zmq_send(data->publisher2, message_data, message_size, 0) == -1)
+            {
+                perror("Server zmq_send failed");
+                pthread_exit(NULL);
+            }
 
             // Clean up
 
@@ -1122,9 +1192,9 @@ void *exit_thread(void *arg)
             zmq_close(data->publisher2);
             zmq_ctx_destroy(data->ctx);
 
-            exit(-1);
-
             pthread_mutex_unlock(&data->lock);
+
+            exit(-1);
 
         default:
             continue;
@@ -1189,9 +1259,50 @@ int main()
     }
 
     initscr();
+    if (initscr() == NULL)
+    {
+        perror("Failed to initialize ncurses");
+        zmq_close(publisher_2);
+        zmq_close(publisher);
+        zmq_ctx_destroy(context);
+        pthread_mutex_destroy(&data.lock);
+        endwin();
+        exit(EXIT_FAILURE);
+    }
+
     cbreak();
+    if (cbreak() == ERR)
+    {
+        perror("Failed to set cbreak mode");
+        zmq_close(publisher_2);
+        zmq_close(publisher);
+        zmq_ctx_destroy(context);
+        pthread_mutex_destroy(&data.lock);
+        endwin();
+        exit(EXIT_FAILURE);
+    }
     keypad(stdscr, TRUE);
+    if (keypad(stdscr, TRUE) == ERR)
+    {
+        perror("Failed to set keypad mode");
+        zmq_close(publisher_2);
+        zmq_close(publisher);
+        zmq_ctx_destroy(context);
+        pthread_mutex_destroy(&data.lock);
+        endwin();
+        exit(EXIT_FAILURE);
+    }
     noecho();
+    if (noecho() == ERR)
+    {
+        perror("Failed to set noecho mode");
+        zmq_close(publisher_2);
+        zmq_close(publisher);
+        zmq_ctx_destroy(context);
+        pthread_mutex_destroy(&data.lock);
+        endwin();
+        exit(EXIT_FAILURE);
+    }
 
     data.publisher = publisher;
     data.publisher2 = publisher_2;
