@@ -26,8 +26,6 @@ typedef struct
     void *publisher;
     void *publisher2;
     time_t last_alien_kill;
-
-    // Is there any more data that needs sharing?
 } shared_data_t;
 
 // AUXILIARY FUNCTIONS
@@ -124,13 +122,15 @@ int find_ch_info(ch_info_t char_data[], int n_chars, int ch)
     Returns:
     None
 */
-void fire_laser(WINDOW *win, ch_info_t *astronaut, ch_info_t aliens[], int *alien_count, ch_info_t char_data[], int n_chars, void *publisher, int grid[16][16], pthread_mutex_t lock, time_t last_alien_kill)
+void fire_laser(WINDOW *win, ch_info_t *astronaut, ch_info_t aliens[], int *alien_count, ch_info_t char_data[], int n_chars, void *publisher, int grid[16][16], pthread_mutex_t lock, time_t *last_alien_kill)
 {
 
     screen_update_t update;
     int x = astronaut->pos_x;
     int y = astronaut->pos_y;
     int flag;
+
+    pthread_mutex_lock(&lock);
 
     if (astronaut->dir == 0)
     { // Horizontal movement, fire vertically
@@ -143,7 +143,8 @@ void fire_laser(WINDOW *win, ch_info_t *astronaut, ch_info_t aliens[], int *alie
             {
                 if (aliens[j].pos_x == i && aliens[j].pos_y == y)
                 {
-                    last_alien_kill = time(NULL);
+
+                    *last_alien_kill = time(NULL);
                     // Mark grid cell as empty
                     grid[i - 3][y - 3] = 0;
 
@@ -174,16 +175,14 @@ void fire_laser(WINDOW *win, ch_info_t *astronaut, ch_info_t aliens[], int *alie
             // Update screen
             if (flag == 0)
             {
-                pthread_mutex_lock(&lock);
                 wmove(win, i, y);
                 waddch(win, '|');
                 wrefresh(win);
-                pthread_mutex_unlock(&lock);
 
                 update.pos_x = i;
                 update.pos_y = y;
                 update.ch = '|';
-                // pthread_mutex_lock(&lock);
+
                 zmq_send(publisher, &update, sizeof(screen_update_t), 0);
             }
         }
@@ -200,7 +199,7 @@ void fire_laser(WINDOW *win, ch_info_t *astronaut, ch_info_t aliens[], int *alie
             {
                 if (aliens[j].pos_x == x && aliens[j].pos_y == i)
                 {
-                    last_alien_kill = time(NULL);
+                    *last_alien_kill = time(NULL);
                     // Mark grid cell as empty
                     grid[i - 3][y - 3] = 0;
 
@@ -229,21 +228,21 @@ void fire_laser(WINDOW *win, ch_info_t *astronaut, ch_info_t aliens[], int *alie
 
             if (flag == 0)
             {
-                pthread_mutex_lock(&lock);
+
                 wmove(win, x, i);
                 waddch(win, '-');
                 wrefresh(win);
-                pthread_mutex_unlock(&lock);
 
                 update.pos_x = x;
                 update.pos_y = i;
                 update.ch = '-';
-                // pthread_mutex_lock(&lock);
+
                 zmq_send(publisher, &update, sizeof(screen_update_t), 0);
-                // pthread_mutex_unlock(&lock);
             }
         }
     }
+
+    pthread_mutex_unlock(&lock);
 
     usleep(500000); // Display laser for 0.5 seconds
 
@@ -262,9 +261,8 @@ void fire_laser(WINDOW *win, ch_info_t *astronaut, ch_info_t aliens[], int *alie
             update.pos_x = i;
             update.pos_y = y;
             update.ch = ' ';
-            // pthread_mutex_lock(&lock);
+
             zmq_send(publisher, &update, sizeof(screen_update_t), 0);
-            // pthread_mutex_unlock(&lock);
         }
     }
     else
@@ -280,9 +278,8 @@ void fire_laser(WINDOW *win, ch_info_t *astronaut, ch_info_t aliens[], int *alie
             update.pos_x = x;
             update.pos_y = i;
             update.ch = ' ';
-            // pthread_mutex_lock(&lock);
+
             zmq_send(publisher, &update, sizeof(screen_update_t), 0);
-            // pthread_mutex_unlock(&lock);
         }
     }
 }
@@ -331,9 +328,7 @@ void update_scoreboard(WINDOW *score_win, ch_info_t char_data[], int n_chars, in
         update.scores[i] = char_data[i].score;
     }
 
-    // pthread_mutex_lock(&lock);
     zmq_send(publisher, &update, sizeof(screen_update_t), 0);
-    // pthread_mutex_unlock(&lock);
 
     // Build the update to send to outer-space-display
     ScoreUpdate score_update = SCORE_UPDATE__INIT;
@@ -461,6 +456,7 @@ void *message_thread(void *arg)
     // Initial print of the scoreboard
     update_scoreboard(data->score_win, char_data, n_chars, data->alien_count, data->publisher, data->lock, data->publisher2);
 
+    pthread_mutex_lock(&data->lock);
     // Initialize aliens
     for (int i = 0; i < ALIEN_COUNT; i++)
     {
@@ -482,6 +478,7 @@ void *message_thread(void *arg)
         wmove(data->my_win, data->aliens[i].pos_x, data->aliens[i].pos_y);
         waddch(data->my_win, '*' | A_BOLD);
     }
+    pthread_mutex_unlock(&data->lock);
 
     // Initialize ZeroMQ
     void *context = data->ctx;
@@ -663,9 +660,8 @@ void *message_thread(void *arg)
                 current_time = time(NULL);
                 if (difftime(current_time, char_data[ch_pos].last_fire_time) >= 3)
                 {
-                    // pthread_mutex_lock(&data->lock);
-                    fire_laser(data->my_win, &char_data[ch_pos], data->aliens, &data->alien_count, char_data, n_chars, data->publisher, data->grid, data->lock, data->last_alien_kill);
-                    // pthread_mutex_unlock(&data->lock);
+
+                    fire_laser(data->my_win, &char_data[ch_pos], data->aliens, &data->alien_count, char_data, n_chars, data->publisher, data->grid, data->lock, &data->last_alien_kill);
 
                     char_data[ch_pos].last_fire_time = current_time;
                     if (data->alien_count == 0)
@@ -815,9 +811,8 @@ void *message_thread(void *arg)
                 update.pos_x = pos_x;
                 update.pos_y = pos_y;
                 update.ch = ' ';
-                // pthread_mutex_lock(&data->lock);
+
                 zmq_send(data->publisher, &update, sizeof(screen_update_t), 0);
-                // pthread_mutex_unlock(&data->lock);
 
                 direction = m.direction;
                 new_position(&pos_x, &pos_y, direction, char_data[ch_pos].dir);
@@ -988,9 +983,8 @@ void *alien_movement_thread(void *arg)
                     clear_update.pos_x = i;
                     clear_update.pos_y = j;
                     clear_update.ch = ' ';
-                    // pthread_mutex_lock(&data->lock);
+
                     zmq_send(data->publisher, &clear_update, sizeof(screen_update_t), 0);
-                    // pthread_mutex_unlock(&data->lock);
                 }
             }
             wrefresh(data->my_win);
@@ -1005,9 +999,8 @@ void *alien_movement_thread(void *arg)
                 update.pos_x = data->aliens[i].pos_x;
                 update.pos_y = data->aliens[i].pos_y;
                 update.ch = '*';
-                // pthread_mutex_lock(&data->lock);
+
                 zmq_send(data->publisher, &update, sizeof(screen_update_t), 0);
-                // pthread_mutex_unlock(&data->lock);
             }
             wrefresh(data->my_win);
             aliens_moved = 0;
@@ -1046,9 +1039,8 @@ void *alien_movement_thread(void *arg)
                 update.pos_x = data->aliens[i].pos_x;
                 update.pos_y = data->aliens[i].pos_y;
                 update.ch = '*';
-                // pthread_mutex_lock(&data->lock);
+
                 zmq_send(data->publisher, &update, sizeof(screen_update_t), 0);
-                // pthread_mutex_unlock(&data->lock);
             }
 
             // Also refresh the game window here if needed.
