@@ -20,10 +20,10 @@ import matplotlib.pyplot as plt
 nc=4                        # Number of consumers (1 to nc)                   %%Data Notes: nc=4
 ts=60                       # start period of analysis (Can be from 1 to 96)  %%Data Notes: ts=60
 te=71                       # Last period of analysis (Can be from 1 to 96)   %%Data Notes: te=71
-phase = [3,2,1,3]           # To obtain the same values of lecture notes
+#phase = [3,2,1,3]           # To obtain the same values of lecture notes
 noise = 0
 
-#phase = randint(1, 4, nc)  # To obtain random values
+phase = randint(1, 4, nc)  # To obtain random values
 print ("The distribution of consumers in each phase is:\n", phase)
 
 
@@ -57,16 +57,24 @@ data.resize((nr-1,96))
 data_Aux1=data[0:nc,:]
 pw=data_Aux1[:,ts-1:te]
 
-
+##############################################################################################################
 # Create Y Matrix - phase = [3,2,1,3]
 # Y = [ X[t,3]  X[t,2]  X[t,1]+X[t,4] ]
-X = np.transpose(4*pw)
-Y = X[:, 2].reshape(-1, 1)                                              # Primeira coluna de Y
-Y = np.concatenate((Y, X[:, 1].reshape(-1, 1)), axis=1)                 # Segunda coluna de Y
-Y = np.concatenate((Y, (X[:, 0] + X[:, 3]).reshape(-1, 1)), axis=1)     # Terceira coluna de Y
+#X = np.transpose(4*pw)
+#Y = X[:, 2].reshape(-1, 1)                                              # Primeira coluna de Y
+#Y = np.concatenate((Y, X[:, 1].reshape(-1, 1)), axis=1)                 # Segunda coluna de Y
+#Y = np.concatenate((Y, (X[:, 0] + X[:, 3]).reshape(-1, 1)), axis=1)     # Terceira coluna de Y
+##############################################################################################################
 
 # Create Y Matrix - phase = random
-# X = np.transpose(4*pw)
+X = np.transpose(4*pw)
+# Y matrix will be of size (X.shape[0], 3)
+Y = np.zeros((X.shape[0], 3))
+
+for i in range(nc):
+    # Subtract 1 to convert phase values (1..3) to zero-based column indexes
+    phase_index = phase[i] - 1
+    Y[:, phase_index] += X[:, i]
 
 
 # Noise
@@ -93,40 +101,32 @@ print("\nO vetor de fase inicial:\n", phase)
 ################################################################################################################
 
 # Plots of the graphs
-# Define time intervals (12 periods, assuming data is for 12 time periods)
-time_intervals = np.arange(1, 13)  # 12 time periods from 1 to 12
+time_intervals = np.arange(ts, te + 1)
 
 # Example data (replace with your actual data)
 # X = np.random.rand(12, 4)  # Example: 12 periods for 4 customers (replace with actual data)
 # Y = np.random.rand(12, 3)  # Example: 12 periods for 3 phases (replace with actual data)
 
-# Plot the customer readings
-plt.figure(figsize=(10, 6))
-width = 0.2  # Bar width (narrower to avoid overlap)
+# Create a single figure with two subplots side by side
+fig, ax = plt.subplots(nrows=1, ncols=2, figsize=(12, 6))
 
-# Loop through each customer (column in X) and plot their data
-for i in range(X.shape[1]):  # Loop through each customer (column in X)
-    # Plot each customer's data without shifting bar positions
-    plt.bar(time_intervals + (i - 1.5) * width, X[:, i], width=width, label=f'Customer {i+1}', align='center')
+# Left subplot for X
+for i in range(X.shape[1]):
+    ax[0].step(time_intervals, X[:, i], where='post', label=f'Customer {i+1}')
+ax[0].set_title('Customer Readings')
+ax[0].set_xlabel('Time Stamp [15min]')
+ax[0].set_ylabel('Power [kW]')
+ax[0].legend()
+ax[0].grid(True)
 
-plt.title('Customer Readings')
-plt.xlabel('Time Stamp [15min]')
-plt.ylabel('Power [kW]')
-plt.legend()
-plt.grid(True)
-plt.show()
+# Right subplot for Y
+for i in range(Y.shape[1]):
+    ax[1].step(time_intervals, Y[:, i], where='post', label=f'Phase {i+1}')
+ax[1].set_title('Per-Phase Totals')
+ax[1].set_xlabel('Time Stamp [15min]')
+ax[1].set_ylabel('Power [kW]')
+ax[1].legend()
+ax[1].grid(True)
 
-# Plot the per-phase totals
-plt.figure(figsize=(10, 6))
-
-# Loop through each phase total (column in Y) and plot their data
-for i in range(Y.shape[1]):  # Loop through each phase total (column in Y)
-    # Plot each phase's total using the same time intervals, ensuring no negative bars
-    plt.bar(time_intervals + (i - 1.5) * width, Y[:, i], width=width, label=f'Phase {i+1}', align='center')
-
-plt.title('Per-Phase Totals')
-plt.xlabel('Time Stamp [15min]')
-plt.ylabel('Power [kW]')
-plt.legend()
-plt.grid(True)
-plt.show()
+plt.tight_layout()
+plt.show() 
