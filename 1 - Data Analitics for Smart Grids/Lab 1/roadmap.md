@@ -19,8 +19,8 @@
 
 ### 1.3 Resultados e Análise
 - **Gráficos:**
-  - [Gráfico das barras] – verificação e confirmação das legendas.
-  - [Gráfico dos valores de β] – visualização dos resultados Confusion Matrix.
+  - [Gráfico das barras] - verificação e confirmação das legendas.
+  - [Gráfico dos valores de β] - visualização dos resultados Confusion Matrix.
 - **Discussão dos Resultados:**
   - Comentários e interpretação dos gráficos.
   - Análise da acurácia e dos efeitos do ruído.

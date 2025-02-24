@@ -13,17 +13,13 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
-from numpy.random import randint, random
-from sklearn.cluster import KMeans
-from sklearn.decomposition import PCA
-from sklearn.preprocessing import StandardScaler
+from numpy.random import randint
 from sklearn.metrics import confusion_matrix
 
-#------------------------------#
+'''---------------------------------------------------------------------------------------------------------------------------------------------------------#
 # Modo 1: Modo Principal (Single_Bus) - Identificação de Fases
-#------------------------------#
+#-----------------------------------------------------------------------------------------------------------------------------------------------------------#
 
-'''
     Quando M (número de observações) é apenas ligeiramente superior a N (número de variáveis), o sistema encontra-se praticamente “determinístico”,
     o que significa que uma pequena perturbação ou ruído nos dados pode levar a oscilações significativas nas estimativas das fases. Em termos práticos, 
     há poucas medições excedentes para compensar erros ou redundâncias no modelo, tornando a solução mais sensível a alterações mínimas nos valores observados.
@@ -67,6 +63,8 @@ def main_lab_mode():
     data_Aux1 = data[0:nc, :]
     pw = data_Aux1[:, ts:te + 1]
     X = np.transpose(4 * pw)
+
+    print(X)
     
     # Cria a matriz Y com base nas fases (fase aleatória)
     Y = np.zeros((X.shape[0], 3))
@@ -75,7 +73,7 @@ def main_lab_mode():
         Y[:, phase_index] += X[:, i]
     
     # Adiciona ruído aos dados de Y
-    Y = Y + np.random.normal(0, 0.10, Y.shape)
+    Y = Y + np.random.normal(0, 0.03, Y.shape)
     
     # Estima a matriz beta via mínimos quadrados
     beta = np.linalg.inv(X.T @ X) @ X.T @ Y
@@ -114,7 +112,7 @@ def main_lab_mode():
     
     # Análise dos Resultados Finais, erro de classificação
     cm = confusion_matrix(phase, phase_estimated)
-    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', cbar=False, square=True)
+    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', cbar=False, square=True, xticklabels=[1, 2, 3], yticklabels=[1, 2, 3])
     plt.xlabel('Fase Estimada')
     plt.ylabel('Fase Real')
     plt.title('Matriz de Confusão: Fase Real vs. Fase Estimada')
@@ -135,7 +133,7 @@ def analyze_accuracy_vs_MminusN():
     
     O gráfico resultante tem no eixo x a diferença (M - N) e no eixo y a acurácia.
     """
-    nc = 4                       # Número de consumidores (N)
+    nc = 10                       # Número de consumidores (N)
     ts = 0                        # Período inicial fixo
     M_max = 96                     # Valor máximo de M (por exemplo, até te = 96, pois 96 - 40 + 1 = 57)
     
@@ -170,49 +168,57 @@ def analyze_accuracy_vs_MminusN():
     
     # Variação de M: de M = nc (ou seja, M - nc = 0) até M_max
     for M in range(nc+1, M_max + 1):
-        te = ts + M - 1  # Calcula te com base em M
-        
-        # Seleciona os dados dos primeiros 'nc' consumidores e o intervalo [ts, te]
-        data_Aux1 = data[0:nc, :]
-        pw = data_Aux1[:, ts:te + 1]
-        X = np.transpose(4 * pw)  # X terá dimensão (M, nc)
-        
-        # Cria a matriz Y com base na fase verdadeira (true_phase)
-        Y = np.zeros((X.shape[0], 3))
-        for i in range(nc):
-            phase_index = true_phase[i] - 1  # Ajusta para índice base zero
-            Y[:, phase_index] += X[:, i]
-        
-        # Adiciona ruído aos dados de Y
-        Y = Y + np.random.normal(0, 0.10, Y.shape)
-        
-        # Estima a matriz beta utilizando mínimos quadrados
-        beta = np.linalg.inv(X.T @ X) @ X.T @ Y
-        beta = np.where(beta > 0.5, 1, 0)  # Converte para binário
-        phase_estimated = np.argmax(beta, axis=1) + 1  # Resultado: vector de dimensão (nc,)
-        
-        # Calcula a acurácia: proporção de consumidores corretamente classificados
-        acc = np.mean(phase_estimated == true_phase)
+        aux = []
+        for i in range(0,30):
+
+            te = ts + M - 1  # Calcula te com base em M
+            
+            # Seleciona os dados dos primeiros 'nc' consumidores e o intervalo [ts, te]
+            data_Aux1 = data[0:nc, :]
+            pw = data_Aux1[:, ts:te + 1]
+            X = np.transpose(4 * pw)  # X terá dimensão (M, nc)
+            
+            # Cria a matriz Y com base na fase verdadeira (true_phase)
+            Y = np.zeros((X.shape[0], 3))
+            for i in range(nc):
+                phase_index = true_phase[i] - 1  # Ajusta para índice base zero
+                Y[:, phase_index] += X[:, i]
+            
+            # Adiciona ruído aos dados de Y
+            Y = Y + np.random.normal(0, 0.03, Y.shape)
+            
+            # Estima a matriz beta utilizando mínimos quadrados
+            beta = np.linalg.inv(X.T @ X) @ X.T @ Y
+            beta = np.where(beta > 0.5, 1, 0)  # Converte para binário
+            phase_estimated = np.argmax(beta, axis=1) + 1  # Resultado: vector de dimensão (nc,)
+            
+            # Calcula a Precisão do Modelo: proporção de consumidores corretamente classificados
+            acc = np.mean(phase_estimated == true_phase)
+            aux.append(acc)
+
+        print(aux)
         differences_list.append(M - nc)  # Diferença entre número de observações e consumidores
-        accuracy_list.append(acc)
-        
-        print(f"M = {M}, M - N = {M - nc}, Acurácia = {acc:.2f}")
+        accuracy_list.append(np.mean(aux))
+        print(f"M = {M}, M - N = {M - nc}, Precisão do Modelo = {np.mean(aux):.2f}")
     
-    # Plot do gráfico: eixo x -> (M - N), eixo y -> acurácia
+    # Plot do gráfico: eixo x -> (M - N), eixo y -> Precisão do Modelo
     plt.figure(figsize=(8, 5))
     plt.plot(differences_list, accuracy_list, linestyle='-')
     plt.xlabel('Diferença (M - N)')
-    plt.ylabel('Acurácia')
-    plt.title('Acurácia vs Diferença entre M e N')
+    plt.ylabel('Média da Precisão do Modelo')
+    plt.title('Média da Precisão do Modelo vs Diferença entre M e N')
     plt.grid(True)
     plt.show()
 
-#------------------------------#
+'''---------------------------------------------------------------------------------------------------------------------------------------------------------#
 # Modo 2: Análise de Sensibilidade
+#
 # Consumidores com consumo idêntico ou com pequenas diferenças
-#------------------------------#
+# Aqui é para adicionar dois clientes novos à matriz X e arranjar valores de energia
+# para os dois começando com eles muito parecidos e alterando um pouco até que ele identifica corretamente a fase, 
+# porque quase de certeza que quando eles são muito muito parecidos o modelo não os vai consegui diferenciar.
+#-----------------------------------------------------------------------------------------------------------------------------------------------------------#
 
-'''
 Quando dois consumidores apresentam padrões de consumo idênticos ou quase idênticos, as colunas da matriz X tornam-se linearmente dependentes
     ou quase linearmente dependentes, o que implica que a matriz X.T @ X se torna singular ou mal condicionada e, portanto, não pode ser invertida
     de forma estável. Essa situação dificulta a aplicação direta da fórmula dos mínimos quadrados para estimar os coeficientes β. Para contornar
@@ -248,7 +254,7 @@ def sensitivity_analysis_mode():
         for i in range(n_consumers):
             phase_index = true_phase - 1
             Y[:, phase_index] += X[:, i]
-        Y = Y + np.random.normal(0, 0.01, Y.shape)
+        Y = Y + np.random.normal(0, 0.03, Y.shape)
         
         # Estima os coeficientes beta via mínimos quadrados
         beta = np.linalg.inv(X.T @ X) @ X.T @ Y
@@ -268,46 +274,18 @@ def sensitivity_analysis_mode():
     plt.grid(True)
     plt.show()
 
-#------------------------------#
-# Modo 3: Clientes Trifásicos - Clustering e PCA
-#------------------------------#
-def three_phase_customers_mode():
-    print("\nExecutando o Modo: Clientes Trifásicos (Clustering e PCA)\n")
-    
-    np.random.seed(42)
-    customers = 100
-    three_phase_data = np.random.normal(loc=1500, scale=200, size=(customers, 3))
-    
-    # Cria DataFrame com os dados simulados
-    df_three = pd.DataFrame(three_phase_data, columns=['Phase1', 'Phase2', 'Phase3'])
-    df_three['Total'] = df_three.sum(axis=1)
-    
-    # Normaliza os dados para melhorar o clustering
-    scaler = StandardScaler()
-    normalized_data = scaler.fit_transform(df_three[['Phase1', 'Phase2', 'Phase3']])
-    
-    # Aplica o K-Means para identificar 3 clusters (potencialmente correspondentes às fases)
-    kmeans = KMeans(n_clusters=3, random_state=42)
-    clusters = kmeans.fit_predict(normalized_data)
-    df_three['Cluster'] = clusters
-    
-    # Reduz a dimensionalidade para 2 componentes usando PCA para visualização
-    pca = PCA(n_components=2)
-    pca_data = pca.fit_transform(normalized_data)
-    
-    # Plota os resultados do clustering via PCA
-    plt.figure(figsize=(8, 5))
-    plt.scatter(pca_data[:, 0], pca_data[:, 1], c=clusters, cmap='viridis', edgecolor='k')
-    plt.xlabel('Componente Principal 1')
-    plt.ylabel('Componente Principal 2')
-    plt.title('Clustering de Consumidores Trifásicos (PCA)')
-    plt.colorbar(label='Cluster')
-    plt.grid(True)
-    plt.show()
 
-#------------------------------#
+'''---------------------------------------------------------------------------------------------------------------------------------------------------------#
+# Modo 3: Clientes Trifásicos 
+#-----------------------------------------------------------------------------------------------------------------------------------------------------------#
+'''
+def three_phase_customers_mode():
+    print("\nExecutando o Modo: Clientes Trifásicos\n")
+    
+
+#---------------------------------------------------------------------------------------------------------------------------------------------------------#
 # Menu de Execução
-#------------------------------#
+#---------------------------------------------------------------------------------------------------------------------------------------------------------#
 def main_menu():
     while True:
         print("\nMenu de Modos:")
