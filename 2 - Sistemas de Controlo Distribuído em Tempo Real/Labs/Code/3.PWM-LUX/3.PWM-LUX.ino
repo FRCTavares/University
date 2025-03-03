@@ -17,7 +17,7 @@ const float LDR_M = -1.2;
 float LDR_B = log10(R10) - LDR_M;
 
 // Constantes para calibração do ganho (se necessário)
-const float G = 0.0049; // Fator de ganho (ajustar experimentalmente)
+const float G = 1; // Fator de ganho (ajustar experimentalmente)
 const float d = 0;   // Offset (ajustar experimentalmente)
 
 // Número de pontos de calibração (por exemplo, 11 pontos de 0 a 255)
