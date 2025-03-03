@@ -209,30 +209,30 @@ def run_original_model():
     fig, ax = plt.subplots(nrows=2, ncols=2, figsize=(14, 10))
     
     # Top-left: Training data comparison
-    ax[0, 0].step(time_intervals_train, PL2_train_true, where='post', label='Perdas Reais (PL2 com ruído)')
+    ax[0, 0].step(time_intervals_train, PL2_train_true, where='post', label='Perdas Reais')
     ax[0, 0].step(time_intervals_train, PL2_train_pred, where='post', label='Perdas Preditas')
     ax[0, 0].set_title('Comparação de Perdas - Treino')
     ax[0, 0].set_xlabel('Carimbo Temporal [15 min]')
-    ax[0, 0].set_ylabel('Perdas de Potência')
+    ax[0, 0].set_ylabel('Perdas de Potência [p.u.]')
     ax[0, 0].legend(loc='upper right')
     ax[0, 0].grid(True)
     
     # Top-right: Training error
-    ax[0, 1].step(time_intervals_train, train_errors , where='post', label='Erro Percentual', color='blue')
-    ax[0, 1].set_title('Erro Percentual - Treino')
-    ax[0, 1].set_xlabel('Carimbo Temporal [15 min]')
-    ax[0, 1].set_ylabel('Erro Percentual (%)')
-    ax[0, 1].legend(loc='upper right')
-    ax[0, 1].grid(True)
-    
-    # Bottom-left: Test data comparison
-    ax[1, 0].step(time_intervals_test, PL2_test_true, where='post', label='Perdas Reais')
-    ax[1, 0].step(time_intervals_test, PL2_test_pred, where='post', label='Perdas Preditas')
-    ax[1, 0].set_title('Comparação de Perdas - Teste')
+    ax[1, 0].step(time_intervals_train, train_errors , where='post', label='Erro Percentual', color='blue')
+    ax[1, 0].set_title('Erro Percentual - Treino')
     ax[1, 0].set_xlabel('Carimbo Temporal [15 min]')
-    ax[1, 0].set_ylabel('Perdas de Potência')
+    ax[1, 0].set_ylabel('Erro Percentual (%)')
     ax[1, 0].legend(loc='upper right')
     ax[1, 0].grid(True)
+    
+    # Bottom-left: Test data comparison
+    ax[0, 1].step(time_intervals_test, PL2_test_true, where='post', label='Perdas Reais')
+    ax[0, 1].step(time_intervals_test, PL2_test_pred, where='post', label='Perdas Preditas')
+    ax[0, 1].set_title('Comparação de Perdas - Teste')
+    ax[0, 1].set_xlabel('Carimbo Temporal [15 min]')
+    ax[0, 1].set_ylabel('Perdas de Potência [p.u.]')
+    ax[0, 1].legend(loc='upper right')
+    ax[0, 1].grid(True)
     
     # Bottom-right: Test error
     ax[1, 1].step(time_intervals_test, test_errors, where='post', label='Erro Percentual', color='blue')
@@ -246,7 +246,7 @@ def run_original_model():
     y_max_error_pct = max(np.max(train_errors), np.max(test_errors))
     y_margin_error_pct = 0.1 * y_max_error_pct
     
-    ax[0, 1].set_ylim(0, y_max_error_pct + y_margin_error_pct)
+    ax[1, 0].set_ylim(0, y_max_error_pct + y_margin_error_pct)
     ax[1, 1].set_ylim(0, y_max_error_pct + y_margin_error_pct)
     
     plt.tight_layout()

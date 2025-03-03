@@ -6,14 +6,18 @@
 #define MY_ADC_RESOLUTION 4095.0   // Resolução do ADC (12 bits: 0 a 4095)
 #define FIXED_RESISTOR 10000.0     // Resistor fixo do divisor de tensão (10 kΩ)
 
-// Parâmetros calibrados para a equação do LDR (baseados no datasheet PGM5659D)
-// Relação: log10(R_LDR) = m · log10(LUX) + b
-// Exemplo: para R10 ≈ 225 kΩ e γ ≈ 0.8, temos:
-#define LDR_M -0.8               
-#define LDR_B 6.15
+// Valor de referência: resistência típica a 10 lux (em ohms)
+const float R10 = 225000.0; 
+
+// Parâmetro m (valor nominal, ex: -0.8) – pode ser ajustado
+const float LDR_M = -1.2;
+
+// Calcula dinamicamente b com base em R10 e LDR_M:
+// b = log10(R10) - m * log10(10) = log10(R10) - m (pois log10(10)=1)
+float LDR_B = log10(R10) - LDR_M;
 
 // Constantes para calibração do ganho (se necessário)
-const float G = 1.0; // Fator de ganho (ajustar experimentalmente)
+const float G = 0.0049; // Fator de ganho (ajustar experimentalmente)
 const float d = 0;   // Offset (ajustar experimentalmente)
 
 // Número de pontos de calibração (por exemplo, 11 pontos de 0 a 255)
@@ -35,11 +39,9 @@ void setup() {
   analogReadResolution(12);
   #endif
 
-  Serial.println("Início da calibração com varredura do PWM");
-  Serial.println("DutyCycle,PWM;Lux"); // Cabeçalho CSV para análise
-  
-  // Aguarda estabilização do sistema
-  delay(2000);
+  // Cabeçalho para indicar que os dados serão impressos em duas linhas
+  Serial.println("Valores de Duty Cycle e Lux:");
+  delay(2000); // Aguarda estabilização do sistema
 
   // Varredura: para cada ponto de calibração, varia o duty cycle e regista a leitura
   for (int i = 0; i < NUM_PONTOS; i++) {
@@ -61,7 +63,7 @@ void setup() {
     }
     
     // Calcula a resistência do LDR utilizando o divisor de tensão:
-    // V_out = VCC * (R_fixo/(R_fixo + R_LDR))  =>  R_LDR = R_fixo * (VCC/V_out - 1)
+    // V_out = VCC * (R_fixo / (R_fixo + R_LDR))  =>  R_LDR = R_fixo * (VCC/V_out - 1)
     float rLDR = FIXED_RESISTOR * (VCC / voltage - 1);
     
     // Converte a resistência do LDR em lux utilizando a relação log-log:
@@ -71,14 +73,21 @@ void setup() {
     // Aplica a calibração de ganho (se necessária)
     float luxCorrigido = d + G * lux;
     luxValues[i] = luxCorrigido;
-    
-    // Imprime os dados em formato CSV: duty cycle (PWM) e lux medido
-    Serial.print(u, 2);
-    Serial.print(";");
-    Serial.println(luxCorrigido, 2);
   }
-  
-  
+
+  // Agora, imprime todos os valores de duty cycle (u) numa linha:
+  for (int i = 0; i < NUM_PONTOS; i++) {
+    Serial.print(dutyCycles[i], 2);
+    Serial.println(); 
+  }
+  Serial.println(); // Nova linha
+  Serial.println(); 
+  // Em seguida, imprime todos os valores de Lux numa linha:
+  for (int i = 0; i < NUM_PONTOS; i++) {
+    Serial.print(luxValues[i], 2);
+    Serial.println(); 
+  }
+  Serial.println(); // Nova linha final
 }
 
 void loop() {
