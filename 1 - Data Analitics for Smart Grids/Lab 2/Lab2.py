@@ -1,7 +1,7 @@
 ###############################################################################################
-# Laboratorio 2 - Power Losses                                                                #
+# Laboratorio 2 - Perdas de Potência                                                          #
 #                                                                                             #
-# Grupo X                                                                                     #
+# Grupo 13                                                                                    #
 #                                                                                             #
 # Membros:                                                                                    #
 #   Francisco Tavares (103402)                                                                #
@@ -31,7 +31,6 @@ PtestFactor = 3          # para obter perdas semelhantes aos dados de treino
 # ============================================================================================================================================
 # Funções comuns
 # ============================================================================================================================================
-
 def load_data():
     """Carrega os dados do arquivo Excel e retorna as informações necessárias."""
     Info = np.array(pd.read_excel(r'DASG_Prob2_new.xlsx', sheet_name='Info', header=None))
@@ -131,7 +130,6 @@ def compute_PL2(P_mat, B, Cl, Gv, noiseFactor):
 # ============================================================================================================================================
 # Função para o modelo original
 # ============================================================================================================================================
-
 def run_original_model():
     """Executa o modelo original para o cálculo de perdas da rede."""
     print("\n=== Executando o Modelo Original ===\n")
@@ -212,7 +210,7 @@ def run_original_model():
     ax[0, 0].step(time_intervals_train, PL2_train_true, where='post', label='Perdas Reais')
     ax[0, 0].step(time_intervals_train, PL2_train_pred, where='post', label='Perdas Preditas')
     ax[0, 0].set_title('Comparação de Perdas - Treino')
-    ax[0, 0].set_xlabel('Carimbo Temporal [15 min]')
+    ax[0, 0].set_xlabel('Intervalo Temporal [15 min]')
     ax[0, 0].set_ylabel('Perdas de Potência [p.u.]')
     ax[0, 0].legend(loc='upper right')
     ax[0, 0].grid(True)
@@ -220,7 +218,7 @@ def run_original_model():
     # Top-right: Training error
     ax[1, 0].step(time_intervals_train, train_errors , where='post', label='Erro Percentual', color='blue')
     ax[1, 0].set_title('Erro Percentual - Treino')
-    ax[1, 0].set_xlabel('Carimbo Temporal [15 min]')
+    ax[1, 0].set_xlabel('Intervalo Temporal [15 min]')
     ax[1, 0].set_ylabel('Erro Percentual (%)')
     ax[1, 0].legend(loc='upper right')
     ax[1, 0].grid(True)
@@ -229,7 +227,7 @@ def run_original_model():
     ax[0, 1].step(time_intervals_test, PL2_test_true, where='post', label='Perdas Reais')
     ax[0, 1].step(time_intervals_test, PL2_test_pred, where='post', label='Perdas Preditas')
     ax[0, 1].set_title('Comparação de Perdas - Teste')
-    ax[0, 1].set_xlabel('Carimbo Temporal [15 min]')
+    ax[0, 1].set_xlabel('Intervalo Temporal [15 min]')
     ax[0, 1].set_ylabel('Perdas de Potência [p.u.]')
     ax[0, 1].legend(loc='upper right')
     ax[0, 1].grid(True)
@@ -237,7 +235,7 @@ def run_original_model():
     # Bottom-right: Test error
     ax[1, 1].step(time_intervals_test, test_errors, where='post', label='Erro Percentual', color='blue')
     ax[1, 1].set_title('Erro Percentual - Teste')
-    ax[1, 1].set_xlabel('Carimbo Temporal [15 min]')
+    ax[1, 1].set_xlabel('Intervalo Temporal [15 min]')
     ax[1, 1].set_ylabel('Erro Percentual (%)')
     ax[1, 1].legend(loc='upper right')
     ax[1, 1].grid(True)
@@ -256,7 +254,6 @@ def run_original_model():
 # ============================================================================================================================================
 # Funções para o modelo de baixa tensão (LV) Desafio 1
 # ============================================================================================================================================
-
 def compute_losses_LV(P_mat, Y, linha_indices, SlackBus, noiseFactor, v0=1.0):
     """
     Calcula as perdas físicas em uma rede de baixa tensão, assumindo diferenças de ângulo 
@@ -375,32 +372,32 @@ def run_LV_model():
     ax[0, 0].step(time_intervals_train, PL2_train_true_LV, where='post', label='Perdas Reais (PL2 com ruído)')
     ax[0, 0].step(time_intervals_train, PL2_train_pred_LV, where='post', label='Perdas Preditas')
     ax[0, 0].set_title('Comparação de Perdas - Treino')
-    ax[0, 0].set_xlabel('Carimbo Temporal [15 min]')
+    ax[0, 0].set_xlabel('Intervalo Temporal [15 min]')
     ax[0, 0].set_ylabel('Perdas de Potência')
     ax[0, 0].legend(loc='upper right')
     ax[0, 0].grid(True)
     
-    # Top-right: Training error
-    ax[0, 1].step(time_intervals_train, train_errors, where='post', label='Erro Percentual', color='blue')
-    ax[0, 1].set_title('Erro Percentual - Treino')
-    ax[0, 1].set_xlabel('Carimbo Temporal [15 min]')
-    ax[0, 1].set_ylabel('Erro Percentual (%)')
+    # Top-right: Test data comparison
+    ax[0, 1].step(time_intervals_test, PL2_test_true_LV, where='post', label='Perdas Reais')
+    ax[0, 1].step(time_intervals_test, PL2_test_pred_LV, where='post', label='Perdas Preditas')
+    ax[0, 1].set_title('Comparação de Perdas - Teste')
+    ax[0, 1].set_xlabel('Intervalo Temporal [15 min]')
+    ax[0, 1].set_ylabel('Perdas de Potência')
     ax[0, 1].legend(loc='upper right')
     ax[0, 1].grid(True)
     
-    # Bottom-left: Test data comparison
-    ax[1, 0].step(time_intervals_test, PL2_test_true_LV, where='post', label='Perdas Reais')
-    ax[1, 0].step(time_intervals_test, PL2_test_pred_LV, where='post', label='Perdas Preditas')
-    ax[1, 0].set_title('Comparação de Perdas - Teste')
-    ax[1, 0].set_xlabel('Carimbo Temporal [15 min]')
-    ax[1, 0].set_ylabel('Perdas de Potência')
+    # Bottom-left: Training error
+    ax[1, 0].step(time_intervals_train, train_errors, where='post', label='Erro Percentual', color='blue')
+    ax[1, 0].set_title('Erro Percentual - Treino')
+    ax[1, 0].set_xlabel('Intervalo Temporal [15 min]')
+    ax[1, 0].set_ylabel('Erro Percentual (%)')
     ax[1, 0].legend(loc='upper right')
     ax[1, 0].grid(True)
     
     # Bottom-right: Test error
     ax[1, 1].step(time_intervals_test, test_errors, where='post', label='Erro Percentual', color='blue')
     ax[1, 1].set_title('Erro Percentual - Teste')
-    ax[1, 1].set_xlabel('Carimbo Temporal [15 min]')
+    ax[1, 1].set_xlabel('Intervalo Temporal [15 min]')
     ax[1, 1].set_ylabel('Erro Percentual (%)')
     ax[1, 1].legend(loc='upper right')
     ax[1, 1].grid(True)
@@ -409,7 +406,7 @@ def run_LV_model():
     y_max_error_pct = max(np.max(train_errors), np.max(test_errors))
     y_margin_error_pct = 0.1 * y_max_error_pct
     
-    ax[0, 1].set_ylim(0, y_max_error_pct + y_margin_error_pct)
+    ax[1, 0].set_ylim(0, y_max_error_pct + y_margin_error_pct)
     ax[1, 1].set_ylim(0, y_max_error_pct + y_margin_error_pct)
     
     plt.tight_layout()
@@ -426,7 +423,6 @@ def run_LV_model():
 # ============================================================================================================================================
 # Funções para o modelo baseado na topologia da rede Desafio 2.1
 # ============================================================================================================================================
-
 def build_X_topology(P_mat, linha_indices, SlackBus):
     """
     Constrói a matriz X' considerando apenas termos P_i^2 para todos os buses
@@ -539,7 +535,7 @@ def run_topology_model():
     ax[0, 0].step(time_intervals_train, PL2_train_true, where='post', label='Perdas Reais (PL2 com ruído)')
     ax[0, 0].step(time_intervals_train, PL2_train_pred_topo, where='post', label='Perdas Preditas')
     ax[0, 0].set_title('Comparação de Perdas - Treino')
-    ax[0, 0].set_xlabel('Carimbo Temporal [15 min]')
+    ax[0, 0].set_xlabel('Intervalo Temporal [15 min]')
     ax[0, 0].set_ylabel('Perdas de Potência')
     ax[0, 0].legend(loc='upper right')
     ax[0, 0].grid(True)
@@ -547,7 +543,7 @@ def run_topology_model():
     # Top-right: Training error
     ax[0, 1].step(time_intervals_train, train_errors, where='post', label='Erro Percentual', color='blue')
     ax[0, 1].set_title('Erro Percentual - Treino')
-    ax[0, 1].set_xlabel('Carimbo Temporal [15 min]')
+    ax[0, 1].set_xlabel('Intervalo Temporal [15 min]')
     ax[0, 1].set_ylabel('Erro Percentual (%)')
     ax[0, 1].legend(loc='upper right')
     ax[0, 1].grid(True)
@@ -556,7 +552,7 @@ def run_topology_model():
     ax[1, 0].step(time_intervals_test, PL2_test_true, where='post', label='Perdas Reais')
     ax[1, 0].step(time_intervals_test, PL2_test_pred_topo, where='post', label='Perdas Preditas')
     ax[1, 0].set_title('Comparação de Perdas - Teste')
-    ax[1, 0].set_xlabel('Carimbo Temporal [15 min]')
+    ax[1, 0].set_xlabel('Intervalo Temporal [15 min]')
     ax[1, 0].set_ylabel('Perdas de Potência')
     ax[1, 0].legend(loc='upper right')
     ax[1, 0].grid(True)
@@ -564,7 +560,7 @@ def run_topology_model():
     # Bottom-right: Test error
     ax[1, 1].step(time_intervals_test, test_errors, where='post', label='Erro Percentual', color='blue')
     ax[1, 1].set_title('Erro Percentual - Teste')
-    ax[1, 1].set_xlabel('Carimbo Temporal [15 min]')
+    ax[1, 1].set_xlabel('Intervalo Temporal [15 min]')
     ax[1, 1].set_ylabel('Erro Percentual (%)')
     ax[1, 1].legend(loc='upper right')
     ax[1, 1].grid(True)
@@ -599,7 +595,6 @@ def run_topology_model():
 # ============================================================================================================================================
 # Funções para o modelo simplificado (apenas termos quadráticos) Desafio 2.2
 # ============================================================================================================================================
-
 def build_X_squared(P_mat):
     """
     Constrói a matriz X_sq considerando apenas os termos quadráticos P_i² para cada bus.
@@ -677,7 +672,7 @@ def run_squared_model():
     ax[0, 0].step(time_intervals_train, PL2_train_true, where='post', label='Treino: Perdas Reais')
     ax[0, 0].step(time_intervals_train, PL2_train_pred_sq, where='post', label='Treino: Perdas Preditas (Quadrático)')
     ax[0, 0].set_title('Comparação de Perdas - Treino (Modelo Simplificado)')
-    ax[0, 0].set_xlabel('Carimbo Temporal [15 min]')
+    ax[0, 0].set_xlabel('Intervalo Temporal [15 min]')
     ax[0, 0].set_ylabel('Perdas de Potência')
     ax[0, 0].legend(loc='upper right')
     ax[0, 0].grid(True)
@@ -685,7 +680,7 @@ def run_squared_model():
     # Top-right: Training error
     ax[0, 1].step(time_intervals_train, train_errors, where='post', label='Erro Percentual', color='blue')
     ax[0, 1].set_title('Erro Percentual - Treino')
-    ax[0, 1].set_xlabel('Carimbo Temporal [15 min]')
+    ax[0, 1].set_xlabel('Intervalo Temporal [15 min]')
     ax[0, 1].set_ylabel('Erro Percentual (%)')
     ax[0, 1].legend(loc='upper right')
     ax[0, 1].grid(True)
@@ -694,7 +689,7 @@ def run_squared_model():
     ax[1, 0].step(time_intervals_test, PL2_test_true, where='post', label='Teste: Perdas Reais')
     ax[1, 0].step(time_intervals_test, PL2_test_pred_sq, where='post', label='Teste: Perdas Preditas (Quadrático)', color='orange')
     ax[1, 0].set_title('Comparação de Perdas - Teste (Modelo Simplificado)')
-    ax[1, 0].set_xlabel('Carimbo Temporal [15 min]')
+    ax[1, 0].set_xlabel('Intervalo Temporal [15 min]')
     ax[1, 0].set_ylabel('Perdas de Potência')
     ax[1, 0].legend(loc='upper right')
     ax[1, 0].grid(True)
@@ -702,7 +697,7 @@ def run_squared_model():
     # Bottom-right: Test error
     ax[1, 1].step(time_intervals_test, test_errors, where='post', label='Erro Percentual', color='blue')
     ax[1, 1].set_title('Erro Percentual - Teste')
-    ax[1, 1].set_xlabel('Carimbo Temporal [15 min]')
+    ax[1, 1].set_xlabel('Intervalo Temporal [15 min]')
     ax[1, 1].set_ylabel('Erro Percentual (%)')
     ax[1, 1].legend(loc='upper right')
     ax[1, 1].grid(True)
@@ -753,18 +748,144 @@ ao adotar uma representação tão simplificada do modelo.
 """)
     input("\nPressione Enter para voltar ao menu principal...")
 
+# ============================================================================================================================================
+# Funções para o modelo simplificado (soma de injeções eletricamente proximas) - Desafio 2.3 
+# ============================================================================================================================================
+def build_X_nearby(P_mat, linha_indices, SlackBus):
+    """
+    Redução da dimensionalidade de X através da soma das injeções de potência em barramentos eletricamente próximos antes de as utilizar 
+    como variáveis explicativas das perdas. 
+    No caso da rede em "papagaio" pode ser feito definindo P_sum = P1 + P2 + P3 e:
+    
+    X = [P_sum^2  2P_sumP4    P4^2], k = 1, . . . ,M
+        | ...       ...       ... |
+        [P_sum^2  2P_sumP4    P4^2]  
+    """
+    # Soma das variaveis eletricamente proximas	
+    P_sum = P_mat[:, 0] + P_mat[:, 1] + P_mat[:, 2]
+
+    # Construir matriz X_nearby
+    X_nearby = np.zeros((P_mat.shape[0], 3))
+    X_nearby[:, 0] = P_sum**2
+    X_nearby[:, 1] = 2 * P_sum * P_mat[:, 3]
+    X_nearby[:, 2] = P_mat[:, 3]**2
+
+    return X_nearby
+
+def run_nearby_model():
+    """Executa o modelo simplificado que considera a soma de injeções eletricamente próximas."""
+    print("\n=== Executando o Modelo Simplificado (Soma de Injeções Eletricamente Próximas) ===\n")
+    
+    # Carregar dados
+    SlackBus, Net_Info, P, Ptest = load_data()
+    
+    # Construir matrizes da rede
+    nBus, nLines, Y, Yl, G, B, C, Cl, Gv, Gd, linha_indices = build_network_matrices(SlackBus, Net_Info)
+    
+    # Cálculo das perdas físicas para os dados de treino
+    PL2_train_true = compute_PL2(P, B, Cl, Gv, noiseFactor)
+    
+    # Construir matriz X_nearby para os dados de treino
+    X_nearby_train = build_X_nearby(P, linha_indices, SlackBus)
+    
+    # Cálculo do beta utilizando OLS
+    beta_nearby = inv(X_nearby_train.T @ X_nearby_train) @ (X_nearby_train.T @ PL2_train_true)
+    
+    # Predição para os dados de treino
+    PL2_train_pred_nearby = X_nearby_train @ beta_nearby
+    
+    # Construir matriz X_nearby para os dados de teste
+    X_nearby_test = build_X_nearby(Ptest, linha_indices, SlackBus)
+    
+    # Predição para os dados de teste
+    PL2_test_pred_nearby = X_nearby_test @ beta_nearby
+    
+    # Cálculo das perdas físicas para os dados de teste
+    PL2_test_true = compute_PL2(Ptest, B, Cl, Gv, noiseFactor)
+    
+    # Cálculo das métricas de erro
+    train_rmse_nearby = np.sqrt(mean_squared_error(PL2_train_true, PL2_train_pred_nearby))
+    train_mae_nearby = mean_absolute_error(PL2_train_true, PL2_train_pred_nearby)
+    test_rmse_nearby = np.sqrt(mean_squared_error(PL2_test_true, PL2_test_pred_nearby))
+    test_mae_nearby = mean_absolute_error(PL2_test_true, PL2_test_pred_nearby)
+    
+    print("Modelo Simplificado (Soma de Injeções Eletricamente Próximas):")
+    print("Erro de treino - RMSE:", train_rmse_nearby)
+    print("Erro de treino - MAE: ", train_mae_nearby)
+    print("Erro de teste - RMSE:", test_rmse_nearby)
+    print("Erro de teste - MAE: ", test_mae_nearby)
+
+    # Visualização dos resultados
+    time_intervals_train = np.arange(len(PL2_train_true))
+    time_intervals_test = np.arange(len(PL2_test_true))
+
+    # Calculate errors as percentage (consistente com run_original_model)
+    train_errors = 100 * np.abs(PL2_train_true - PL2_train_pred_nearby) / np.abs(PL2_train_true)
+    test_errors = 100 * np.abs(PL2_test_true - PL2_test_pred_nearby) / np.abs(PL2_test_true)
+
+    # Plotagem dos resultados
+    fig, ax = plt.subplots(nrows=2, ncols=2, figsize=(14, 10))
+
+    # Top-left: Training data comparison
+    ax[0, 0].step(time_intervals_train, PL2_train_true, where='post', label='Perdas Reais')
+    ax[0, 0].step(time_intervals_train, PL2_train_pred_nearby, where='post', label='Perdas Preditas')
+    ax[0, 0].set_title('Comparação de Perdas - Treino')
+    ax[0, 0].set_xlabel('Intervalo Temporal [15 min]')
+    ax[0, 0].set_ylabel('Perdas de Potência [p.u.]')
+    ax[0, 0].legend(loc='upper right')
+    ax[0, 0].grid(True)
+    
+    # Top-right: Test data comparison
+    ax[0, 1].step(time_intervals_test, PL2_test_true, where='post', label='Perdas Reais')
+    ax[0, 1].step(time_intervals_test, PL2_test_pred_nearby, where='post', label='Perdas Preditas')
+    ax[0, 1].set_title('Comparação de Perdas - Teste')
+    ax[0, 1].set_xlabel('Intervalo Temporal [15 min]')
+    ax[0, 1].set_ylabel('Perdas de Potência [p.u.]')
+    ax[0, 1].legend(loc='upper right')
+    ax[0, 1].grid(True)
+    
+    # Bottom-left: Training error
+    ax[1, 0].step(time_intervals_train, train_errors, where='post', label='Erro Percentual', color='blue')
+    ax[1, 0].set_title('Erro Percentual - Treino')
+    ax[1, 0].set_xlabel('Intervalo Temporal [15 min]')
+    ax[1, 0].set_ylabel('Erro Percentual (%)')
+    ax[1, 0].legend(loc='upper right')
+    ax[1, 0].grid(True)
+    
+    # Bottom-right: Test error
+    ax[1, 1].step(time_intervals_test, test_errors, where='post', label='Erro Percentual', color='blue')
+    ax[1, 1].set_title('Erro Percentual - Teste')
+    ax[1, 1].set_xlabel('Intervalo Temporal [15 min]')
+    ax[1, 1].set_ylabel('Erro Percentual (%)')
+    ax[1, 1].legend(loc='upper right')
+    ax[1, 1].grid(True)
+
+    # Update y-axis limits for percentage error plots (consistente com run_original_model)
+    y_max_error_pct = max(np.max(train_errors), np.max(test_errors))
+    y_margin_error_pct = 0.1 * y_max_error_pct
+    
+    ax[1, 0].set_ylim(0, y_max_error_pct + y_margin_error_pct)
+    ax[1, 1].set_ylim(0, y_max_error_pct + y_margin_error_pct)
+
+    plt.tight_layout()
+    plt.savefig('resultados_modelo_injeções_proximas.png', dpi=300)
+    plt.show()
+
 # Atualizar o menu para incluir a nova opção
 def show_menu():
     """Exibe o menu principal e retorna a opção selecionada pelo usuário."""
     os.system('cls' if os.name == 'nt' else 'clear')  # Limpa a tela
     print("=" * 80)
-    print("                     LABORATÓRIO 2 - ANÁLISE DE PERDAS DE POTÊNCIA                    ")
+    print("                     LABORATÓRIO 2 - ANÁLISE DE PERDAS DE POTÊNCIA                     ")
     print("=" * 80)
     print("\nEscolha uma opção:")
     print("  1. Executar o modelo original (baseado em ângulos)")
     print("  2. Executar o modelo de baixa tensão (LV) (baseado em tensões)")
     print("  3. Executar o modelo baseado na topologia da rede")
     print("  4. Executar o modelo simplificado (apenas termos quadráticos)")
+    print("  5. Executar o modelo simplificado (com soma das injeções eletricamente próximas)")
+    print("  6. Comparar todos os modelos\n")
+    print("  7. Comparar modelos em rede de maior dimensão (20-30 buses)\n")
     print("  \nSair do programa: '0'")
     
     try:
@@ -773,7 +894,476 @@ def show_menu():
     except ValueError:
         return -1  # Retorna -1 se o usuário inserir um valor não numérico
 
- 
+def run_comparison():
+    """Compara todos os modelos implementados em termos de métricas de erro."""
+    print("\n=== Comparando Todos os Modelos ===\n")
+    
+    # Carregar dados
+    SlackBus, Net_Info, P, Ptest = load_data()
+    
+    # Construir matrizes da rede
+    nBus, nLines, Y, Yl, G, B, C, Cl, Gv, Gd, linha_indices = build_network_matrices(SlackBus, Net_Info)
+    
+    # Cálculo das perdas físicas para os dados de treino e teste
+    PL2_train_true = compute_PL2(P, B, Cl, Gv, noiseFactor)
+    PL2_test_true = compute_PL2(Ptest, B, Cl, Gv, noiseFactor)
+    
+    # Resultados para armazenar as métricas
+    results = {
+        'Modelo': [],
+        'RMSE Treino': [],
+        'MAE Treino': [],
+        'RMSE Teste': [],
+        'MAE Teste': [],
+        'Parâmetros': []
+    }
+    
+    # 1. Modelo Original
+    X_train = np.column_stack((
+        P[:, 0]**2, 2*P[:, 0]*P[:, 1], 2*P[:, 0]*P[:, 2], 2*P[:, 0]*P[:, 3],
+        P[:, 1]**2, 2*P[:, 1]*P[:, 2], 2*P[:, 1]*P[:, 3],
+        P[:, 2]**2, 2*P[:, 2]*P[:, 3],
+        P[:, 3]**2
+    ))
+    X_test = np.column_stack((
+        Ptest[:, 0]**2, 2*Ptest[:, 0]*Ptest[:, 1], 2*Ptest[:, 0]*Ptest[:, 2], 2*Ptest[:, 0]*Ptest[:, 3],
+        Ptest[:, 1]**2, 2*Ptest[:, 1]*Ptest[:, 2], 2*Ptest[:, 1]*Ptest[:, 3],
+        Ptest[:, 2]**2, 2*Ptest[:, 2]*Ptest[:, 3],
+        Ptest[:, 3]**2
+    ))
+    beta_original = inv(X_train.T @ X_train) @ (X_train.T @ PL2_train_true)
+    pred_train_original = X_train @ beta_original
+    pred_test_original = X_test @ beta_original
+    
+    results['Modelo'].append('Original')
+    results['RMSE Treino'].append(np.sqrt(mean_squared_error(PL2_train_true, pred_train_original)))
+    results['MAE Treino'].append(mean_absolute_error(PL2_train_true, pred_train_original))
+    results['RMSE Teste'].append(np.sqrt(mean_squared_error(PL2_test_true, pred_test_original)))
+    results['MAE Teste'].append(mean_absolute_error(PL2_test_true, pred_test_original))
+    results['Parâmetros'].append(len(beta_original))
+    
+    # 2. Modelo de Topologia
+    X_topo_train = build_X_topology(P, linha_indices, SlackBus)
+    X_topo_test = build_X_topology(Ptest, linha_indices, SlackBus)
+    beta_topo = inv(X_topo_train.T @ X_topo_train) @ (X_topo_train.T @ PL2_train_true)
+    pred_train_topo = X_topo_train @ beta_topo
+    pred_test_topo = X_topo_test @ beta_topo
+    
+    results['Modelo'].append('Topologia')
+    results['RMSE Treino'].append(np.sqrt(mean_squared_error(PL2_train_true, pred_train_topo)))
+    results['MAE Treino'].append(mean_absolute_error(PL2_train_true, pred_train_topo))
+    results['RMSE Teste'].append(np.sqrt(mean_squared_error(PL2_test_true, pred_test_topo)))
+    results['MAE Teste'].append(mean_absolute_error(PL2_test_true, pred_test_topo))
+    results['Parâmetros'].append(len(beta_topo))
+    
+    # 3. Modelo Quadrático
+    X_sq_train = build_X_squared(P)
+    X_sq_test = build_X_squared(Ptest)
+    beta_sq = inv(X_sq_train.T @ X_sq_train) @ (X_sq_train.T @ PL2_train_true)
+    pred_train_sq = X_sq_train @ beta_sq
+    pred_test_sq = X_sq_test @ beta_sq
+    
+    results['Modelo'].append('Quadrático')
+    results['RMSE Treino'].append(np.sqrt(mean_squared_error(PL2_train_true, pred_train_sq)))
+    results['MAE Treino'].append(mean_absolute_error(PL2_train_true, pred_train_sq))
+    results['RMSE Teste'].append(np.sqrt(mean_squared_error(PL2_test_true, pred_test_sq)))
+    results['MAE Teste'].append(mean_absolute_error(PL2_test_true, pred_test_sq))
+    results['Parâmetros'].append(len(beta_sq))
+    
+    # 4. Modelo de Injeções Próximas
+    X_nearby_train = build_X_nearby(P, linha_indices, SlackBus)
+    X_nearby_test = build_X_nearby(Ptest, linha_indices, SlackBus)
+    beta_nearby = inv(X_nearby_train.T @ X_nearby_train) @ (X_nearby_train.T @ PL2_train_true)
+    pred_train_nearby = X_nearby_train @ beta_nearby
+    pred_test_nearby = X_nearby_test @ beta_nearby
+    
+    results['Modelo'].append('Injeções Próximas')
+    results['RMSE Treino'].append(np.sqrt(mean_squared_error(PL2_train_true, pred_train_nearby)))
+    results['MAE Treino'].append(mean_absolute_error(PL2_train_true, pred_train_nearby))
+    results['RMSE Teste'].append(np.sqrt(mean_squared_error(PL2_test_true, pred_test_nearby)))
+    results['MAE Teste'].append(mean_absolute_error(PL2_test_true, pred_test_nearby))
+    results['Parâmetros'].append(len(beta_nearby))
+    
+    # Criar tabela de comparação
+    print("\nComparação de Modelos:")
+    print("-" * 80)
+    print(f"{'Modelo':<20} {'RMSE Treino':<15} {'MAE Treino':<15} {'RMSE Teste':<15} {'MAE Teste':<15} {'# Parâmetros'}")
+    print("-" * 80)
+    
+    for i in range(len(results['Modelo'])):
+        print(f"{results['Modelo'][i]:<20} {results['RMSE Treino'][i]:<15.6f} {results['MAE Treino'][i]:<15.6f} "
+              f"{results['RMSE Teste'][i]:<15.6f} {results['MAE Teste'][i]:<15.6f} {results['Parâmetros'][i]}")
+              
+    # Visualizar comparação gráfica
+    plt.figure(figsize=(10, 6))
+    
+    x = np.arange(len(results['Modelo']))
+    width = 0.35
+    
+    plt.bar(x - width/2, results['RMSE Teste'], width, label='RMSE Teste')
+    plt.bar(x + width/2, results['MAE Teste'], width, label='MAE Teste')
+    
+    plt.xlabel('Modelo')
+    plt.ylabel('Erro')
+    plt.title('Comparação de Métricas de Erro entre Modelos (Dados de Teste)')
+    plt.xticks(x, results['Modelo'])
+    plt.legend()
+    plt.grid(axis='y', linestyle='--', alpha=0.7)
+    
+    plt.tight_layout()
+    plt.savefig('comparacao_modelos.png', dpi=300)
+    plt.show()
+
+def run_large_network_comparison():
+    """Compara os diferentes modelos em uma rede de maior dimensão (20-30 buses)."""
+    print("\n=== Comparação de Modelos em Rede de Maior Dimensão ===\n")
+    
+    # === 1. Gerar/carregar dados para rede maior ===
+    n_buses = 25  # Podemos testar com diferentes tamanhos (20-30 buses)
+    
+    # Gerar topologia - uma mistura de estrutura radial com algumas conexões adicionais
+    edge_list = [(i, i+1) for i in range(n_buses-1)]  # Base radial
+    # Adicionar algumas ligações para criar malhas
+    extra_edges = [(0, 5), (5, 10), (10, 15), (15, 20), 
+                  (2, 7), (7, 12), (12, 17), (17, 22),
+                  (3, 8), (8, 13), (13, 18), (18, 23)]
+    edge_list.extend(extra_edges)
+    
+    # Construir matriz Y para a rede sintética
+    Y_large = np.zeros((n_buses, n_buses), dtype=complex)
+    np.random.seed(42)
+    linha_indices_large = []
+    
+    for i, j in edge_list:
+        # Valores típicos para linhas de transmissão
+        r = 0.01 + 0.05 * np.random.random()  # Resistência [p.u.]
+        x = 0.05 + 0.15 * np.random.random()  # Reatância [p.u.]
+        
+        y = 1 / complex(r, x)
+        Y_large[i, j] = Y_large[j, i] = -y
+        Y_large[i, i] += y
+        Y_large[j, j] += y
+        linha_indices_large.append((i, j))
+    
+    # Barramento de referência (slack)
+    slack_bus = 0
+    
+    # === 2. Gerar dados de carga/injeção ===
+    n_instantes_train = 500
+    n_instantes_test = 100
+    
+    # Matrizes de potência (sem o slack)
+    P_large = np.random.randn(n_instantes_train, n_buses-1) * 0.5
+    Ptest_large = np.random.randn(n_instantes_test, n_buses-1) * 0.7
+    
+    # === 3. Preparar matrizes para cálculo de perdas ===
+    Y_large_no_slack = np.delete(np.delete(Y_large, slack_bus, axis=0), slack_bus, axis=1)
+    G_large = Y_large_no_slack.real
+    B_large = Y_large_no_slack.imag
+    
+    # Matriz de incidência
+    C_large = np.zeros((n_buses, len(edge_list)))
+    for idx, (i, j) in enumerate(edge_list):
+        C_large[i, idx] = 1
+        C_large[j, idx] = -1
+    
+    Cl_large = np.delete(C_large, slack_bus, axis=0)
+    
+    # Vetor de condutâncias das linhas
+    Gv_large = np.zeros(len(edge_list))
+    for idx, (i, j) in enumerate(edge_list):
+        Gv_large[idx] = -Y_large[i, j].real
+    
+    # === 4. Calcular perdas "reais" ===
+    PL2_train_true = np.zeros(n_instantes_train)
+    PL2_test_true = np.zeros(n_instantes_test)
+    invB_large = inv(B_large)
+    
+    for m in range(n_instantes_train):
+        teta = invB_large @ P_large[m, :].T
+        grau = Cl_large.T @ teta
+        PL2_m = (2 * Gv_large) @ (1 - np.cos(grau))
+        PL2_train_true[m] = PL2_m * (1 + np.random.normal(0, noiseFactor))
+    
+    for m in range(n_instantes_test):
+        teta = invB_large @ Ptest_large[m, :].T
+        grau = Cl_large.T @ teta
+        PL2_m = (2 * Gv_large) @ (1 - np.cos(grau))
+        PL2_test_true[m] = PL2_m * (1 + np.random.normal(0, noiseFactor))
+    
+    # === 5. Implementar e avaliar cada modelo ===
+    results = {
+        'Modelo': [],
+        'RMSE Treino': [],
+        'MAE Treino': [],
+        'RMSE Teste': [],
+        'MAE Teste': [],
+        'Parâmetros': []
+    }
+    
+    # --- 5.1 Modelo Original ---
+    print("Construindo modelo original (completo)...")
+    
+    # Construir matriz X para treino (matriz completa com todos os termos)
+    feature_count = 0
+    X_original = []
+    
+    # Termos quadráticos
+    for i in range(n_buses-1):
+        X_original.append(P_large[:, i]**2)
+        feature_count += 1
+    
+    # Termos cruzados
+    for i in range(n_buses-1):
+        for j in range(i+1, n_buses-1):
+            X_original.append(2 * P_large[:, i] * P_large[:, j])
+            feature_count += 1
+    
+    X_original = np.column_stack(X_original)
+    
+    # Fazer o mesmo para teste
+    X_original_test = []
+    for i in range(n_buses-1):
+        X_original_test.append(Ptest_large[:, i]**2)
+    
+    for i in range(n_buses-1):
+        for j in range(i+1, n_buses-1):
+            X_original_test.append(2 * Ptest_large[:, i] * Ptest_large[:, j])
+    
+    X_original_test = np.column_stack(X_original_test)
+    
+    # Treino e predição
+    beta_original = inv(X_original.T @ X_original) @ (X_original.T @ PL2_train_true)
+    PL2_train_pred_original = X_original @ beta_original
+    PL2_test_pred_original = X_original_test @ beta_original
+    
+    results['Modelo'].append('Original')
+    results['RMSE Treino'].append(np.sqrt(mean_squared_error(PL2_train_true, PL2_train_pred_original)))
+    results['MAE Treino'].append(mean_absolute_error(PL2_train_true, PL2_train_pred_original))
+    results['RMSE Teste'].append(np.sqrt(mean_squared_error(PL2_test_true, PL2_test_pred_original)))
+    results['MAE Teste'].append(mean_absolute_error(PL2_test_true, PL2_test_pred_original))
+    results['Parâmetros'].append(len(beta_original))
+    
+    # --- 5.2 Modelo de Topologia ---
+    print("Construindo modelo de topologia...")
+    
+    X_topo_train = build_X_topology(P_large, linha_indices_large, slack_bus)
+    X_topo_test = build_X_topology(Ptest_large, linha_indices_large, slack_bus)
+    beta_topo = inv(X_topo_train.T @ X_topo_train) @ (X_topo_train.T @ PL2_train_true)
+    PL2_train_pred_topo = X_topo_train @ beta_topo
+    PL2_test_pred_topo = X_topo_test @ beta_topo
+    
+    results['Modelo'].append('Topologia')
+    results['RMSE Treino'].append(np.sqrt(mean_squared_error(PL2_train_true, PL2_train_pred_topo)))
+    results['MAE Treino'].append(mean_absolute_error(PL2_train_true, PL2_train_pred_topo))
+    results['RMSE Teste'].append(np.sqrt(mean_squared_error(PL2_test_true, PL2_test_pred_topo)))
+    results['MAE Teste'].append(mean_absolute_error(PL2_test_true, PL2_test_pred_topo))
+    results['Parâmetros'].append(len(beta_topo))
+    
+    # --- 5.3 Modelo Quadrático ---
+    print("Construindo modelo quadrático...")
+    
+    X_sq_train = build_X_squared(P_large)
+    X_sq_test = build_X_squared(Ptest_large)
+    beta_sq = inv(X_sq_train.T @ X_sq_train) @ (X_sq_train.T @ PL2_train_true)
+    PL2_train_pred_sq = X_sq_train @ beta_sq
+    PL2_test_pred_sq = X_sq_test @ beta_sq
+    
+    results['Modelo'].append('Quadrático')
+    results['RMSE Treino'].append(np.sqrt(mean_squared_error(PL2_train_true, PL2_train_pred_sq)))
+    results['MAE Treino'].append(mean_absolute_error(PL2_train_true, PL2_train_pred_sq))
+    results['RMSE Teste'].append(np.sqrt(mean_squared_error(PL2_test_true, PL2_test_pred_sq)))
+    results['MAE Teste'].append(mean_absolute_error(PL2_test_true, PL2_test_pred_sq))
+    results['Parâmetros'].append(len(beta_sq))
+    
+    # --- 5.4 Modelo de Injeções Próximas ---
+    print("Construindo modelo de injeções próximas...")
+    
+    # Para redes maiores, precisamos agrupar os buses em clusters
+    # Vamos criar grupos baseados na topologia da rede
+    
+    # Para simplificar, vamos dividir os buses em 5 clusters de tamanhos aproximadamente iguais
+    num_clusters = 5
+    buses_per_cluster = (n_buses - 1) // num_clusters
+    remainder = (n_buses - 1) % num_clusters
+    
+    clusters = []
+    start_idx = 0
+    
+    for i in range(num_clusters):
+        size = buses_per_cluster + (1 if i < remainder else 0)
+        end_idx = start_idx + size
+        clusters.append(list(range(start_idx, end_idx)))
+        start_idx = end_idx
+    
+    print(f"Divisão em clusters: {clusters}")
+    
+    # Construir matriz X_nearby para os dados de treino
+    X_nearby = []
+    
+    # Termos quadráticos para cada cluster
+    for cluster in clusters:
+        if cluster:  # Se o cluster não está vazio
+            cluster_sum = np.zeros(n_instantes_train)
+            for bus in cluster:
+                if bus < P_large.shape[1]:  # Verificar se o índice está dentro do limite
+                    cluster_sum += P_large[:, bus]
+            X_nearby.append(cluster_sum**2)
+    
+    # Termos cruzados entre clusters
+    for i in range(len(clusters)):
+        for j in range(i+1, len(clusters)):
+            if clusters[i] and clusters[j]:  # Se ambos clusters não estão vazios
+                sum_i = np.zeros(n_instantes_train)
+                sum_j = np.zeros(n_instantes_train)
+                
+                for bus in clusters[i]:
+                    if bus < P_large.shape[1]:
+                        sum_i += P_large[:, bus]
+                        
+                for bus in clusters[j]:
+                    if bus < P_large.shape[1]:
+                        sum_j += P_large[:, bus]
+                        
+                X_nearby.append(2 * sum_i * sum_j)
+    
+    X_nearby_train = np.column_stack(X_nearby)
+    
+    # Fazer o mesmo para o conjunto de teste
+    X_nearby_test = []
+    
+    # Termos quadráticos para cada cluster
+    for cluster in clusters:
+        if cluster:
+            cluster_sum = np.zeros(n_instantes_test)
+            for bus in cluster:
+                if bus < Ptest_large.shape[1]:
+                    cluster_sum += Ptest_large[:, bus]
+            X_nearby_test.append(cluster_sum**2)
+    
+    # Termos cruzados entre clusters
+    for i in range(len(clusters)):
+        for j in range(i+1, len(clusters)):
+            if clusters[i] and clusters[j]:
+                sum_i = np.zeros(n_instantes_test)
+                sum_j = np.zeros(n_instantes_test)
+                
+                for bus in clusters[i]:
+                    if bus < Ptest_large.shape[1]:
+                        sum_i += Ptest_large[:, bus]
+                        
+                for bus in clusters[j]:
+                    if bus < Ptest_large.shape[1]:
+                        sum_j += Ptest_large[:, bus]
+                        
+                X_nearby_test.append(2 * sum_i * sum_j)
+    
+    X_nearby_test = np.column_stack(X_nearby_test)
+    
+    # Treino e predição
+    beta_nearby = inv(X_nearby_train.T @ X_nearby_train) @ (X_nearby_train.T @ PL2_train_true)
+    PL2_train_pred_nearby = X_nearby_train @ beta_nearby
+    PL2_test_pred_nearby = X_nearby_test @ beta_nearby
+    
+    results['Modelo'].append('Injeções Próximas')
+    results['RMSE Treino'].append(np.sqrt(mean_squared_error(PL2_train_true, PL2_train_pred_nearby)))
+    results['MAE Treino'].append(mean_absolute_error(PL2_train_true, PL2_train_pred_nearby))
+    results['RMSE Teste'].append(np.sqrt(mean_squared_error(PL2_test_true, PL2_test_pred_nearby)))
+    results['MAE Teste'].append(mean_absolute_error(PL2_test_true, PL2_test_pred_nearby))
+    results['Parâmetros'].append(len(beta_nearby))
+    
+    # Visualizar resultados para o modelo de injeções próximas
+    plt.figure(figsize=(14, 6))
+    
+    plt.subplot(1, 2, 1)
+    plt.scatter(PL2_train_true, PL2_train_pred_nearby, alpha=0.5)
+    min_val = min(np.min(PL2_train_true), np.min(PL2_train_pred_nearby))
+    max_val = max(np.max(PL2_train_true), np.max(PL2_train_pred_nearby))
+    plt.plot([min_val, max_val], [min_val, max_val], 'r--')
+    plt.title('Modelo de Injeções Próximas - Treino')
+    plt.xlabel('Perdas Reais')
+    plt.ylabel('Perdas Preditas')
+    plt.grid(True)
+    
+    plt.subplot(1, 2, 2)
+    plt.scatter(PL2_test_true, PL2_test_pred_nearby, alpha=0.5, color='orange')
+    min_val = min(np.min(PL2_test_true), np.min(PL2_test_pred_nearby))
+    max_val = max(np.max(PL2_test_true), np.max(PL2_test_pred_nearby))
+    plt.plot([min_val, max_val], [min_val, max_val], 'r--')
+    plt.title('Modelo de Injeções Próximas - Teste')
+    plt.xlabel('Perdas Reais')
+    plt.ylabel('Perdas Preditas')
+    plt.grid(True)
+    
+    plt.tight_layout()
+    plt.savefig('injecoes_proximas_large_network.png', dpi=300)
+    
+    # Criar tabela de comparação
+    print("\nComparação de Modelos:")
+    print("-" * 80)
+    print(f"{'Modelo':<20} {'RMSE Treino':<15} {'MAE Treino':<15} {'RMSE Teste':<15} {'MAE Teste':<15} {'# Parâmetros'}")
+    print("-" * 80)
+    
+    for i in range(len(results['Modelo'])):
+        print(f"{results['Modelo'][i]:<20} {results['RMSE Treino'][i]:<15.6f} {results['MAE Treino'][i]:<15.6f} "
+              f"{results['RMSE Teste'][i]:<15.6f} {results['MAE Teste'][i]:<15.6f} {results['Parâmetros'][i]}")
+              
+    # Visualizar comparação gráfica de erros
+    plt.figure(figsize=(12, 8))
+    
+    x = np.arange(len(results['Modelo']))
+    width = 0.35
+    
+    plt.subplot(2, 1, 1)
+    plt.bar(x - width/2, results['RMSE Teste'], width, label='RMSE Teste')
+    plt.bar(x + width/2, results['MAE Teste'], width, label='MAE Teste')
+    plt.xlabel('Modelo')
+    plt.ylabel('Erro')
+    plt.title('Comparação de Métricas de Erro entre Modelos (Dados de Teste)')
+    plt.xticks(x, results['Modelo'])
+    plt.legend()
+    plt.grid(axis='y', linestyle='--', alpha=0.7)
+    
+    # Visualizar comparação de número de parâmetros
+    plt.subplot(2, 1, 2)
+    plt.bar(x, results['Parâmetros'], color='green')
+    plt.xlabel('Modelo')
+    plt.ylabel('Número de Parâmetros')
+    plt.title('Comparação do Número de Parâmetros por Modelo')
+    plt.xticks(x, results['Modelo'])
+    plt.grid(axis='y', linestyle='--', alpha=0.7)
+    
+    # Adicionar valores sobre as barras
+    for i, v in enumerate(results['Parâmetros']):
+        plt.text(i, v + 5, str(v), ha='center')
+    
+    plt.tight_layout()
+    plt.savefig('comparacao_modelos_grande.png', dpi=300)
+    plt.show()
+    
+    # Destacar o trade-off entre complexidade e precisão
+    trade_off = pd.DataFrame({
+        'Modelo': results['Modelo'],
+        'RMSE Teste': results['RMSE Teste'],
+        'Parâmetros': results['Parâmetros']
+    })
+    
+    plt.figure(figsize=(10, 6))
+    plt.scatter(trade_off['Parâmetros'], trade_off['RMSE Teste'], s=100)
+    
+    # Adicionar rótulos aos pontos
+    for i, modelo in enumerate(trade_off['Modelo']):
+        plt.annotate(modelo, 
+                    (trade_off['Parâmetros'][i], trade_off['RMSE Teste'][i]),
+                    xytext=(5, 5), textcoords='offset points')
+    
+    plt.xlabel('Número de Parâmetros (Complexidade)')
+    plt.ylabel('RMSE Teste (Erro)')
+    plt.title('Trade-off entre Complexidade e Erro de Predição')
+    plt.grid(True)
+    plt.savefig('trade_off_complexidade_erro.png', dpi=300)
+    plt.show()
+
 # Atualizar o bloco de execução principal
 if __name__ == "__main__":
     while True:
@@ -794,7 +1384,15 @@ if __name__ == "__main__":
         elif opcao == 4:
             run_squared_model()
             input("\nPressione Enter para continuar...")
+        elif opcao == 5:
+            run_nearby_model()
+            input("\nPressione Enter para continuar...")
+        elif opcao == 6:
+            run_comparison()
+            input("\nPressione Enter para continuar...")
+        elif opcao == 7:
+            run_large_network_comparison()
+            input("\nPressione Enter para continuar...")
         else:
             print("\nOpção inválida! Por favor, escolha uma opção válida.")
             input("\nPressione Enter para continuar...")
-
