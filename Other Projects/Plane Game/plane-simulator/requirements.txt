@@ -1,0 +1,5 @@
+pygame
+PyOpenGL
+numpy
+scipy
+Pillow
