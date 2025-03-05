@@ -1202,279 +1202,432 @@ def run_large_network_comparison():
 
 
 # ============================================================================================================================================
-# Funções para o modelo baseado em sensibilidade - Desafio 2.5
+# Funções para o modelo de teste de diferentes valores de ruído - Desafio 2.5
 # ============================================================================================================================================
-def build_X_sensitivity(P_mat, Y, slack_bus, sensitivity_threshold=0.1):
-    """
-    Builds feature matrix X based on sensitivity analysis of each bus's contribution to losses.
+def compare_network_sizes_different_noise():
+    """Compares model performance with different noise levels."""
+    print("\n=== Comparando Desempenho dos Modelos com Diferentes Níveis de Ruído ===\n")
     
-    Parameters:
-      P_mat: Matrix of power injections, with dimension (n_instances, n_buses-1)
-      Y: Admittance matrix
-      slack_bus: Index of slack bus
-      sensitivity_threshold: Threshold to include buses in the full model
-      
-    Returns:
-      X_sens: Feature matrix based on sensitivity analysis
-    """
-    n_instances, n_buses_no_slack = P_mat.shape
+    # Define noise levels to test
+    noise_levels = [0, 0.001, 0.003, 0.005, 0.01]
     
-    # Step 1: Calculate loss sensitivity factors (LSF) for each bus
-    # This is a simplified approach - in practice you'd need a full power flow calculation
-    G = Y.real  # Conductance matrix
+    # Dictionary to store results for each noise level and model
+    noise_results = {
+        'small': {model: {'RMSE': [], 'MAE': []} for model in ['Original', 'Topologia (edge-reduced)', 
+                                                              'Quadrático (squares-only)', 
+                                                              'Injeções Próximas (squares-reduced)']},
+        'large': {model: {'RMSE': [], 'MAE': []} for model in ['Original', 'Topologia (edge-reduced)', 
+                                                              'Quadrático (squares-only)', 
+                                                              'Injeções Próximas (squares-reduced)']}
+    }
     
-    # Calculate sensitivity factors (approximate)
-    sensitivity = np.zeros(n_buses_no_slack)
-    for i in range(n_buses_no_slack):
-        # For simplicity, we'll use row sum of G as a proxy for sensitivity
-        # In a real implementation, we'd calculate ∂PL/∂P_i for each bus
-        bus_idx = i if i < slack_bus else i + 1  # Adjust for slack bus index
-        sensit_i = np.sum(np.abs(G[bus_idx, :]))
-        sensitivity[i] = sensit_i
+    # We'll also keep track of parameters (they don't change with noise)
+    model_params = {
+        'small': {model: 0 for model in ['Original', 'Topologia (edge-reduced)', 
+                                        'Quadrático (squares-only)', 
+                                        'Injeções Próximas (squares-reduced)']},
+        'large': {model: 0 for model in ['Original', 'Topologia (edge-reduced)', 
+                                        'Quadrático (squares-only)', 
+                                        'Injeções Próximas (squares-reduced)']}
+    }
     
-    # Step 2: Normalize sensitivity factors
-    sensitivity = sensitivity / np.max(sensitivity)
+    # ===== Setup for small network =====
+    print("Configurando rede original (5 barramentos)...")
     
-    # Step 3: Identify high and low sensitivity buses
-    high_sens_buses = [i for i, s in enumerate(sensitivity) if s >= sensitivity_threshold]
-    low_sens_buses = [i for i, s in enumerate(sensitivity) if s < sensitivity_threshold]
-    
-    print(f"High sensitivity buses: {len(high_sens_buses)} out of {n_buses_no_slack}")
-    
-    # Step 4: Build feature matrix X_sens
-    X_features = []
-    
-    # Include squared terms for all buses
-    for i in range(n_buses_no_slack):
-        X_features.append(P_mat[:, i]**2)
-        
-    # Include cross-terms only for high sensitivity buses
-    for i in high_sens_buses:
-        for j in high_sens_buses:
-            if i < j:  # Avoid duplicates
-                X_features.append(2 * P_mat[:, i] * P_mat[:, j])
-    
-    # Additionally, include grouped terms for low sensitivity buses
-    if low_sens_buses:
-        low_sens_sum = np.zeros(n_instances)
-        for i in low_sens_buses:
-            low_sens_sum += P_mat[:, i]
-        X_features.append(low_sens_sum**2)
-        
-        # Cross terms between the low-sensitivity group and each high-sensitivity bus
-        for i in high_sens_buses:
-            X_features.append(2 * P_mat[:, i] * low_sens_sum)
-    
-    return np.column_stack(X_features)
-
-def run_sensitivity_model():
-    """Executes the sensitivity-based model for power loss prediction."""
-    print("\n=== Executando o Modelo Baseado em Sensibilidade ===\n")
-    
-    # Carregar dados
+    # Load data for small network
     SlackBus, Net_Info, P, Ptest = load_data()
     
-    # Construir matrizes da rede
+    # Build network matrices
     nBus, nLines, Y, Yl, G, B, C, Cl, Gv, Gd, linha_indices = build_network_matrices(SlackBus, Net_Info)
     
-    # Cálculo das perdas físicas para os dados de treino e teste
-    PL2_train_true = compute_PL2(P, B, Cl, Gv, noiseFactor)
-    PL2_test_true = compute_PL2(Ptest, B, Cl, Gv, noiseFactor)
-    
-    # ==== MODELO BASEADO EM SENSIBILIDADE ====
-    # Construir matriz X_sensitivity para os dados de treino
-    X_sens_train = build_X_sensitivity(P, Y, SlackBus-1, sensitivity_threshold=0.3)
-    
-    # Cálculo do beta utilizando OLS
-    beta_sens = inv(X_sens_train.T @ X_sens_train) @ (X_sens_train.T @ PL2_train_true)
-    
-    # Predição para os dados de treino
-    PL2_train_pred_sens = X_sens_train @ beta_sens
-    
-    # Construir matriz X_sensitivity para os dados de teste
-    X_sens_test = build_X_sensitivity(Ptest, Y, SlackBus-1, sensitivity_threshold=0.3)
-    
-    # Predição para os dados de teste
-    PL2_test_pred_sens = X_sens_test @ beta_sens
-    
-    # ==== MODELO ORIGINAL PARA COMPARAÇÃO ====
-    # Construir matriz X para os dados de treino (modelo original)
-    X_orig_train = np.column_stack((
+    # Build model matrices for small network (these don't change with noise)
+    X_orig_train_small = np.column_stack((
         P[:, 0]**2, 2*P[:, 0]*P[:, 1], 2*P[:, 0]*P[:, 2], 2*P[:, 0]*P[:, 3],
         P[:, 1]**2, 2*P[:, 1]*P[:, 2], 2*P[:, 1]*P[:, 3],
-        P[:, 2]**2, 2*P[:, 2]*P[:, 3],
-        P[:, 3]**2
+        P[:, 2]**2, 2*P[:, 2]*P[:, 3], P[:, 3]**2
     ))
-    
-    # Cálculo do beta utilizando OLS para o modelo original
-    beta_orig = inv(X_orig_train.T @ X_orig_train) @ (X_orig_train.T @ PL2_train_true)
-    
-    # Predição para os dados de treino com o modelo original
-    PL2_train_pred_orig = X_orig_train @ beta_orig
-    
-    # Construir matriz X para os dados de teste (modelo original)
-    X_orig_test = np.column_stack((
+    X_orig_test_small = np.column_stack((
         Ptest[:, 0]**2, 2*Ptest[:, 0]*Ptest[:, 1], 2*Ptest[:, 0]*Ptest[:, 2], 2*Ptest[:, 0]*Ptest[:, 3],
         Ptest[:, 1]**2, 2*Ptest[:, 1]*Ptest[:, 2], 2*Ptest[:, 1]*Ptest[:, 3],
-        Ptest[:, 2]**2, 2*Ptest[:, 2]*Ptest[:, 3],
-        Ptest[:, 3]**2
+        Ptest[:, 2]**2, 2*Ptest[:, 2]*Ptest[:, 3], Ptest[:, 3]**2
     ))
     
-    # Predição para os dados de teste com o modelo original
-    PL2_test_pred_orig = X_orig_test @ beta_orig
+    X_topo_train_small = build_X_topology(P, linha_indices, SlackBus)
+    X_topo_test_small = build_X_topology(Ptest, linha_indices, SlackBus)
     
-    # ==== CALCULATE METRICS FOR BOTH MODELS ====
-    # Métricas para o modelo baseado em sensibilidade
-    train_rmse_sens = np.sqrt(mean_squared_error(PL2_train_true, PL2_train_pred_sens))
-    train_mae_sens = mean_absolute_error(PL2_train_true, PL2_train_pred_sens)
-    test_rmse_sens = np.sqrt(mean_squared_error(PL2_test_true, PL2_test_pred_sens))
-    test_mae_sens = mean_absolute_error(PL2_test_true, PL2_test_pred_sens)
+    X_sq_train_small = build_X_squared(P)
+    X_sq_test_small = build_X_squared(Ptest)
     
-    # Métricas para o modelo original
-    train_rmse_orig = np.sqrt(mean_squared_error(PL2_train_true, PL2_train_pred_orig))
-    train_mae_orig = mean_absolute_error(PL2_train_true, PL2_train_pred_orig)
-    test_rmse_orig = np.sqrt(mean_squared_error(PL2_test_true, PL2_test_pred_orig))
-    test_mae_orig = mean_absolute_error(PL2_test_true, PL2_test_pred_orig)
+    X_nearby_train_small = build_X_nearby(P, linha_indices, SlackBus)
+    X_nearby_test_small = build_X_nearby(Ptest, linha_indices, SlackBus)
     
-    # ==== PRINT METRICS ====
-    print("==== Comparação entre Modelo Baseado em Sensibilidade e Modelo Original ====")
-    print("\nModelo Baseado em Sensibilidade:")
-    print(f"  Erro de treino - RMSE: {train_rmse_sens:.6f}")
-    print(f"  Erro de treino - MAE:  {train_mae_sens:.6f}")
-    print(f"  Erro de teste - RMSE:  {test_rmse_sens:.6f}")
-    print(f"  Erro de teste - MAE:   {test_mae_sens:.6f}")
-    print(f"  Número de parâmetros:  {len(beta_sens)}")
+    # Store the number of parameters for each model (small network)
+    model_params['small']['Original'] = X_orig_train_small.shape[1]
+    model_params['small']['Topologia (edge-reduced)'] = X_topo_train_small.shape[1]
+    model_params['small']['Quadrático (squares-only)'] = X_sq_train_small.shape[1]
+    model_params['small']['Injeções Próximas (squares-reduced)'] = X_nearby_train_small.shape[1]
     
-    print("\nModelo Original:")
-    print(f"  Erro de treino - RMSE: {train_rmse_orig:.6f}")
-    print(f"  Erro de treino - MAE:  {train_mae_orig:.6f}")
-    print(f"  Erro de teste - RMSE:  {test_rmse_orig:.6f}")
-    print(f"  Erro de teste - MAE:   {test_mae_orig:.6f}")
-    print(f"  Número de parâmetros:  {len(beta_orig)}")
+    # ===== Setup for large network =====
+    print("Configurando rede maior (25 barramentos)...")
     
-    # ==== CALCULATE ERRORS FOR VISUALIZATION ====
-    time_intervals_train = np.arange(len(PL2_train_true))
-    time_intervals_test = np.arange(len(PL2_test_true))
-
-    # Calculate percentage errors for both models
-    train_errors_sens = 100 * np.abs(PL2_train_true - PL2_train_pred_sens) / np.abs(PL2_train_true)
-    test_errors_sens = 100 * np.abs(PL2_test_true - PL2_test_pred_sens) / np.abs(PL2_test_true)
+    # Setup large network (similar to compare_network_sizes function)
+    n_buses = 25
     
-    train_errors_orig = 100 * np.abs(PL2_train_true - PL2_train_pred_orig) / np.abs(PL2_train_true)
-    test_errors_orig = 100 * np.abs(PL2_test_true - PL2_test_pred_orig) / np.abs(PL2_test_true)
-
-    # ==== VISUALIZATION OF THE SENSITIVITY MODEL ALONE ====
-    # (Original plots of the sensitivity model)
-    fig1, ax1 = plt.subplots(nrows=2, ncols=2, figsize=(14, 10))
+    # Generate network topology - mix of radial structure with additional connections
+    edge_list = [(i, i+1) for i in range(n_buses-1)]  # Base radial
+    extra_edges = [(0, 5), (5, 10), (10, 15), (15, 20), 
+                  (2, 7), (7, 12), (12, 17), (17, 22),
+                  (3, 8), (8, 13), (13, 18), (18, 23)]
+    edge_list.extend(extra_edges)
     
-    # Top-left: Training data comparison
-    ax1[0, 0].step(time_intervals_train, PL2_train_true, where='post', label='Perdas Reais')
-    ax1[0, 0].step(time_intervals_train, PL2_train_pred_sens, where='post', label='Perdas Preditas')
-    ax1[0, 0].set_title('Comparação de Perdas - Treino')
-    ax1[0, 0].set_xlabel('Intervalo Temporal [15 min]')
-    ax1[0, 0].set_ylabel('Perdas de Potência [p.u.]')
-    ax1[0, 0].legend(loc='upper right')
-    ax1[0, 0].grid(True)
+    # Build Y matrix for synthetic network
+    Y_large = np.zeros((n_buses, n_buses), dtype=complex)
+    np.random.seed(42)
+    linha_indices_large = []
+    
+    for i, j in edge_list:
+        # Typical values for transmission lines
+        r = 0.01 + 0.05 * np.random.random()
+        x = 0.05 + 0.15 * np.random.random()
+        
+        y = 1 / complex(r, x)
+        Y_large[i, j] = Y_large[j, i] = -y
+        Y_large[i, i] += y
+        Y_large[j, j] += y
+        linha_indices_large.append((i, j))
+    
+    # Reference bus (slack)
+    slack_bus = 0
+    
+    # Generate load/injection data
+    n_instantes_train = 500
+    n_instantes_test = 100
+    
+    # Power matrices (excluding slack)
+    P_large = np.random.randn(n_instantes_train, n_buses-1) * 0.5
+    Ptest_large = np.random.randn(n_instantes_test, n_buses-1) * 0.7
+    
+    # Prepare matrices for loss calculation
+    Y_large_no_slack = np.delete(np.delete(Y_large, slack_bus, axis=0), slack_bus, axis=1)
+    G_large = Y_large_no_slack.real
+    B_large = Y_large_no_slack.imag
+    
+    # Incidence matrix
+    C_large = np.zeros((n_buses, len(edge_list)))
+    for idx, (i, j) in enumerate(edge_list):
+        C_large[i, idx] = 1
+        C_large[j, idx] = -1
+    
+    Cl_large = np.delete(C_large, slack_bus, axis=0)
+    
+    # Line conductance vector
+    Gv_large = np.zeros(len(edge_list))
+    for idx, (i, j) in enumerate(edge_list):
+        Gv_large[idx] = -Y_large[i, j].real
+    
+    # Build model matrices for large network
+    # Original model
+    X_orig_large = []
+    # Quadratic terms
+    for i in range(n_buses-1):
+        X_orig_large.append(P_large[:, i]**2)
+    # Cross terms
+    for i in range(n_buses-1):
+        for j in range(i+1, n_buses-1):
+            X_orig_large.append(2 * P_large[:, i] * P_large[:, j])
+    X_orig_train_large = np.column_stack(X_orig_large)
+    
+    X_orig_large_test = []
+    for i in range(n_buses-1):
+        X_orig_large_test.append(Ptest_large[:, i]**2)
+    for i in range(n_buses-1):
+        for j in range(i+1, n_buses-1):
+            X_orig_large_test.append(2 * Ptest_large[:, i] * Ptest_large[:, j])
+    X_orig_test_large = np.column_stack(X_orig_large_test)
+    
+    # Topology model
+    X_topo_train_large = build_X_topology(P_large, linha_indices_large, slack_bus+1)
+    X_topo_test_large = build_X_topology(Ptest_large, linha_indices_large, slack_bus+1)
+    
+    # Squared model
+    X_sq_train_large = build_X_squared(P_large)
+    X_sq_test_large = build_X_squared(Ptest_large)
+    
+    # Nearby injections model (clusters)
+    num_clusters = 5
+    buses_per_cluster = (n_buses - 1) // num_clusters
+    remainder = (n_buses - 1) % num_clusters
+    
+    clusters = []
+    start_idx = 0
+    
+    for i in range(num_clusters):
+        size = buses_per_cluster + (1 if i < remainder else 0)
+        end_idx = start_idx + size
+        clusters.append(list(range(start_idx, end_idx)))
+        start_idx = end_idx
+    
+    # Build nearby injections matrices
+    X_nearby_large = []
+    # Quadratic terms for each cluster
+    for cluster in clusters:
+        if cluster:
+            cluster_sum = np.zeros(n_instantes_train)
+            for bus in cluster:
+                if bus < P_large.shape[1]:
+                    cluster_sum += P_large[:, bus]
+            X_nearby_large.append(cluster_sum**2)
+    
+    # Cross terms between clusters
+    for i in range(len(clusters)):
+        for j in range(i+1, len(clusters)):
+            if clusters[i] and clusters[j]:
+                sum_i = np.zeros(n_instantes_train)
+                sum_j = np.zeros(n_instantes_train)
+                
+                for bus in clusters[i]:
+                    if bus < P_large.shape[1]:
+                        sum_i += P_large[:, bus]
+                        
+                for bus in clusters[j]:
+                    if bus < P_large.shape[1]:
+                        sum_j += P_large[:, bus]
+                        
+                X_nearby_large.append(2 * sum_i * sum_j)
+    
+    X_nearby_train_large = np.column_stack(X_nearby_large)
+    
+    X_nearby_large_test = []
+    # Quadratic terms for test data
+    for cluster in clusters:
+        if cluster:
+            cluster_sum = np.zeros(n_instantes_test)
+            for bus in cluster:
+                if bus < Ptest_large.shape[1]:
+                    cluster_sum += Ptest_large[:, bus]
+            X_nearby_large_test.append(cluster_sum**2)
+    
+    # Cross terms between clusters for test data
+    for i in range(len(clusters)):
+        for j in range(i+1, len(clusters)):
+            if clusters[i] and clusters[j]:
+                sum_i = np.zeros(n_instantes_test)
+                sum_j = np.zeros(n_instantes_test)
+                
+                for bus in clusters[i]:
+                    if bus < Ptest_large.shape[1]:
+                        sum_i += Ptest_large[:, bus]
+                        
+                for bus in clusters[j]:
+                    if bus < Ptest_large.shape[1]:
+                        sum_j += Ptest_large[:, bus]
+                        
+                X_nearby_large_test.append(2 * sum_i * sum_j)
+    
+    X_nearby_test_large = np.column_stack(X_nearby_large_test)
+    
+    # Store the number of parameters for each model (large network)
+    model_params['large']['Original'] = X_orig_train_large.shape[1]
+    model_params['large']['Topologia (edge-reduced)'] = X_topo_train_large.shape[1]
+    model_params['large']['Quadrático (squares-only)'] = X_sq_train_large.shape[1]
+    model_params['large']['Injeções Próximas (squares-reduced)'] = X_nearby_train_large.shape[1]
 
-    # Top-right: Test data comparison
-    ax1[0, 1].step(time_intervals_test, PL2_test_true, where='post', label='Perdas Reais')
-    ax1[0, 1].step(time_intervals_test, PL2_test_pred_sens, where='post', label='Perdas Preditas')
-    ax1[0, 1].set_title('Comparação de Perdas - Teste')
-    ax1[0, 1].set_xlabel('Intervalo Temporal [15 min]')
-    ax1[0, 1].set_ylabel('Perdas de Potência [p.u.]')
-    ax1[0, 1].legend(loc='upper right')
-    ax1[0, 1].grid(True)
-
-    # Bottom-left: Training error
-    ax1[1, 0].step(time_intervals_train, train_errors_sens, where='post', label='Erro Percentual', color='blue')
-    ax1[1, 0].set_title('Erro Percentual - Treino')
-    ax1[1, 0].set_xlabel('Intervalo Temporal [15 min]')
-    ax1[1, 0].set_ylabel('Erro Percentual (%)')
-    ax1[1, 0].legend(loc='upper right')
-    ax1[1, 0].grid(True)
-
-    # Bottom-right: Test error
-    ax1[1, 1].step(time_intervals_test, test_errors_sens, where='post', label='Erro Percentual', color='blue')
-    ax1[1, 1].set_title('Erro Percentual - Teste')
-    ax1[1, 1].set_xlabel('Intervalo Temporal [15 min]')
-    ax1[1, 1].set_ylabel('Erro Percentual (%)')
-    ax1[1, 1].legend(loc='upper right')
-    ax1[1, 1].grid(True)
-
-    # Update y-axis limits for percentage error plots
-    y_max_error_pct = max(np.max(train_errors_sens), np.max(test_errors_sens))
-    y_margin_error_pct = 0.1 * y_max_error_pct
-
-    ax1[1, 0].set_ylim(0, y_max_error_pct + y_margin_error_pct)
-    ax1[1, 1].set_ylim(0, y_max_error_pct + y_margin_error_pct)
-
+    # ===== Main loop for different noise levels =====
+    for noise_level in noise_levels:
+        print(f"\nAvaliando modelos com nível de ruído: {noise_level}")
+        
+        # ==== Small network ====
+        print("  Processando rede original (5 barramentos)...")
+        
+        # Calculate true losses with current noise level
+        PL2_train_true_small = compute_PL2(P, B, Cl, Gv, noise_level)
+        PL2_test_true_small = compute_PL2(Ptest, B, Cl, Gv, noise_level)
+        
+        # 1. Original model
+        beta_original = inv(X_orig_train_small.T @ X_orig_train_small) @ (X_orig_train_small.T @ PL2_train_true_small)
+        pred_test_original = X_orig_test_small @ beta_original
+        
+        # Calculate metrics
+        rmse_original = np.sqrt(mean_squared_error(PL2_test_true_small, pred_test_original))
+        mae_original = mean_absolute_error(PL2_test_true_small, pred_test_original)
+        
+        noise_results['small']['Original']['RMSE'].append(rmse_original)
+        noise_results['small']['Original']['MAE'].append(mae_original)
+        
+        # 2. Topology model
+        beta_topo = inv(X_topo_train_small.T @ X_topo_train_small) @ (X_topo_train_small.T @ PL2_train_true_small)
+        pred_test_topo = X_topo_test_small @ beta_topo
+        
+        # Calculate metrics
+        rmse_topo = np.sqrt(mean_squared_error(PL2_test_true_small, pred_test_topo))
+        mae_topo = mean_absolute_error(PL2_test_true_small, pred_test_topo)
+        
+        noise_results['small']['Topologia (edge-reduced)']['RMSE'].append(rmse_topo)
+        noise_results['small']['Topologia (edge-reduced)']['MAE'].append(mae_topo)
+        
+        # 3. Squared model
+        beta_sq = inv(X_sq_train_small.T @ X_sq_train_small) @ (X_sq_train_small.T @ PL2_train_true_small)
+        pred_test_sq = X_sq_test_small @ beta_sq
+        
+        # Calculate metrics
+        rmse_sq = np.sqrt(mean_squared_error(PL2_test_true_small, pred_test_sq))
+        mae_sq = mean_absolute_error(PL2_test_true_small, pred_test_sq)
+        
+        noise_results['small']['Quadrático (squares-only)']['RMSE'].append(rmse_sq)
+        noise_results['small']['Quadrático (squares-only)']['MAE'].append(mae_sq)
+        
+        # 4. Nearby injections model
+        beta_nearby = inv(X_nearby_train_small.T @ X_nearby_train_small) @ (X_nearby_train_small.T @ PL2_train_true_small)
+        pred_test_nearby = X_nearby_test_small @ beta_nearby
+        
+        # Calculate metrics
+        rmse_nearby = np.sqrt(mean_squared_error(PL2_test_true_small, pred_test_nearby))
+        mae_nearby = mean_absolute_error(PL2_test_true_small, pred_test_nearby)
+        
+        noise_results['small']['Injeções Próximas (squares-reduced)']['RMSE'].append(rmse_nearby)
+        noise_results['small']['Injeções Próximas (squares-reduced)']['MAE'].append(mae_nearby)
+        
+        # ==== Large network ====
+        print("  Processando rede maior (25 barramentos)...")
+        
+        # Calculate true losses for current noise level
+        invB_large = inv(B_large)
+        PL2_train_true_large = np.zeros(n_instantes_train)
+        PL2_test_true_large = np.zeros(n_instantes_test)
+        
+        for m in range(n_instantes_train):
+            teta = invB_large @ P_large[m, :].T
+            grau = Cl_large.T @ teta
+            PL2_m = (2 * Gv_large) @ (1 - np.cos(grau))
+            PL2_train_true_large[m] = PL2_m * (1 + np.random.normal(0, noise_level))
+        
+        for m in range(n_instantes_test):
+            teta = invB_large @ Ptest_large[m, :].T
+            grau = Cl_large.T @ teta
+            PL2_m = (2 * Gv_large) @ (1 - np.cos(grau))
+            PL2_test_true_large[m] = PL2_m * (1 + np.random.normal(0, noise_level))
+        
+        # 1. Original model (large)
+        beta_original_large = inv(X_orig_train_large.T @ X_orig_train_large) @ (X_orig_train_large.T @ PL2_train_true_large)
+        pred_test_original_large = X_orig_test_large @ beta_original_large
+        
+        # Calculate metrics
+        rmse_original_large = np.sqrt(mean_squared_error(PL2_test_true_large, pred_test_original_large))
+        mae_original_large = mean_absolute_error(PL2_test_true_large, pred_test_original_large)
+        
+        noise_results['large']['Original']['RMSE'].append(rmse_original_large)
+        noise_results['large']['Original']['MAE'].append(mae_original_large)
+        
+        # 2. Topology model (large)
+        beta_topo_large = inv(X_topo_train_large.T @ X_topo_train_large) @ (X_topo_train_large.T @ PL2_train_true_large)
+        pred_test_topo_large = X_topo_test_large @ beta_topo_large
+        
+        # Calculate metrics
+        rmse_topo_large = np.sqrt(mean_squared_error(PL2_test_true_large, pred_test_topo_large))
+        mae_topo_large = mean_absolute_error(PL2_test_true_large, pred_test_topo_large)
+        
+        noise_results['large']['Topologia (edge-reduced)']['RMSE'].append(rmse_topo_large)
+        noise_results['large']['Topologia (edge-reduced)']['MAE'].append(mae_topo_large)
+        
+        # 3. Squared model (large)
+        beta_sq_large = inv(X_sq_train_large.T @ X_sq_train_large) @ (X_sq_train_large.T @ PL2_train_true_large)
+        pred_test_sq_large = X_sq_test_large @ beta_sq_large
+        
+        # Calculate metrics
+        rmse_sq_large = np.sqrt(mean_squared_error(PL2_test_true_large, pred_test_sq_large))
+        mae_sq_large = mean_absolute_error(PL2_test_true_large, pred_test_sq_large)
+        
+        noise_results['large']['Quadrático (squares-only)']['RMSE'].append(rmse_sq_large)
+        noise_results['large']['Quadrático (squares-only)']['MAE'].append(mae_sq_large)
+        
+        # 4. Nearby injections model (large)
+        beta_nearby_large = inv(X_nearby_train_large.T @ X_nearby_train_large) @ (X_nearby_train_large.T @ PL2_train_true_large)
+        pred_test_nearby_large = X_nearby_test_large @ beta_nearby_large
+        
+        # Calculate metrics
+        rmse_nearby_large = np.sqrt(mean_squared_error(PL2_test_true_large, pred_test_nearby_large))
+        mae_nearby_large = mean_absolute_error(PL2_test_true_large, pred_test_nearby_large)
+        
+        noise_results['large']['Injeções Próximas (squares-reduced)']['RMSE'].append(rmse_nearby_large)
+        noise_results['large']['Injeções Próximas (squares-reduced)']['MAE'].append(mae_nearby_large)
+    
+    # ===== Visualization =====
+    
+    # Plot 1: Small network RMSE vs Noise Level for all models
+    plt.figure(figsize=(14, 10))
+    
+    plt.subplot(1, 2, 1)
+    for model in noise_results['small'].keys():
+        plt.plot(noise_levels, noise_results['small'][model]['RMSE'], 
+                 marker='o', linewidth=2, label=model)
+    
+    plt.title('RMSE vs Nível de Ruído - Rede Original (5 barramentos)')
+    plt.xlabel('Nível de Ruído')
+    plt.ylabel('RMSE')
+    plt.grid(True)
+    plt.legend()
+    
+    
+    # Plot 3: Large network RMSE vs Noise Level for all models
+    plt.subplot(1, 2, 2)
+    for model in noise_results['large'].keys():
+        plt.plot(noise_levels, noise_results['large'][model]['RMSE'], 
+                 marker='o', linewidth=2, label=model)
+    
+    plt.title('RMSE vs Nível de Ruído - Rede Maior (25 barramentos)')
+    plt.xlabel('Nível de Ruído')
+    plt.ylabel('RMSE')
+    plt.grid(True)
+    plt.legend()
+    
+    
     plt.tight_layout()
-    plt.savefig('Plots/Sensitivity/resultados_modelo_sensibilidade.png', dpi=300)
+    plt.savefig('Plots/Noise/comparacao_ruido_todas_metricas.png', dpi=300)
     
-    # ==== NEW VISUALIZATION COMPARING THE TWO MODELS ====
-    # Create additional plots for comparison
-    fig2, ax2 = plt.subplots(nrows=2, ncols=1, figsize=(14, 12))
+    # Plot 5: Combined comparison across networks for RMSE
+    plt.figure(figsize=(16, 7))
+    models = list(noise_results['small'].keys())
+    colors = ['blue', 'green', 'red', 'purple']
     
-    # Subplot 1: Bar chart comparing RMSE and MAE
-    model_names = ['Sensibilidade', 'Original']
-    x = np.arange(len(model_names))
-    width = 0.2
+    for i, model in enumerate(models):
+        plt.plot(noise_levels, noise_results['small'][model]['RMSE'], 
+                 marker='o', color=colors[i], linestyle='-', linewidth=2, 
+                 label=f'{model} (5 barramentos)')
+        plt.plot(noise_levels, noise_results['large'][model]['RMSE'], 
+                 marker='s', color=colors[i], linestyle='--', linewidth=2, 
+                 label=f'{model} (25 barramentos)')
     
-    # Training metrics
-    ax2[0].bar(x - width*1.5, [train_rmse_sens, train_rmse_orig], width, label='RMSE Treino', color='skyblue')
-    ax2[0].bar(x - width/2, [train_mae_sens, train_mae_orig], width, label='MAE Treino', color='lightgreen')
+    plt.title('RMSE vs Nível de Ruído - Comparação entre Redes')
+    plt.xlabel('Nível de Ruído')
+    plt.ylabel('RMSE')
+    plt.grid(True)
+    plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
     
-    # Test metrics
-    ax2[0].bar(x + width/2, [test_rmse_sens, test_rmse_orig], width, label='RMSE Teste', color='orange')
-    ax2[0].bar(x + width*1.5, [test_mae_sens, test_mae_orig], width, label='MAE Teste', color='salmon')
     
-    ax2[0].set_ylabel('Valor do Erro')
-    ax2[0].set_title('Comparação de Métricas entre Modelos')
-    ax2[0].set_xticks(x)
-    ax2[0].set_xticklabels(model_names)
-    ax2[0].legend()
-    ax2[0].grid(axis='y', linestyle='--', alpha=0.7)
+    plt.tight_layout()
+    plt.savefig('Plots/Noise/comparacao_ruido_parametros.png', dpi=300)
     
-    # Adicionar valores nas barras
-    bar_values = [train_rmse_sens, train_rmse_orig, train_mae_sens, train_mae_orig, 
-                 test_rmse_sens, test_rmse_orig, test_mae_sens, test_mae_orig]
-    bar_positions = [x[0]-width*1.5, x[1]-width*1.5, x[0]-width/2, x[1]-width/2, 
-                    x[0]+width/2, x[1]+width/2, x[0]+width*1.5, x[1]+width*1.5]
+    # Print summary table
+    print("\nResumo dos Resultados - RMSE para Diferentes Níveis de Ruído:")
+    print("-" * 95)
+    header = "Modelo".ljust(30) + " | "
+    for noise in noise_levels:
+        header += f"Ruído {noise:.4f}".ljust(12) + " | "
+    print(header)
+    print("-" * 95)
     
-    for i, v in enumerate(bar_values):
-        ax2[0].text(bar_positions[i], v + 0.0005, f'{v:.4f}', ha='center', va='bottom', fontsize=8, rotation=90)
-    
-    # Subplot 2: Side-by-side comparison of test error percentages over time
-    ax2[1].step(time_intervals_test, test_errors_sens, where='post', label='Modelo Sensibilidade', color='blue')
-    ax2[1].step(time_intervals_test, test_errors_orig, where='post', label='Modelo Original', color='red')
-    ax2[1].set_title('Comparação de Erro Percentual no Teste')
-    ax2[1].set_xlabel('Intervalo Temporal [15 min]')
-    ax2[1].set_ylabel('Erro Percentual (%)')
-    ax2[1].legend(loc='upper right')
-    ax2[1].grid(True)
-    
-    # Ajustar limite do eixo y para comportar ambos os erros
-    y_max_error_compare = max(np.max(test_errors_sens), np.max(test_errors_orig))
-    y_margin_error_compare = 0.1 * y_max_error_compare
-    ax2[1].set_ylim(0, y_max_error_compare + y_margin_error_compare)
-    
-    # Information table as text
-    params_reduction = (len(beta_orig) - len(beta_sens)) / len(beta_orig) * 100
-    error_improvement = (test_rmse_orig - test_rmse_sens) / test_rmse_orig * 100
-    
-    info_text = (
-        f"Comparação de Modelos:\n"
-        f"- Modelo Sensibilidade: {len(beta_sens)} parâmetros, RMSE Teste = {test_rmse_sens:.6f}\n"
-        f"- Modelo Original: {len(beta_orig)} parâmetros, RMSE Teste = {test_rmse_orig:.6f}\n"
-        f"- Redução de parâmetros: {params_reduction:.1f}%\n"
-        f"- {'Melhoria' if error_improvement > 0 else 'Aumento'} do erro: {abs(error_improvement):.1f}%"
-    )
-    
-    plt.figtext(0.5, 0.01, info_text, ha='center', fontsize=11, bbox=dict(facecolor='white', alpha=0.8))
-    
-    plt.tight_layout(rect=[0, 0.05, 1, 0.98])
-    plt.savefig('Plots/Sensitivity/comparacao_sensibilidade_vs_original.png', dpi=300)
+    for net_size in ['small', 'large']:
+        print(f"Rede {'Original (5 barramentos)' if net_size=='small' else 'Maior (25 barramentos)'}")
+        for model in models:
+            row = model.ljust(30) + " | "
+            for i, noise in enumerate(noise_levels):
+                row += f"{noise_results[net_size][model]['RMSE'][i]:.6f}".ljust(12) + " | "
+            print(row)
+        print("-" * 95)
+
     plt.show()
+    
+    return noise_results, model_params
 
 # ============================================================================================================================================
 # Funções para o menu principal e execução de comparações
@@ -1494,7 +1647,7 @@ def show_menu():
     print("  6. Comparar todos os modelos\n")
     print("  7. Comparar modelos em rede de maior dimensão (20-30 barramentos )\n")
     print("  8. Comparar desempenho dos modelos em diferentes tamanhos de rede\n")
-    print("  9. Executar o modelo baseado em sensibilidade\n")
+    print("  9. Comparar desempenho dos modelos com diferentes níveis de ruído\n")
     print("  \nSair do programa: '0'")
     
     try:
@@ -1709,7 +1862,7 @@ def compare_network_sizes():
     beta_nearby = inv(X_nearby_train.T @ X_nearby_train) @ (X_nearby_train.T @ PL2_train_true)
     pred_test_nearby = X_nearby_test @ beta_nearby
     
-    all_results['small']['Modelo'].append('Injeções Próximas')
+    all_results['small']['Modelo'].append('Injeções Próximas (squares-reduced)')
     all_results['small']['RMSE'].append(np.sqrt(mean_squared_error(PL2_test_true, pred_test_nearby)))
     all_results['small']['MAE'].append(mean_absolute_error(PL2_test_true, pred_test_nearby))
     all_results['small']['Parâmetros'].append(len(beta_nearby))
@@ -2056,7 +2209,7 @@ if __name__ == "__main__":
             compare_network_sizes()
             input("\nPressione Enter para continuar...")
         elif opcao == 9:
-            run_sensitivity_model()
+            compare_network_sizes_different_noise()
             input("\nPressione Enter para continuar...")
         else:
             print("\nOpção inválida! Por favor, escolha uma opção válida.")
