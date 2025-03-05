@@ -1,3 +1,25 @@
+''' Important Note '''
+Yes, this is valid if your assumptions about low voltage networks are correct (that voltage drops follow this simple linear relationship with power injections). However, it's important to recognize that:
+
+The excellent performance comes from the perfect alignment between model design and loss calculation method
+In real networks with more complex behaviors, the error would likely be higher
+The model isn't learning a generalized pattern - it's essentially learning the physics equation directly
+This demonstrates that when you have perfect knowledge of the system behavior, a well-designed model can achieve exceptional accuracy.
+
+Why the Error is So Small
+The key insight is that your LV model has a "perfect" mathematical relationship between inputs and outputs:
+
+Identical Calculations: Both the loss computation (compute_losses_LV) and feature creation (build_X_prime) use exactly the same formula to estimate voltage magnitudes:
+
+Direct Proportionality: For each line between buses i and j:
+
+In loss calculation: loss_ij = G_ij * (V_i - V_j)²
+In feature matrix: X_prime[m,l] = (V_i - V_j)²
+Perfect Learning: The regression coefficients (beta) directly learn the conductance values (G_ij) of each line with almost perfect precision.
+
+it's a demonstration of how a well-designed model with perfect knowledge of the underlying physics can achieve exceptional accuracy!
+
+
 # Desafio: Modelo de Perdas para Redes de Baixa Tensão
 
 Neste desafio, é necessário repensar a equação (16), que originalmente tem a forma:
