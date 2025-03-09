@@ -1,95 +1,98 @@
 #include <Arduino.h>
 #include <math.h>
 
-// Constantes do circuito
-#define VCC 3.3                    // Tensão de alimentação (volts)
-#define MY_ADC_RESOLUTION 4095.0   // Resolução do ADC (12 bits: 0 a 4095)
-#define FIXED_RESISTOR 10000.0     // Resistor fixo do divisor de tensão (10 kΩ)
+// Circuit Constants
+#define VCC 3.3                    // Supply voltage (volts)
+#define MY_ADC_RESOLUTION 4095.0   // 12-bit ADC max value (0 to 4095)
+#define FIXED_RESISTOR 10000.0     // 10kΩ resistor in voltage divider
 
-// Valor de referência: resistência típica a 10 lux (em ohms)
-const float R10 = 225000.0; 
+// Reference Resistance (LDR at 10 lux)
+const float R10 = 225000.0;
 
-// Parâmetro m (valor nominal, ex: -0.8) – pode ser ajustado
+// LDR Equation Parameters (log-log relationship)
 const float LDR_M = -1.2;
-
-// Calcula dinamicamente b com base em R10 e LDR_M:
-// b = log10(R10) - m * log10(10) = log10(R10) - m (pois log10(10)=1)
 float LDR_B = log10(R10) - LDR_M;
 
-// Constantes para calibração do ganho (se necessário)
-const float G = 1; // Fator de ganho (ajustar experimentalmente)
-const float d = 0;   // Offset (ajustar experimentalmente)
+// Calibration Constants
+const int NUM_PONTOS = 11;          // Number of calibration points
+const int NUM_READINGS = 20;        // Increased number of ADC readings to improve accuracy
+const int STABILIZATION_TIME = 3000; // Time (ms) to allow LED brightness to stabilize
 
-// Número de pontos de calibração (por exemplo, 11 pontos de 0 a 255)
-const int NUM_PONTOS = 11;
-
-// Vetores para armazenar os valores de duty cycle (u) e os lux medidos (L)
+// Arrays to store measured values
 float dutyCycles[NUM_PONTOS];
 float luxValues[NUM_PONTOS];
 
-// Pino do LED (PWM) e do sensor LDR
-#define LED_PIN 15    // Pino PWM a controlar o LED
-#define SENSOR_PIN A0 // Pino analógico para leitura do LDR
+// Pin Definitions
+#define LED_PIN 15    // PWM pin for LED control
+#define SENSOR_PIN A0 // Analog pin for LDR reading
 
 void setup() {
   Serial.begin(115200);
   
-  // Configura o ADC para 12 bits, se suportado
+  // Configure 12-bit ADC resolution (if supported)
   #if defined(analogReadResolution)
   analogReadResolution(12);
   #endif
 
-  // Cabeçalho para indicar que os dados serão impressos em duas linhas
-  Serial.println("Valores de Duty Cycle e Lux:");
-  delay(2000); // Aguarda estabilização do sistema
+  // Set a high PWM frequency (e.g., 60kHz to avoid flickering)
+  analogWriteFreq(60000);      // Set PWM frequency to 60kHz
+  analogWriteRange(4096);      // Use full 12-bit range
 
-  // Varredura: para cada ponto de calibração, varia o duty cycle e regista a leitura
+  Serial.println("Duty Cycle vs. Lux Measurements:");
+  delay(2000); // Allow system stabilization
+
+  // Calibration loop: Sweep through different duty cycles and measure Lux
   for (int i = 0; i < NUM_PONTOS; i++) {
-    // Calcula o valor do duty cycle (u) de forma linear entre 0 e 255
-    float u = (255.0 * i) / (NUM_PONTOS - 1);
+    // Compute duty cycle (linearly spaced between 1 and 4096)
+    float u = 1 + (4095.0 * i) / (NUM_PONTOS - 1);
     dutyCycles[i] = u;
-    
-    // Define o PWM do LED (utilizando analogWrite, compatível com a biblioteca Erle Phill Hower)
+
+    // Set PWM output
     analogWrite(LED_PIN, (int)u);
-    
-    // Aguarda 1 segundo para estabilização do LED e do sensor
-    delay(1000);
-    
-    // Lê o valor analógico do LDR
-    int adcValue = analogRead(SENSOR_PIN);
-    float voltage = (adcValue / MY_ADC_RESOLUTION) * VCC;
-    if (voltage <= 0) {
-      voltage = 0.0001; // Evita divisão por zero
+
+    // Ensure steady-state by waiting before measuring
+    delay(STABILIZATION_TIME); 
+
+    // Take multiple ADC readings and average them
+    float totalVoltage = 0;
+    for (int j = 0; j < NUM_READINGS; j++) {
+      int adcValue = analogRead(SENSOR_PIN);
+      float voltage = (adcValue / MY_ADC_RESOLUTION) * VCC;
+      totalVoltage += voltage;
+      delay(20);  // Short delay between readings to avoid immediate noise
     }
-    
-    // Calcula a resistência do LDR utilizando o divisor de tensão:
-    // V_out = VCC * (R_fixo / (R_fixo + R_LDR))  =>  R_LDR = R_fixo * (VCC/V_out - 1)
-    float rLDR = FIXED_RESISTOR * (VCC / voltage - 1);
-    
-    // Converte a resistência do LDR em lux utilizando a relação log-log:
-    // log10(LUX) = (log10(rLDR) - b) / m  =>  LUX = 10^((log10(rLDR) - b) / m)
+    float avgVoltage = totalVoltage / NUM_READINGS;
+
+    // Avoid division by zero
+    if (avgVoltage <= 0) avgVoltage = 0.0001;
+
+    // Compute LDR resistance
+    float rLDR = FIXED_RESISTOR * (VCC / avgVoltage - 1);
+
+    // Compute Lux using log-log equation
     float lux = pow(10, (log10(rLDR) - LDR_B) / LDR_M);
-    
-    // Aplica a calibração de ganho (se necessária)
-    float luxCorrigido = d + G * lux;
-    luxValues[i] = luxCorrigido;
+
+    // Store Lux value
+    luxValues[i] = lux;
   }
 
-  // Agora, imprime todos os valores de duty cycle (u) numa linha:
+  // Print Duty Cycle values
+  Serial.println("Duty Cycle:");
   for (int i = 0; i < NUM_PONTOS; i++) {
     Serial.print(dutyCycles[i], 2);
-    Serial.println(); 
+    Serial.println();
   }
-  Serial.println(); // Nova linha
-  Serial.println(); 
-  // Em seguida, imprime todos os valores de Lux numa linha:
+  Serial.println(); // New line
+
+  // Print Lux values
+  Serial.println("Lux:");
   for (int i = 0; i < NUM_PONTOS; i++) {
     Serial.print(luxValues[i], 2);
-    Serial.println(); 
+    Serial.println();
   }
-  Serial.println(); // Nova linha final
+  Serial.println(); // New line
 }
 
 void loop() {
-  // A calibração é realizada uma única vez no setup.
+  // Calibration runs only once in setup()
 }

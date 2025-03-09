@@ -5,17 +5,18 @@
 #define VCC 3.3                    // Supply voltage in volts
 #define MY_ADC_RESOLUTION 4095.0   // 12-bit ADC max value (0 to 4095)
 #define FIXED_RESISTOR 10000.0     // 10k ohm resistor in the voltage divider
+const float R10 = 225000.0; 
 
 // Calibrated parameters for the LDR conversion equation
 // Derived from the datasheet for PGM5659D:
 // log10(R_LDR) = m * log10(Lux) + b, where m = -γ and b = log10(A)
 // For a nominal R10 of ~225kΩ and γ ≈ 0.8, we get:
-#define LDR_M -0.8               
-#define LDR_B 6.15
+const float LDR_M = -1.2;             
+float LDR_B = log10(R10) - LDR_M;
 
 // Gain Calibration Constants (if needed)
-const float G = 1.0; // 0.0076; // Gain factor (adjust experimentally)
-const float d = 0; // 10.7112; // Offset (adjust experimentally)
+const float G = 1; //0.2045; // Fator de ganho (ajustar experimentalmente)
+const float d = 0; // 0.01; // Offset (ajustar experimentalmente)
 
 void setup() {
   Serial.begin(115200);
@@ -51,7 +52,7 @@ void loop() {
   float lux = pow(10, (log10(rLDR) - LDR_B) / LDR_M);
 
   // Apply Gain Calibration (if needed)
-  float correctedLux = d + G * lux;
+  //float correctedLux = d + G * ;
 
   // Print the values to the Serial Monitor
   Serial.print("ADC Value: ");
@@ -61,7 +62,7 @@ void loop() {
   Serial.print(" V\tLDR Resistance: ");
   Serial.print(rLDR, 2);
   Serial.print(" ohms\tLux: ");
-  Serial.println(correctedLux, 2);
+  Serial.println(lux, 2);
 
   delay(1000); // Wait 1 second before the next reading
 }
