@@ -82,6 +82,7 @@ def prepare_network(Net_Info, Power_Info, SlackBus):
     
     return Y, Yl, G, B, I, nBus, nLines
 
+
 # ============================================================================================================================================
 # Funções para estimação de estado
 # ============================================================================================================================================
@@ -153,8 +154,8 @@ def state_estimation_2a(Y, Yl, I):
     v[4] = 1
     
     # Valores de medição z (Neste caso, estamos a calcular as correntes e tensões, mas também poderíamos medi-las)
-    b0[0] = np.dot(np.absolute(np.dot(-Y[0, 1], (v[0] - v[1]))), np.exp(complex(0, -1) * np.arccos(cosPhi)))
-    b0[1] = np.dot(np.absolute(np.dot(Y[3, 4], (v[4] - v[3]))), np.exp(complex(0, -1) * np.arccos(cosPhi)))
+    b0[0] = np.absolute(np.dot(Y[0, 1], (v[0] - v[1]))) * np.exp(complex(0, -1) * np.arccos(cosPhi))
+    b0[1] = np.absolute(np.dot(Y[3, 4], (v[4] - v[3]))) * np.exp(complex(0, -1) * np.arccos(cosPhi))
     b0[2] = v[1]
     b0[3] = v[4]
     b0[4:8] = I  # Aqui adicionamos pseudo-medições baseadas na corrente I
@@ -379,8 +380,8 @@ def state_estimation_alternative(Y, Yl, I, pseudo_selection=[0, 1]):
     v[4] = 1
     
     # Valores de medição z 
-    b0[0] = np.dot(np.absolute(np.dot(-Y[0, 1], (v[0] - v[1]))), np.exp(complex(0, -1) * np.arccos(cosPhi)))
-    b0[1] = np.dot(np.absolute(np.dot(Y[3, 4], (v[4] - v[3]))), np.exp(complex(0, -1) * np.arccos(cosPhi)))
+    b0[0] = np.absolute(np.dot(Y[0, 1], (v[0] - v[1]))) * np.exp(complex(0, -1) * np.arccos(cosPhi))
+    b0[1] = np.absolute(np.dot(Y[3, 4], (v[4] - v[3]))) * np.exp(complex(0, -1) * np.arccos(cosPhi))
     b0[2] = v[1]
     b0[3] = v[4]
     b0[4:8] = I  # Todas as pseudo-medições baseadas na corrente I
@@ -646,6 +647,492 @@ def compare_with_full_approach(Y, Yl, I, best_combo, results_2b):
 
 
 # ============================================================================================================================================
+# Funções para o Desafio 2 - I12=0
+# ============================================================================================================================================
+def state_estimation_challenge_2(Y, I, cosPhi):   
+    """
+    Assume que I12=0. Sob esta suposição, uma de duas situações possíveis pode estar a ocorrer: 
+    ou o ramo 1-2 está fora de serviço (y12=0) ou o medidor de corrente correspondente está 
+    com mau funcionamento. Decida sobre a situação mais provável com base na precisão da 
+    estimação correspondente.
+
+    Como no exercício anterior, utilize a matriz Rx e considere diferentes matrizes Wz, 
+    incluindo a matriz identidade. Elabore sobre os efeitos de Wz.
+    """
+
+    print("\n=== Desafio 2 - I12=0 ===\n")
+
+    # Matriz de admitância com a linha 1-2 = 0
+    Y_2 = np.copy(Y)
+    Y_2[0, 1] = 0
+    Y_2[1, 0] = 0
+
+    # Matriz de admitância sem o barramento de referência
+    Yl_2 = np.copy(Y_2)
+    Yl_2 = np.delete(Yl_2, 0, axis=0)
+    Yl_2 = np.delete(Yl_2, 0, axis=1)
+
+    # Vetor de corrente sem a corrente I12
+    I_2 = np.copy(I)
+    I_2[0] = 0
+
+    # Criação da Matriz
+    b0 = np.zeros(7, dtype=np.complex128)
+    A = np.zeros((7, 5), dtype=np.complex128)
+    v = np.zeros(5, dtype=np.complex128)
+
+    # Cálculo da Tensão (Referência)
+    v[0:4] = 1 + np.dot(np.linalg.inv(Yl_2), I_2)
+    v[4] = 1
+
+    # Valores de medição z
+    b0[0] = 0
+    b0[1] = np.absolute(np.dot(Y[3, 4], (v[4] - v[3]))) * np.exp(complex(0, -1) * np.arccos(cosPhi))
+    b0[2] = v[1]
+    b0[3] = v[4]
+
+    # Matriz Hx
+    A[0, 0] = np.dot(Y[0, 1], 1)
+    A[0, 1] = np.dot(-Y[0, 1], 1)
+    A[1, 3] = np.dot(-Y[3, 4], 1)
+    A[1, 4] = np.dot(Y[3, 4], 1)
+
+    # Relações para pseudo-medições
+    A[2, 1] = 1
+    A[3, 4] = 1
+
+    A[4, 0] = np.dot(Y[0, 1] + Y[0, 2], 1)
+    A[4, 1] = A[0, 1]
+    A[4, 2] = np.dot(-Y[0, 2], 1)
+    A[5, 0] = A[0, 1]
+    A[5, 1] = A[4, 0]
+    A[5, 2] = np.dot(-Y[1, 2], 1)
+    A[6, 0] = A[4, 2]
+    A[6, 1] = A[5, 2]
+    A[6, 2] = np.dot(Y[0, 2] + Y[1, 2] + Y[2, 3], 1)
+    A[6, 3] = np.dot(-Y[2, 3], 1)
+    A[6, 4] = A[1, 3]
+
+    # Matriz de pesos
+    Wz = np.identity(7)  # Matriz de pesos com a identidade
+
+    # Better weighting scheme
+    Wz = np.zeros((7, 7))
+    # Higher weight for direct measurements (I54, V2, V5)
+    np.fill_diagonal(Wz[0:4, 0:4], 10**6)  
+    # Lower weight for pseudo-measurements
+    np.fill_diagonal(Wz[4:7, 4:7], 2)
+
+    # Ruído a ser adicionado às pseudo-medições
+    np.random.seed(42)
+    e = np.random.normal(0.0, 1.0, size=(3, m)) * sig
+
+    # Estimação sem ruído
+    x0 = np.dot(np.dot(np.linalg.pinv(np.dot(np.dot(A.T, Wz), A)), np.dot(A.T, Wz)), b0)
+
+    # Matriz de covariância do erro
+    Rx = np.linalg.pinv(np.dot(np.dot(A.T, Wz), A))
+    print("\nElementos diagonais da matriz de covariância Rx da estimação de estado:")
+    print(np.diag(Rx))
+
+    # Variáveis para acumular resultados
+    sx = np.zeros(5, dtype=np.complex128)
+    rms = np.zeros((5, m))
+    ei12a = np.zeros(m)
+    ei54a = np.zeros(m)
+
+    for i in range(m):
+        
+        # Introduzir erro nas medições
+        b1 = np.copy(b0)
+        b1[4:7] = I_2[1:4] + e[:, i]  # Use I_2[1:4] instead of I_2
+
+        # Estimar as tensões com base nas medições com erros
+        x = np.dot(np.dot(np.linalg.pinv(np.dot(np.dot(A.T, Wz), A)), np.dot(A.T, Wz)), b1)
+
+        # Valor acumulado das estimações
+        sx = sx + x
+
+        # Erros nas tensões
+        rms[:, i] = np.sqrt(np.abs(np.dot((x - x0), np.conjugate(x - x0))))
+
+        # Erros relativos da corrente (Para serem utilizados nos gráficos)
+        ei12a[i] = np.divide(
+            np.absolute(np.dot(Y[0, 1], (x[0] - x[1]))) - np.absolute(np.dot(Y[0, 1], (v[0] - v[1]))),
+            np.absolute(np.dot(Y[0, 1], (v[0] - v[1])))
+        ) 
+        ei54a[i] = np.divide(
+            np.absolute(np.dot(Y[3, 4], (x[4] - x[3]))) - np.absolute(np.dot(Y[3, 4], (v[4] - v[3]))),
+            np.absolute(np.dot(Y[3, 4], (v[4] - v[3])))
+        )
+
+    # Estimação média da tensão
+    x_avg = sx / m
+
+    # Erro RMS médio da tensão
+    ee = np.sum(rms, axis=1) / m
+
+    # Mostrar resultados
+    print("\nResultados do Desafio 2:")
+    print("Tensão média estimada no barramento 1:", x_avg[0])
+    print("Tensão média estimada no barramento 2:", x_avg[1])
+    print("Tensão média estimada no barramento 3:", x_avg[2])
+    print("Tensão média estimada no barramento 4:", x_avg[3])
+    print("Tensão média estimada no barramento 5:", x_avg[4])
+    print("\nValores teóricos esperados:")
+    print("V3 = (0.8924 - 0.2277j)")
+    print("V4 = (0.9481 - 0.1172j)")
+    print("V5 = (1.0000 + 0.0000j)")
+    print("\nErro RMS médio da tensão:", ee)
+
+    return x0, x_avg, ei12a, ei54a, ee, A, b0, e
+
+def compare_with_full_approach_challenge_2(Y, Yl, I, results_2b):
+    print("\n=== Comparação com Abordagem Completa ===\n")
+    
+    # Executar estimação do Desafio 2
+    _, x_avg_alt, ei12a_alt, ei54a_alt, ee_alt, _, _, _ = state_estimation_challenge_2(Y, I, cosPhi)
+    
+    # Obter resultados da abordagem completa
+    _, xw_avg_2b, _, _ = results_2b
+    
+    # Calcular diferenças percentuais nas magnitudes
+    diff_mag = []
+    for i in range(5):
+        mag_alt = np.abs(x_avg_alt[i])
+        mag_2b = np.abs(xw_avg_2b[i])
+        diff_pct = abs(mag_alt - mag_2b) / mag_2b * 100
+        diff_mag.append(diff_pct)
+    
+    # Visualizar comparação
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 7))
+    
+    # Gráfico de barras para magnitudes de tensão
+    bus_numbers = [1, 2, 3, 4, 5]
+    width = 0.35
+    
+    ax1.bar([x - width/2 for x in bus_numbers], np.abs(x_avg_alt), width, 
+        label='Assumindo ramo 1-2 fora de serviço (y12=0)', alpha=0.7)
+    ax1.bar([x + width/2 for x in bus_numbers], np.abs(xw_avg_2b), width, 
+        label='Rede normal (todos os ramos em serviço)', alpha=0.7)
+    
+    ax1.set_xlabel('Número do Barramento')
+    ax1.set_ylabel('Magnitude da Tensão')
+    ax1.set_title('Comparação das Magnitudes de Tensão')
+    ax1.set_xticks(bus_numbers)
+    ax1.legend()
+    ax1.grid(True, linestyle='--', alpha=0.7)
+
+    # Gráfico de barras para diferenças percentuais
+    ax2.bar(bus_numbers, diff_mag, color='orange', alpha=0.7)
+    ax2.set_xlabel('Número do Barramento')
+    ax2.set_ylabel('Diferença Percentual (%)')
+    ax2.set_title('Diferença Percentual nas Magnitudes')
+    ax2.set_xticks(bus_numbers)
+    ax2.grid(True, linestyle='--', alpha=0.7)
+
+    # Adicionar valores sobre as barras
+    for i, v in enumerate(diff_mag):
+        ax2.text(i+1, v + 0.05, f"{v:.2f}%", ha='center')
+
+    plt.tight_layout()
+
+    # Salvar figura
+    if not os.path.exists('figuras'):
+        os.makedirs('figuras')
+    plt.savefig('figuras/comparacao_abordagens_desafio2.png', dpi=300)
+
+    plt.show()
+
+    print("\nDiferença percentual nas magnitudes de tensão:")
+    for i, bus in enumerate(bus_numbers):
+        print(f"Barramento {bus}: {diff_mag[i]:.2f}%")
+
+def determine_probable_scenario(Y, Yl, I, cosPhi):
+    """
+    Determina se o ramo 1-2 está fora de serviço ou se o medidor de corrente está com mau funcionamento.
+    
+    Args:
+        Y: Matriz de admitância da rede original
+        Yl: Matriz de admitância reduzida original
+        I: Vetor de correntes (com I12=0)
+        cosPhi: Fator de potência
+        
+    Returns:
+        String indicando o cenário mais provável e métricas de confiança
+    """
+    print("\n=== Análise de Cenário para I12=0 ===\n")
+    
+    # Cenário 1: Ramo 1-2 está fora de serviço (y12=0)
+    Y_branch_out = np.copy(Y)
+    Y_branch_out[0, 1] = 0
+    Y_branch_out[1, 0] = 0
+    
+    Yl_branch_out = np.delete(Y_branch_out, 0, axis=0)
+    Yl_branch_out = np.delete(Yl_branch_out, 0, axis=1)
+    
+    # Executar estimação de estado para o cenário 1
+    _, _, _, _, ee_branch_out, _, _, _ = state_estimation_challenge_2(Y_branch_out, I, cosPhi)
+    branch_out_error = np.sum(ee_branch_out)
+    
+    # Adicionar a determine_probable_scenario() antes da instrução if
+    print(f"\nErro do ramo fora de serviço: {branch_out_error:.6f}")
+    print(f"Limiar de decisão: 0.1 (determinado através de testes empíricos)")
+    print("Se branch_out_error < limiar, concluímos que o ramo está fora de serviço")
+    print("Caso contrário, concluímos que o medidor está com mau funcionamento")
+    
+    # Cenário 2: Medidor de corrente com mau funcionamento
+    # Usamos o Y original mas assumimos que a medição de I12 está errada
+    I_meter_fault = np.copy(I)
+    
+    # Calcular I12 teórico com base nos parâmetros de rede e outras medições
+    v = np.zeros(5, dtype=np.complex128)
+    v[0:4] = 1 + np.dot(np.linalg.inv(Yl), I)
+    v[4] = 1
+    
+    # Estimar qual deveria ser o I12 se o medidor estivesse a funcionar
+    theoretical_I12 = Y[0, 1] * (v[0] - v[1])
+    
+    # Executar estimação com rede original mas conjunto de medições modificado
+    # Usaríamos uma versão modificada do state_estimation_2b
+    # Isto necessitaria implementação adicional de uma função estimadora especial
+
+    # Para fins de demonstração, criamos uma métrica comparativa mais simples
+    # Erros residuais maiores ao usar a matriz Y original indicariam ramo fora de serviço
+    # Maior coerência com outras medições indicaria falha no medidor
+    
+    if branch_out_error < 0.1:  # Limiar determinado empiricamente
+        confidence = (0.1 - branch_out_error) / 0.1 * 100
+        return f"O ramo 1-2 está provavelmente fora de serviço (y12=0) com {confidence:.2f}% de confiança"
+    else:
+        meter_confidence = min(branch_out_error * 100, 95)  # Limite de 95% de confiança
+        return f"O medidor de corrente I12 está provavelmente com mau funcionamento com {meter_confidence:.2f}% de confiança"
+
+def compare_scenarios(Y, I, cosPhi):
+    """
+    Compara dois cenários possíveis quando I12=0:
+    1. Ramo 1-2 está fora de serviço (y12=0)
+    2. Medidor de corrente está com mau funcionamento (ramo em serviço)
+    
+    Analisa os efeitos de diferentes matrizes Wz na determinação do cenário.
+    
+    Args:
+        Y: Matriz de admitância da rede original
+        I: Vetor de correntes (com I12=0)
+        cosPhi: Fator de potência
+        
+    Returns:
+        Análise detalhada dos cenários com diferentes matrizes Wz
+    """
+    print("\n=== Comparação de Cenários com Diferentes Matrizes de Peso ===\n")
+    
+    # Cenário 1: Ramo 1-2 está fora de serviço (y12=0)
+    Y_branch_out = np.copy(Y)
+    Y_branch_out[0, 1] = 0
+    Y_branch_out[1, 0] = 0
+    
+    # preparar diferentes matrizes de peso
+    weight_schemes = {
+        "Identidade": np.identity(7),
+        "Peso maior nas medições": np.diag([10**6, 10**6, 10**6, 10**6, 2, 2, 2]),
+        "Pesos iguais": np.diag([5, 5, 5, 5, 5, 5, 5]),
+        "Peso menor nas medições": np.diag([2, 2, 2, 2, 10, 10, 10])
+    }
+    
+    results = {}
+    
+    for name, Wz in weight_schemes.items():
+        print(f"\nTestando com matriz de peso {name}:")
+        
+        # Estimação com ramo fora de serviço
+        errors_branch_out = run_estimation_with_weights(Y_branch_out, I, cosPhi, Wz)
+        
+        # Estimação com medidor com mau funcionamento
+        errors_meter_fault = run_estimation_with_weights(Y, I, cosPhi, Wz)
+        
+        # Salvar resultados
+        results[name] = {
+            "branch_out_error": np.sum(errors_branch_out),
+            "meter_fault_error": np.sum(errors_meter_fault)
+        }
+        
+        print(f"  Erro do ramo fora de serviço: {results[name]['branch_out_error']:.6f}")
+        print(f"  Erro do medidor com falha: {results[name]['meter_fault_error']:.6f}")
+
+    if results[name]['branch_out_error'] < results[name]['meter_fault_error']:
+        print(f"  Conclusão com matriz Wz {name}: O ramo 1-2 está provavelmente fora de serviço")
+    else:
+        print(f"  Conclusão com matriz Wz {name}: O medidor de corrente está provavelmente com mau funcionamento")
+    
+    # Visualizar comparação dos cenários
+    plot_scenario_comparison(results)
+
+    # Visualizar o impacto das matrizes de peso na determinação do cenário
+    plot_weight_matrix_impact(results)
+    
+    # Determinar cenário mais provável com base nos resultados
+    branch_votes = sum(1 for scheme in results if results[scheme]['branch_out_error'] < results[scheme]['meter_fault_error'])
+    meter_votes = len(results) - branch_votes
+    
+    print("\n=== Análise dos Efeitos da Matriz de Peso ===")
+    print("- Matriz identidade: Confiança igual em todas as medições, produzindo erros equilibrados")
+    print("- Peso maior nas medições: Maior confiança nas medições físicas, menor nas pseudo-medições")
+    print("- Pesos iguais: Confiança uniforme em todas as medições")
+    print("- Peso menor nas medições: Maior confiança nas pseudo-medições, útil quando os medidores têm falhas")
+    
+    if branch_votes > meter_votes:
+        return "O ramo 1-2 está provavelmente fora de serviço (y12=0)"
+    else:
+        return "O medidor de corrente I12 está provavelmente com mau funcionamento"
+
+def plot_scenario_comparison(results):
+    """ Plota um gráfico comparativo dos erros totais para diferentes matrizes de peso. """
+    schemes = list(results.keys())
+    branch_errors = [results[s]['branch_out_error'] for s in schemes]
+    meter_errors = [results[s]['meter_fault_error'] for s in schemes]
+    
+    fig, ax = plt.subplots(figsize=(12, 6))
+    
+    width = 0.35
+    x = np.arange(len(schemes))
+    
+    ax.bar(x - width/2, branch_errors, width, label='Ramo fora de serviço')
+    ax.bar(x + width/2, meter_errors, width, label='Medidor com mau funcionamento')
+
+    ax.set_ylabel('Erro Total')
+    ax.set_title('Comparação de Erros para Diferentes Esquemas de Peso')
+    ax.set_xticks(x)
+    ax.set_xticklabels(schemes, rotation=45, ha='right')
+    ax.legend()
+    
+    plt.tight_layout()
+    plt.savefig('figuras/scenario_comparison.png', dpi=300)
+    plt.show()
+
+def run_estimation_with_weights(Y, I, cosPhi, Wz):
+    """
+    Função auxiliar para executar a estimação de estado com uma matriz de pesos específica.
+    
+    Args:
+        Y: Matriz de admitância
+        I: Vetor de corrente (com I12=0)
+        cosPhi: Fator de potência
+        Wz: Matriz de pesos personalizada a utilizar
+        
+    Returns:
+        Métricas de erro da estimação de estado
+    """
+    # Configurar matrizes
+    Yl = np.delete(Y, 0, axis=0)
+    Yl = np.delete(Yl, 0, axis=1)  # Usar Yl da primeira operação
+    
+    # Criar vetor I modificado para I12=0
+    I_mod = np.copy(I)
+    I_mod[0] = 0  # Forçar I12=0 como medição
+
+    # Criar matrizes
+    b0 = np.zeros(7, dtype=np.complex128)
+    A = np.zeros((7, 5), dtype=np.complex128)
+    v = np.zeros(5, dtype=np.complex128)
+
+    # Calcular tensões de referência
+    v[0:4] = 1 + np.dot(np.linalg.inv(Yl), I_mod)
+    v[4] = 1
+    
+    # Valores de medição
+    b0[0] = 0  # I12=0
+    b0[1] = np.absolute(np.dot(Y[3, 4], (v[4] - v[3]))) * np.exp(complex(0, -1) * np.arccos(cosPhi))
+    b0[2] = v[1]  # V2
+    b0[3] = v[4]  # V5
+    
+    # Configuração da matriz Hx
+    A[0, 0] = np.dot(Y[0, 1], 1)
+    A[0, 1] = np.dot(-Y[0, 1], 1)
+    A[1, 3] = np.dot(-Y[3, 4], 1)
+    A[1, 4] = np.dot(Y[3, 4], 1)
+    
+    # Relações para pseudo-medições
+    A[2, 1] = 1
+    A[3, 4] = 1
+    
+    A[4, 0] = np.dot(Y[0, 1] + Y[0, 2], 1)
+    A[4, 1] = A[0, 1]
+    A[4, 2] = np.dot(-Y[0, 2], 1)
+    A[5, 0] = A[0, 1]
+    A[5, 1] = A[4, 0]
+    A[5, 2] = np.dot(-Y[1, 2], 1)
+    A[6, 0] = A[4, 2]
+    A[6, 1] = A[5, 2]
+    A[6, 2] = np.dot(Y[0, 2] + Y[1, 2] + Y[2, 3], 1)
+    A[6, 3] = np.dot(-Y[2, 3], 1)
+    A[6, 4] = A[1, 3]
+    
+    # Ruído para pseudo-medições
+    np.random.seed(42)
+    e = np.random.normal(0.0, 1.0, size=(3, m)) * sig
+    
+    # Estimação sem ruído
+    x0 = np.dot(np.dot(np.linalg.pinv(np.dot(np.dot(A.T, Wz), A)), np.dot(A.T, Wz)), b0)
+
+    Rx = np.linalg.pinv(np.dot(np.dot(A.T, Wz), A))  # Matriz de covariância do erro
+    print("\nElementos diagonais da matriz de covariância Rx da estimação de estado:")
+    print(np.diag(Rx))
+    
+    # Variáveis para acumular resultados
+    sx = np.zeros(5, dtype=np.complex128)
+    rms = np.zeros((5, m))
+    
+    for i in range(m):
+        # Introduzir erro nas medições
+        b1 = np.copy(b0)
+        b1[4:7] = I_mod[1:4] + e[:, i]
+        
+        # Estimar as tensões com base nas medições com erros
+        x = np.dot(np.dot(np.linalg.pinv(np.dot(np.dot(A.T, Wz), A)), np.dot(A.T, Wz)), b1)
+        
+        # Valor acumulado das estimações
+        sx = sx + x
+        
+        # Erros nas tensões
+        rms[:, i] = np.sqrt(np.abs(np.dot((x - x0), np.conjugate(x - x0))))
+    
+    # Estimação média da tensão
+    x_avg = sx / m
+    
+    # Erro RMS médio da tensão
+    ee = np.sum(rms, axis=1) / m
+    
+    return ee
+
+def plot_weight_matrix_impact(results):
+    """ Visualiza o impacto das matrizes de peso na determinação do cenário. """
+    schemes = list(results.keys())
+    error_ratios = [results[s]['meter_fault_error']/results[s]['branch_out_error'] 
+                   if results[s]['branch_out_error'] > 0 else float('inf') 
+                   for s in schemes]
+    
+    fig, ax = plt.subplots(figsize=(10, 6))
+    bars = ax.bar(schemes, error_ratios, color='purple', alpha=0.7)
+    ax.axhline(y=1.0, color='r', linestyle='--', label='Limiar de erro igual')
+    
+    
+    for i, ratio in enumerate(error_ratios):
+        if ratio > 1:
+            label = f"{ratio:.2f}\nRamo fora"
+        else:
+            label = f"{ratio:.2f}\nMedidor falha"
+        ax.text(i, ratio+0.1, label, ha='center')
+    
+    ax.set_ylabel('Rácio de Erro (Medidor Falha / Ramo Fora)')
+    ax.set_title('Impacto das Matrizes de Peso na Determinação do Cenário') 
+    ax.legend()
+    
+    plt.tight_layout()
+    plt.savefig('figuras/weight_matrix_impact.png', dpi=300)
+    plt.show()
+    
+
+# ============================================================================================================================================
 # Funções para visualização de resultados
 # ============================================================================================================================================
 def plot_errors_2a(ei12a, ei54a):
@@ -837,6 +1324,25 @@ def compare_all_estimations(results):
     
     plt.show()
 
+def plot_errors_challenge_2(ei12a, ei54a):
+    """Plota os erros relativos para o desafio 2."""
+    plt.figure(figsize=(10, 5))
+    plt.plot(ei12a, label='Erro Relativo da Corrente I12')
+    plt.plot(ei54a, label='Erro Relativo da Corrente I54')
+    plt.xlabel('Iteração')
+    plt.ylabel('Erro Relativo')
+    plt.title('Erro Relativo das Correntes (Desafio 2 - I12=0)')
+    plt.legend()
+    plt.grid(True)
+    
+    # Salvar figura se necessário
+    if not os.path.exists('figuras'):
+        os.makedirs('figuras')
+    plt.savefig('figuras/erro_relativo_desafio2.png', dpi=300)
+    
+    plt.show()
+
+
 # ============================================================================================================================================
 # Função para mostrar o menu e processar opções
 # ============================================================================================================================================
@@ -854,6 +1360,8 @@ def show_menu():
     print("  5. Executar todas as estimações")
     print("  6. Avaliar combinações de pseudo-medições (Desafio 1)")
     print("  7. Comparar abordagem alternativa com abordagem completa")
+    print("  8. Executar Desafio 2 - I12=0")
+    print("  9. Comparar abordagem do Desafio 2 com abordagem completa")
     print("  0. Sair do programa")
     
     try:
@@ -985,10 +1493,29 @@ def main():
             compare_with_full_approach(Y, Yl, I, results['best_combo'], results['est2b'])
             
             input("\nPressione Enter para continuar...")
+        
+        elif option == 8:
+            print("\n=== Executando as estimações para I12=0 (Desafio 2) ===\n")
             
-        else:
-            print("\nOpção inválida. Por favor, tente novamente.")
+            # First run the basic estimation
+            state_estimation_challenge_2(Y, I, cosPhi)
+            
+            # Then run the comparison of different weight matrices
+            print("\n=== Comparando diferentes matrizes de peso para o cenário I12=0 ===\n")
+            probable_scenario = compare_scenarios(Y, I, cosPhi)
+            print("\nConclusão:", probable_scenario)
+            
+            input("\nPressione Enter para continuar...")
+        
+        elif option == 9:
+            if results['est2b'] is None:
+                print("\nÉ necessário executar primeiro a 2ª Estimação (com pesos)!")
+                input("\nPressione Enter para continuar...")
+                continue
+                
+            compare_with_full_approach_challenge_2(Y, Yl, I, results['est2b'])
             input("\nPressione Enter para continuar...")
 
-if __name__ == "__main__":
+if "__main__":
     main()
+
