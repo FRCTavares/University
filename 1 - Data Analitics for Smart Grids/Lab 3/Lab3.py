@@ -69,11 +69,18 @@ def prepare_network(Net_Info, Power_Info, SlackBus):
         Y[Net_Info[i, 1]-1, Net_Info[i, 1]-1] = Y[Net_Info[i, 1]-1, Net_Info[i, 1]-1] + complex(y_aux) * networkFactor
         Y[Net_Info[i, 0]-1, Net_Info[i, 1]-1] = Y[Net_Info[i, 0]-1, Net_Info[i, 1]-1] - complex(y_aux) * networkFactor
         Y[Net_Info[i, 1]-1, Net_Info[i, 0]-1] = Y[Net_Info[i, 1]-1, Net_Info[i, 0]-1] - complex(y_aux) * networkFactor
-                
+
     # Remover o barramento de referência da matriz de admitância            
     Yl = np.delete(Y, np.s_[SlackBus-1], axis=0)
     Yl = np.delete(Yl, np.s_[SlackBus-1], axis=1)
     
+    # Para todos os valores que não pertecem à diagonal de Y o sinal tem que ser trocado
+    for i in range(nBus):
+        for j in range(nBus):
+            if i != j:  # Se não for um elemento da diagonal
+                Y[i, j] = -Y[i, j]  # Inverter o sinal
+
+
     # Matriz de Condutância
     G = Yl.real
     
@@ -106,10 +113,10 @@ def state_estimation_1(Y, Yl, I):
     v0s[4] = 1
     
     # Valores de medição z 
-    b0s[0] = np.dot(np.absolute(np.dot(-Y[0, 1], (v0s[0] - v0s[1]))), np.exp(complex(0, -1) * np.arccos(cosPhi)))
-    b0s[1] = np.dot(np.absolute(np.dot(Y[3, 4], (v0s[4] - v0s[3]))), np.exp(complex(0, -1) * np.arccos(cosPhi)))
+    b0s[0] = np.dot(Y[0, 1], (v0s[0] - v0s[1]))
+    b0s[1] = np.dot(Y[3, 4], (1 - v0s[3]))
     b0s[2] = v0s[1]
-    b0s[3] = v0s[4]
+    b0s[3] = 1
     
     # Matriz Hx
     A0s[0, 0] = np.dot(Y[0, 1], 1)
@@ -121,8 +128,8 @@ def state_estimation_1(Y, Yl, I):
     
     # Variáveis de Estado (x) - Estas variáveis são as tensões estimadas (V1; V2; V4; V5)
     # x = (Hx.T * Hx)^-1 * Hx.T * z
-    x0s = np.dot(np.dot(np.linalg.inv(np.dot(A0s.T, A0s)), A0s.T), b0s)
-    
+    x0s = np.dot(np.dot(np.linalg.inv(np.dot(A0s.conj().T, A0s)), A0s.conj().T), b0s)
+
     # Mostrar resultados
     print("\nResultados da 1ª Estimação de Estado:")
     print("Tensão no barramento 1:", x0s[0])
@@ -154,63 +161,45 @@ def state_estimation_2a(Y, Yl, I):
     v[4] = 1
     
     # Valores de medição z (Neste caso, estamos a calcular as correntes e tensões, mas também poderíamos medi-las)
-    b0[0] = np.absolute(np.dot(Y[0, 1], (v[0] - v[1]))) * np.exp(complex(0, -1) * np.arccos(cosPhi))
-    b0[1] = np.absolute(np.dot(Y[3, 4], (v[4] - v[3]))) * np.exp(complex(0, -1) * np.arccos(cosPhi))
+    b0[0] = np.dot(np.absolute(np.dot(-Y[0,1],(v[0]-v[1]))),np.exp(complex(0,-1)*np.arccos(cosPhi)))
+    b0[1] = np.dot(np.absolute(np.dot(-Y[3,4],(1-v[3]))),np.exp(complex(0,-1)*np.arccos(cosPhi)))
     b0[2] = v[1]
     b0[3] = v[4]
     b0[4:8] = I  # Aqui adicionamos pseudo-medições baseadas na corrente I
-    
+
+    print(b0)
+
     # Matriz Hx 
-    A[0, 0] = np.dot(Y[0, 1], 1)                 #  Y12
-    A[0, 1] = np.dot(-Y[0, 1], 1)                # -Y12
-    A[1, 3] = np.dot(-Y[3, 4], 1)                # -Y45
-    A[1, 4] = np.dot(Y[3, 4], 1)                 #  Y45
-    A[2, 1] = 1                                  #  1 
-    A[3, 4] = 1                                  #  1
+    A[0, 0] = np.dot(Y[0, 1], 1)                      #  Y12
+    A[0, 1] = np.dot(-Y[0, 1], 1)                     # -Y12
+    A[1, 3] = np.dot(-Y[3, 4], 1)                     # -Y45
+    A[1, 4] = np.dot(Y[3, 4], 1)                      #  Y45
+    A[2, 1] = 1                                       #  1 
+    A[3, 4] = 1                                       #  1
     # Estas próximas linhas são cruciais para a estimação de V3:
-    A[4, 0] = np.dot(Y[0, 1] + Y[0, 2], 1)       #  Y12+Y13
-    A[4, 1] = A[0, 1]                            # -Y12
-    A[4, 2] = np.dot(-Y[0, 2], 1)                # -Y13 (relaciona V3 com V1)
-    A[5, 0] = A[0, 1]                            # -Y12
-    A[5, 1] = A[4, 0]                            #  Y12+Y13
-    A[5, 2] = np.dot(-Y[1, 2], 1)                # -Y23 (relaciona V3 com V2)
-    A[6, 0] = A[4, 2]                            # -Y13
-    A[6, 1] = A[5, 2]                            # -Y23
+    A[4, 0] = np.dot(Y[0, 1] + Y[0, 2], 1)            #  Y12+Y13
+    A[4, 1] = A[0, 1]                                 # -Y12
+    A[4, 2] = np.dot(-Y[0, 2], 1)                     # -Y13 (relaciona V3 com V1)
+    A[5, 0] = A[0, 1]                                 # -Y12
+    A[5, 1] = np.dot(Y[0, 1] + Y[1,2], 1)             #  Y12+Y23
+    A[5, 2] = np.dot(-Y[1, 2], 1)                     # -Y23 (relaciona V3 com V2)
+    A[6, 0] = A[4, 2]                                 # -Y13
+    A[6, 1] = A[5, 2]                                 # -Y23
     A[6, 2] = np.dot(Y[0, 2] + Y[1, 2] + Y[2, 3], 1)  #  Y13+Y23+Y34 (conexões diretas para V3)
-    A[6, 3] = np.dot(-Y[2, 3], 1)                # -Y34
-    A[7, 2] = A[6, 3]                            # -Y34 (relaciona V3 com V4)
-    A[7, 3] = np.dot(Y[2, 3] + Y[3, 4], 1)       #  Y34+Y45
-    A[7, 4] = A[1, 3]                            # -Y45
-    
-    # CORREÇÃO 1: Adicionar uma pseudo-medição específica para V3 com valor exato baseado na literatura
-    # Isto melhora significativamente a estimativa de V3
-    pseudo_V3 = 0.8924 - 0.2277j  # Valor baseado na literatura do exercício
-    b0 = np.append(b0, pseudo_V3)
-    
-    # Adicionar pseudo-medições para V4 e V5 com valores esperados teóricos
-    # Isto ajudará a ajustar estes valores mais próximos dos esperados
-    pseudo_V4 = 0.9481 - 0.1172j  # Valor teórico esperado para V4
-    pseudo_V5 = 1.0000 + 0.0000j  # Valor teórico esperado para V5
-    b0 = np.append(b0, [pseudo_V4, pseudo_V5])
-    
-    # Atualizar matriz A para incluir as novas pseudo-medições
-    new_row_V3 = np.zeros((1, 5), dtype=np.complex128)
-    new_row_V3[0, 2] = 1.0  # Esta linha relaciona diretamente a medição com V3
-    
-    new_row_V4 = np.zeros((1, 5), dtype=np.complex128)
-    new_row_V4[0, 3] = 1.0  # Esta linha relaciona diretamente a medição com V4
-    
-    new_row_V5 = np.zeros((1, 5), dtype=np.complex128)
-    new_row_V5[0, 4] = 1.0  # Esta linha relaciona diretamente a medição com V5
-    
-    A = np.vstack((A, new_row_V3, new_row_V4, new_row_V5))
-    
+    A[6, 3] = np.dot(-Y[2, 3], 1)                     # -Y34
+    A[7, 2] = A[6, 3]                                 # -Y34 (relaciona V3 com V4)
+    A[7, 3] = np.dot(Y[2, 3] + Y[3, 4], 1)            #  Y34+Y45
+    A[7, 4] = A[1, 3]                                 # -Y45
+
+
+    print(A)
+    # Estimação sem consideração do ruído 
+    x0 = np.dot(np.dot(np.linalg.inv(np.dot(A.conj().T, A)), A.conj().T), b0)
+    print(x0)
+
     # Ruído a ser adicionado às pseudo-medições
     np.random.seed(42)  # Para reprodutibilidade
     e = np.random.normal(0.0, 1.0, size=(4, m)) * sig
-    
-    # Estimação sem consideração do ruído 
-    x0 = np.dot(np.dot(np.linalg.inv(np.dot(A.T, A)), A.T), b0)
     
     # Criação da Matriz 
     sx = np.zeros(5, dtype=np.complex128)  # CORREÇÃO: Usar complex128 para evitar erros de tipo
@@ -218,16 +207,16 @@ def state_estimation_2a(Y, Yl, I):
     ei12a = np.zeros(m)
     ei54a = np.zeros(m)
     
+    # Para cada vez que estimamos o estado, temos de estimar a corrente: I=(V1-V2)y
+
     for i in range(m):
         # Introduzir erro nas medições (Matriz z)
         b1 = np.zeros(len(b0), dtype=np.complex128)  # IMPORTANTE: Usar o mesmo tipo para b1
         b1[0:4] = b0[0:4]  # Mantém os valores originais para as primeiras 4 medidas
         b1[4:8] = I + e[:, i]
-        if len(b1) > 8:  # Se adicionamos pseudo-medições adicionais
-            b1[8:] = b0[8:]  # Manter os valores de pseudo-medição originais
         
         # Estimar as tensões com base nas medições com erros
-        x = np.dot(np.dot(np.linalg.inv(np.dot(A.T, A)), A.T), b1)
+        x = np.dot(np.dot(np.linalg.inv(np.dot(A.conj().T, A)), A.conj().T), b1)
     
         # Valor acumulado das estimações
         sx = sx + x
@@ -292,10 +281,10 @@ def state_estimation_2b(Y, A, b0, I, e, v):
     
     # Pseudo-medições adicionais para V3, V4, V5 também recebem peso similar
     if len(b0) > 8:
-        np.fill_diagonal(W[8:, 8:], 2)  # Ajustado para 2
+        np.fill_diagonal(W[8:, 8:], 2)    # Ajustado para 2
     
     # Estimação sem considerar o ruído, mas considerando o peso 
-    xw0 = np.dot(np.dot(np.linalg.inv(np.dot(np.dot(A.T, W), A)), np.dot(A.T, W)), b0)
+    xw0 = np.dot(np.dot(np.linalg.inv(np.dot(np.dot(A.conj().T, W), A)), np.dot(A.conj().T, W)), b0)
     
     # Criação da Matriz
     sx = np.zeros(5, dtype=np.complex128)  # CORREÇÃO: Usar complex128 para evitar erros de tipo
@@ -311,7 +300,7 @@ def state_estimation_2b(Y, A, b0, I, e, v):
             b2[8:] = b0[8:]  # Manter os valores de pseudo-medição originais
     
         # Estimar as tensões com base nas medições com erros
-        xw = np.dot(np.dot(np.linalg.inv(np.dot(np.dot(A.T, W), A)), np.dot(A.T, W)), b2)
+        xw = np.dot(np.dot(np.linalg.inv(np.dot(np.dot(A.conj().T, W), A)), np.dot(A.conj().T, W)), b2)
     
         # Valor acumulado das estimações
         sx = sx + xw
@@ -437,8 +426,8 @@ def state_estimation_alternative(Y, Yl, I, pseudo_selection=[0, 1]):
     e = np.random.normal(0.0, 1.0, size=(len(e_indices), m)) * sig
     
     # Estimação sem ruído
-    x0 = np.dot(np.dot(np.linalg.inv(np.dot(np.dot(A_selected.T, W), A_selected)), 
-                np.dot(A_selected.T, W)), b0_selected)
+    x0 = np.dot(np.dot(np.linalg.inv(np.dot(np.dot(A_selected.conj().T, W), A_selected)), 
+                np.dot(A_selected.conj().T, W)), b0_selected)
     
     # Variáveis para acumular resultados
     sx = np.zeros(5, dtype=np.complex128)
@@ -457,8 +446,8 @@ def state_estimation_alternative(Y, Yl, I, pseudo_selection=[0, 1]):
             b1[6:] = b0_selected[6:]
         
         # Estimar tensões com erros e pesos
-        x = np.dot(np.dot(np.linalg.inv(np.dot(np.dot(A_selected.T, W), A_selected)), 
-                   np.dot(A_selected.T, W)), b1)
+        x = np.dot(np.dot(np.linalg.inv(np.dot(np.dot(A_selected.conj().T, W), A_selected)), 
+                   np.dot(A_selected.conj().T, W)), b1)
         
         # Acumular estimações
         sx = sx + x
@@ -728,10 +717,10 @@ def state_estimation_challenge_2(Y, I, cosPhi):
     e = np.random.normal(0.0, 1.0, size=(3, m)) * sig
 
     # Estimação sem ruído
-    x0 = np.dot(np.dot(np.linalg.pinv(np.dot(np.dot(A.T, Wz), A)), np.dot(A.T, Wz)), b0)
+    x0 = np.dot(np.dot(np.linalg.pinv(np.dot(np.dot(A.conj().T, Wz), A)), np.dot(A.conj().T, Wz)), b0)
 
     # Matriz de covariância do erro
-    Rx = np.linalg.pinv(np.dot(np.dot(A.T, Wz), A))
+    Rx = np.linalg.pinv(np.dot(np.dot(A.conj().T, Wz), A))
     print("\nElementos diagonais da matriz de covariância Rx da estimação de estado:")
     print(np.diag(Rx))
 
@@ -748,7 +737,7 @@ def state_estimation_challenge_2(Y, I, cosPhi):
         b1[4:7] = I_2[1:4] + e[:, i]  # Use I_2[1:4] instead of I_2
 
         # Estimar as tensões com base nas medições com erros
-        x = np.dot(np.dot(np.linalg.pinv(np.dot(np.dot(A.T, Wz), A)), np.dot(A.T, Wz)), b1)
+        x = np.dot(np.dot(np.linalg.pinv(np.dot(np.dot(A.conj().T, Wz), A)), np.dot(A.conj().T, Wz)), b1)
 
         # Valor acumulado das estimações
         sx = sx + x
@@ -1072,9 +1061,9 @@ def run_estimation_with_weights(Y, I, cosPhi, Wz):
     e = np.random.normal(0.0, 1.0, size=(3, m)) * sig
     
     # Estimação sem ruído
-    x0 = np.dot(np.dot(np.linalg.pinv(np.dot(np.dot(A.T, Wz), A)), np.dot(A.T, Wz)), b0)
+    x0 = np.dot(np.dot(np.linalg.pinv(np.dot(np.dot(A.conj().T, Wz), A)), np.dot(A.conj().T, Wz)), b0)
 
-    Rx = np.linalg.pinv(np.dot(np.dot(A.T, Wz), A))  # Matriz de covariância do erro
+    Rx = np.linalg.pinv(np.dot(np.dot(A.conj().T, Wz), A))  # Matriz de covariância do erro
     print("\nElementos diagonais da matriz de covariância Rx da estimação de estado:")
     print(np.diag(Rx))
     
@@ -1088,7 +1077,7 @@ def run_estimation_with_weights(Y, I, cosPhi, Wz):
         b1[4:7] = I_mod[1:4] + e[:, i]
         
         # Estimar as tensões com base nas medições com erros
-        x = np.dot(np.dot(np.linalg.pinv(np.dot(np.dot(A.T, Wz), A)), np.dot(A.T, Wz)), b1)
+        x = np.dot(np.dot(np.linalg.pinv(np.dot(np.dot(A.conj().T, Wz), A)), np.dot(A.conj().T, Wz)), b1)
         
         # Valor acumulado das estimações
         sx = sx + x
