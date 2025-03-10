@@ -366,8 +366,8 @@ def state_estimation_alternative(Y, Yl, I, pseudo_selection=[0, 1]):
     A[0, 1] = np.dot(-Y[0, 1], 1)                     # -Y12
     A[1, 3] = np.dot(-Y[3, 4], 1)                     # -Y45
     A[1, 4] = np.dot(Y[3, 4], 1)                      #  Y45
-    A[2, 1] = 1                                       #  1 
-    A[3, 4] = 1                                       #  1
+    A[2, 1] = 1                                       #   1 
+    A[3, 4] = 1                                       #   1
     # Estas próximas linhas são cruciais para a estimação de V3:
     A[4, 0] = np.dot(Y[0, 1] + Y[0, 2], 1)            #  Y12+Y13
     A[4, 1] = A[0, 1]                                 # -Y12
@@ -1138,33 +1138,16 @@ def plot_weight_matrix_comparison(weight_labels, norm_branch_out_values, norm_me
         norm_branch_out_values: Valores da norma para o cenário branch_out
         norm_meter_fault_values: Valores da norma para o cenário meter_fault
     """
-    # Create figure and axis
-    fig, ax = plt.subplots(figsize=(12, 8))  # Increased height for better y-axis scale
-    
+    plt.figure(figsize=(10, 6))
     x = np.arange(len(weight_labels))
     width = 0.35
     
-    # Find maximum value to set appropriate y-axis limit
-    y_max = max(max(norm_branch_out_values), max(norm_meter_fault_values))
-    y_margin = y_max * 0.15  # Add 15% margin for label space
+    fig, ax = plt.subplots(figsize=(12, 7))
     
-    # Create shortened labels for better display
-    shortened_labels = []
-    for label in weight_labels:
-        if "Identidade" in label:
-            shortened_labels.append("Identidade")
-        elif "Maior Peso" in label:
-            shortened_labels.append("Maior\nPeso")
-        elif "Muito Maior" in label:
-            shortened_labels.append("Muito\nMaior")
-        else:
-            shortened_labels.append(label.replace(" ", "\n"))
-    
-    # Create bars
     bar1 = ax.bar(x - width/2, norm_branch_out_values, width, label='Ramo 1-2 Fora de Serviço', alpha=0.7)
     bar2 = ax.bar(x + width/2, norm_meter_fault_values, width, label='Medidor com Defeito', alpha=0.7)
     
-    # Highlight the smaller residue in each configuration
+    # Destaque para o menor resíduo em cada configuração
     for i, (branch, meter) in enumerate(zip(norm_branch_out_values, norm_meter_fault_values)):
         if branch < meter:
             bar1[i].set_color('green')
@@ -1173,27 +1156,23 @@ def plot_weight_matrix_comparison(weight_labels, norm_branch_out_values, norm_me
             bar2[i].set_color('green')
             bar2[i].set_alpha(1.0)
     
-    # Set labels and title
-    ax.set_xlabel('Matriz de Pesos', fontsize=12)
-    ax.set_ylabel('Norma do Resíduo', fontsize=12)
-    ax.set_title('Comparação das Normas de Resíduo para Diferentes Matrizes de Peso', fontsize=14)
+    ax.set_xlabel('Matriz de Pesos')
+    ax.set_ylabel('Norma do Resíduo')
+    ax.set_title('Comparação das Normas de Resíduo para Diferentes Matrizes de Peso')
     ax.set_xticks(x)
-    ax.set_xticklabels(shortened_labels)
-    ax.set_ylim(0, y_max + y_margin)  # Set y limit with margin for labels
-    ax.legend(loc='upper left')
+    ax.set_xticklabels(weight_labels)
+    ax.legend()
     ax.grid(True, linestyle='--', alpha=0.7)
     
-    # Add values above bars with improved positioning
+    # Adicionar valores nas barras
     for i, v in enumerate(zip(norm_branch_out_values, norm_meter_fault_values)):
-        ax.text(i - width/2, v[0] + (y_margin/3), f"{v[0]:.4f}", 
-                ha='center', va='bottom', fontsize=9, rotation=0)
-        ax.text(i + width/2, v[1] + (y_margin/3), f"{v[1]:.4f}", 
-                ha='center', va='bottom', fontsize=9, rotation=0)
+        ax.text(i - width/2, v[0] + 0.01, f"{v[0]:.4f}", ha='center', va='bottom', fontsize=9)
+        ax.text(i + width/2, v[1] + 0.01, f"{v[1]:.4f}", ha='center', va='bottom', fontsize=9)
     
-    # Save the figure
+    # Salvar a figura
     if not os.path.exists('figuras'):
         os.makedirs('figuras')
-    plt.savefig('figuras/comparacao_matrizes_peso_i12_zero.png', dpi=300, bbox_inches='tight')
+    plt.savefig('figuras/comparacao_matrizes_peso_i12_zero.png', dpi=300)
     
     plt.tight_layout()
     plt.show()
@@ -1261,73 +1240,6 @@ def plot_residue_comparison(residue_branch_out, residue_meter_fault):
     plt.tight_layout()
     plt.show()
 
-def compare_with_full_approach_challenge_2(Y, Yl, I, results_2b):
-    """
-    Compara os resultados do Desafio 2 com a abordagem completa (estimação 2b regular).
-    
-    Args:
-        Y: Matriz de admitância completa
-        Yl: Matriz de admitância sem barramento de referência  
-        I: Vetor de corrente
-        results_2b: Resultados da estimação 2b regular
-    """
-    print("\n=== Comparação das Estimações do Desafio 2 com a Abordagem Regular ===\n")
-    
-    # Executa a análise do desafio 2
-    results_challenge2 = analyze_scenario_I12_zero(Y, Yl, I)
-    
-    # Extrai a estimação mais provável
-    most_probable = results_challenge2['most_probable']
-    x_challenge2 = results_challenge2[most_probable]['x']
-    
-    # Extrai os resultados da estimação 2b regular
-    _, x_regular, _, _ = results_2b
-    
-    # Comparar as magnitudes das tensões estimadas
-    bus_numbers = [1, 2, 3, 4, 5]
-    
-    fig, ax = plt.subplots(figsize=(12, 7))
-    width = 0.35
-    
-    ax.bar([x - width/2 for x in bus_numbers], np.abs(x_challenge2), width, 
-           label=f'Estimação para I12=0 ({most_probable.replace("_", " ").title()})', alpha=0.7)
-    ax.bar([x + width/2 for x in bus_numbers], np.abs(x_regular), width, 
-           label='Estimação Regular (2b)', alpha=0.7)
-    
-    # Calcular diferenças percentuais
-    diff_pct = []
-    for i in range(5):
-        mag_challenge2 = np.abs(x_challenge2[i])
-        mag_regular = np.abs(x_regular[i])
-        diff = abs(mag_challenge2 - mag_regular) / mag_regular * 100
-        diff_pct.append(diff)
-    
-    # Adicionar texto com as diferenças
-    for i, bus in enumerate(bus_numbers):
-        plt.annotate(f"{diff_pct[i]:.2f}%", 
-                    xy=(bus, max(np.abs(x_challenge2[i]), np.abs(x_regular[i])) + 0.02),
-                    ha='center')
-    
-    ax.set_xlabel('Número do Barramento')
-    ax.set_ylabel('Magnitude da Tensão')
-    ax.set_title('Comparação das Magnitudes de Tensão entre Desafio 2 e Estimação Regular')
-    ax.set_xticks(bus_numbers)
-    ax.legend()
-    ax.grid(True, linestyle='--', alpha=0.7)
-    
-    # Salvar figura
-    if not os.path.exists('figuras'):
-        os.makedirs('figuras')
-    plt.savefig('figuras/comparacao_desafio2_regular.png', dpi=300)
-    
-    plt.tight_layout()
-    plt.show()
-    
-    # Mostrar diferenças percentuais na saída de texto
-    print("\nDiferença percentual nas magnitudes de tensão:")
-    for i, bus in enumerate(bus_numbers):
-        print(f"Barramento {bus}: {diff_pct[i]:.2f}%")
-
 
 # ============================================================================================================================================
 # Funções para o Desafio 3 - estimação de estado para vários valores de sigma
@@ -1357,8 +1269,8 @@ def state_estimation_sigma_2a(Y, Yl, I, sigmas):
     v[4] = 1
     
     # Valores de medição z 
-    b0[0] = np.absolute(np.dot(Y[0, 1], (v[0] - v[1]))) * np.exp(complex(0, -1) * np.arccos(cosPhi))
-    b0[1] = np.absolute(np.dot(Y[3, 4], (1 - v[3]))) * np.exp(complex(0, -1) * np.arccos(cosPhi))
+    b0[0] = np.dot(np.absolute(np.dot(Y[0, 1], (v[0] - v[1])), np.exp(complex(0, -1) * np.arccos(cosPhi))))
+    b0[1] = np.dot(np.absolute(np.dot(Y[3, 4], (1 - v[3])), np.exp(complex(0, -1) * np.arccos(cosPhi))))
     b0[2] = v[1]
     b0[3] = 1
     b0[4:8] = I  # Todas as pseudo-medições baseadas na corrente I
@@ -1474,106 +1386,102 @@ def state_estimation_sigma_2b(Y, Yl, I, sigmas):
     v[4] = 1
     
     # Valores de medição z 
-    b0[0] = np.absolute(np.dot(Y[0, 1], (v[0] - v[1]))) * np.exp(complex(0, -1) * np.arccos(cosPhi))
-    b0[1] = np.absolute(np.dot(Y[3, 4], (1 - v[3]))) * np.exp(complex(0, -1) * np.arccos(cosPhi))
+    b0[0] = np.dot(np.absolute(np.dot(Y[0, 1], (v[0] - v[1])), np.exp(complex(0, -1) * np.arccos(cosPhi))))
+    b0[1] = np.dot(np.absolute(np.dot(Y[3, 4], (1 - v[3])), np.exp(complex(0, -1) * np.arccos(cosPhi))))
     b0[2] = v[1]
     b0[3] = 1
     b0[4:8] = I  # Todas as pseudo-medições baseadas na corrente I
     
-    
-    # Matriz Hx (configuração igual para todos os valores de sigma)
+    # Matriz Hx 
     A[0, 0] = np.dot(Y[0, 1], 1)                      #  Y12
     A[0, 1] = np.dot(-Y[0, 1], 1)                     # -Y12
     A[1, 3] = np.dot(-Y[3, 4], 1)                     # -Y45
     A[1, 4] = np.dot(Y[3, 4], 1)                      #  Y45
     A[2, 1] = 1                                       #  1
     A[3, 4] = 1                                       #  1
-    # Estas linhas são cruciais para a estimação de V3:
+    # Estas próximas linhas são cruciais para a estimação de V3:
     A[4, 0] = np.dot(Y[0, 1] + Y[0, 2], 1)            #  Y12+Y13
     A[4, 1] = A[0, 1]                                 # -Y12
-    A[4, 2] = np.dot(-Y[0, 2], 1)                     # -Y13
+    A[4, 2] = np.dot(-Y[0, 2], 1)                     # -Y13 (relaciona V3 com V1)
     A[5, 0] = A[0, 1]                                 # -Y12
     A[5, 1] = np.dot(Y[0, 1] + Y[1,2], 1)             #  Y12+Y23
-    A[5, 2] = np.dot(-Y[1, 2], 1)                     # -Y23
+    A[5, 2] = np.dot(-Y[1, 2], 1)                     # -Y23 (relaciona V3 com V2)
     A[6, 0] = A[4, 2]                                 # -Y13
     A[6, 1] = A[5, 2]                                 # -Y23
-    A[6, 2] = np.dot(Y[0, 2] + Y[1, 2] + Y[2, 3], 1)  #  Y13+Y23+Y34
+    A[6, 2] = np.dot(Y[0, 2] + Y[1, 2] + Y[2, 3], 1)  #  Y13+Y23+Y34 (conexões diretas para V3)
     A[6, 3] = np.dot(-Y[2, 3], 1)                     # -Y34
-    A[7, 2] = A[6, 3]                                 # -Y34
+    A[7, 2] = A[6, 3]                                 # -Y34 (relaciona V3 com V4)
     A[7, 3] = np.dot(Y[2, 3] + Y[3, 4], 1)            #  Y34+Y45
     A[7, 4] = A[1, 3]                                 # -Y45
 
-    # Inicialização de seed para reprodutibilidade
+    # Ruído a ser adicionado às pseudo-medições
     np.random.seed(42)
-    
+    e = np.random.normal(0.0, 1.0, size=(4, m)) * sigmas
+
+    # Criação da Matriz
+    sx = np.zeros(5, dtype=np.complex128)  # CORREÇÃO: Usar complex128 para evitar erros de tipo
+    rms = np.zeros((5, m))
+    ei12a = np.zeros(m)
+    ei54a = np.zeros(m)
+
     results = {}
-    
+
     for sig in sigmas:
-        print(f"Processando sigma = {sig}")
-        
-        # Gerar ruído específico para este valor de sigma
-        e = np.random.normal(0.0, 1.0, size=(4, m)) * sig
-        
-        # Copiar vetor de medições original
+        # Criação da Matriz
+        b1 = np.zeros((8), dtype=np.complex128)
         b1 = np.copy(b0)
-        
-        # Matriz dos Pesos (W) para este sigma
+
+        # Matriz dos Pesos (W) 
         W = np.zeros((len(b1), len(b1)))
-        np.fill_diagonal(W[0:4], 0.001**-2)           # Alto peso para medições reais
-        np.fill_diagonal(W[4:8,4:8], sig**-2)         # Peso baseado em sigma para pseudo-medições
-        
-        # Estimação sem ruído com pesos
+
+        # Medições reais (primeiros 4 elementos) recebem peso alto = maior confiança
+        np.fill_diagonal(W[0:4], 0.001**-2)
+        np.fill_diagonal(W[4:8,4:8], sig**-2)   
+
+        # Estimação sem considerar o ruído, mas considerando o peso 
         xw0 = np.dot(np.dot(np.linalg.inv(np.dot(np.dot(A.conjugate().T, W), A)), np.dot(A.conjugate().T, W)), b1)
-        
-        # Matrizes para acumular resultados
+
+        # Criação da Matriz
         sx = np.zeros(5, dtype=np.complex128)
         rms = np.zeros((5, m))
         ei12a = np.zeros(m)
         ei54a = np.zeros(m)
-        
+
         for i in range(m):
-            # Reset para medições originais a cada iteração
+            # Reset to original measurements each iteration
             b2 = np.copy(b1)
-            
-            # Adicionar ruído apenas às pseudo-medições
+
+            # Add noise only to pseudo-measurements
             b2[4:8] = I + e[:, i]
-            
-            # Estimar tensões usando vetor de medições completo
+
+            # Estimate voltages using complete measurement vector
             xw = np.dot(np.dot(np.linalg.inv(np.dot(np.dot(A.conjugate().T, W), A)), np.dot(A.conjugate().T, W)), b2)
-            
+
             # Valor acumulado das estimações
             sx = sx + xw
-            
+
             # Erros nas tensões
             rms[:, i] = np.sqrt(np.abs(np.dot((xw - xw0), np.conjugate(xw - xw0))))
-            
-            # Erros relativos da corrente (correção dos parênteses)
+
+            # Erros relativos da corrente (Para serem utilizados nos gráficos)
             ei12a[i] = np.divide(
                 np.absolute(np.absolute(np.dot(Y[0, 1], (xw[0] - xw[1]))) - np.absolute(np.dot(Y[0, 1], (v[0] - v[1])))),
-                np.absolute(np.dot(Y[0, 1], (v[0] - v[1])))
-            )
+                np.absolute(np.dot(Y[0, 1], (v[0] - v[1]))
+            ))
             ei54a[i] = np.divide(
                 np.absolute(np.absolute(np.dot(Y[3, 4], (1 - xw[3]))) - np.absolute(np.dot(Y[3, 4], (1 - v[3])))),
-                np.absolute(np.dot(Y[3, 4], (1 - v[3])))
-            )
-        
+                np.absolute(np.dot(Y[3, 4], (1 - v[3])
+            )))
+
         # Estimação média da tensão
         xw_avg = sx / m
-        
+
         # Erro RMS médio da tensão
         eew = np.sum(rms, axis=1) / m
-        
-        # Salvar resultados para este sigma
+
+        # Salvar resultados
         results[sig] = (xw0, xw_avg, ei12a, ei54a, eew)
-        
-        print(f"Tensão média estimada (sigma={sig}):")
-        print(f"V1 = {xw_avg[0]}")
-        print(f"V2 = {xw_avg[1]}")
-        print(f"V3 = {xw_avg[2]}")
-        print(f"V4 = {xw_avg[3]}")
-        print(f"V5 = {xw_avg[4]}")
-        print(f"Erro RMS médio: {eew}\n")
-    
+
     return results
 
 def plot_state_estimation_sigma(results):
@@ -1628,65 +1536,6 @@ def plot_state_estimation_sigma(results):
     plt.show()
 
     return
-
-def compare_sigma_estimations(results_a, results_b):
-    """
-    Compara os resultados das estimações com e sem pesos para diferentes valores de sigma.
-    
-    Args:
-        results_a: Resultados da estimação sem pesos (state_estimation_sigma_2a)
-        results_b: Resultados da estimação com pesos (state_estimation_sigma_2b)
-    """
-    print("\n=== Comparação das Estimações para Diferentes Valores de Sigma ===\n")
-    
-    # Verificar se os valores de sigma são os mesmos em ambos os resultados
-    sigmas_a = sorted(list(results_a.keys()))
-    sigmas_b = sorted(list(results_b.keys()))
-    
-    if sigmas_a != sigmas_b:
-        print("AVISO: Os valores de sigma não são exatamente os mesmos nas duas estimações.")
-        # Usar apenas os valores de sigma comuns a ambas as estimações
-        common_sigmas = sorted(list(set(sigmas_a).intersection(set(sigmas_b))))
-    else:
-        common_sigmas = sigmas_a
-    
-    # Extrair os erros médios RMS para cada valor de sigma
-    errors_a = [np.mean(results_a[sig][4]) for sig in common_sigmas]  # Erro médio da estimação sem pesos
-    errors_b = [np.mean(results_b[sig][4]) for sig in common_sigmas]  # Erro médio da estimação com pesos
-    
-    # Plotar os erros médios em função de sigma
-    plt.figure(figsize=(12, 7))
-    plt.plot(common_sigmas, errors_a, 'o-', color='blue', label='Sem Pesos (2a)', linewidth=2, markersize=8)
-    plt.plot(common_sigmas, errors_b, 'o-', color='red', label='Com Pesos (2b)', linewidth=2, markersize=8)
-    
-    plt.xlabel('Valor de Sigma (σ)', fontsize=12)
-    plt.ylabel('Erro RMS Médio', fontsize=12)
-    plt.title('Comparação do Erro RMS Médio para Diferentes Valores de Sigma', fontsize=14)
-    plt.grid(True, linestyle='--', alpha=0.7)
-    plt.legend(fontsize=12)
-    
-    # Calcular diferença percentual para cada valor de sigma
-    diff_pct = [(a - b) / a * 100 if a != 0 else 0 for a, b in zip(errors_a, errors_b)]
-    
-    # Adicionar texto sobre a melhoria percentual média
-    avg_improvement = np.mean([d for d in diff_pct if d > 0])
-    plt.figtext(0.5, 0.01, f"Melhoria média com uso de pesos: {avg_improvement:.2f}%", 
-                ha='center', fontsize=10, bbox={"facecolor":"lightgreen", "alpha":0.2, "pad":5})
-    
-    # Salvar figura
-    if not os.path.exists('figuras'):
-        os.makedirs('figuras')
-    plt.savefig('figuras/comparacao_erros_sigma.png', dpi=300)
-    
-    plt.tight_layout()
-    plt.show()
-    
-    # Mostrar também os valores na saída de texto
-    print("\nValores de Erro RMS Médio para cada sigma:")
-    print("Sigma\t| Sem Pesos (2a)\t| Com Pesos (2b)\t| Melhoria (%)")
-    print("-" * 65)
-    for i, sig in enumerate(common_sigmas):
-        print(f"{sig:.3f}\t| {errors_a[i]:.6f}\t| {errors_b[i]:.6f}\t| {diff_pct[i]:.2f}%")
 
 # ============================================================================================================================================
 # Funções para visualização de resultados
@@ -2116,14 +1965,11 @@ def main():
         elif option == 12:
             # Verificar quais estimações com diferentes sigmas foram executadas
             if results['sigma_2a'] is not None and results['sigma_2b'] is not None:
-                escolha = input("\nQual estimação deseja plotar? (a - sem pesos, b - com pesos, c - ambas sobrepostas): ").lower()
+                escolha = input("\nQual estimação deseja plotar? (a - sem pesos, b - com pesos): ").lower()
                 if escolha == 'a':
                     plot_state_estimation_sigma(results['sigma_2a'])
                 elif escolha == 'b':
                     plot_state_estimation_sigma(results['sigma_2b'])
-                elif escolha == 'c':
-                    # Chamar função de comparação que plota ambos os resultados sobrepostos
-                    compare_sigma_estimations(results['sigma_2a'], results['sigma_2b'])
                 else:
                     print("\nEscolha inválida!")
             elif results['sigma_2a'] is not None:
@@ -2137,16 +1983,6 @@ def main():
             
             input("\nPressione Enter para continuar...")
 
-        elif option == 13:
-            if results['sigma_2a'] is None or results['sigma_2b'] is None:
-                print("\nÉ necessário executar ambas as estimações para diferentes valores de sigma primeiro!")
-                print("Use as opções 10 e 11 antes de usar esta comparação.")
-                input("\nPressione Enter para continuar...")
-                continue
-            
-            # Chamar a nova função de comparação
-            compare_sigma_estimations(results['sigma_2a'], results['sigma_2b'])
-            input("\nPressione Enter para continuar...")
 if "__main__":
     main()
 
