@@ -1,98 +1,77 @@
 #include <Arduino.h>
 #include <math.h>
 
-// Circuit Constants
-#define VCC 3.3                    // Supply voltage (volts)
-#define MY_ADC_RESOLUTION 4095.0   // 12-bit ADC max value (0 to 4095)
-#define FIXED_RESISTOR 10000.0     // 10kΩ resistor in voltage divider
+// Define constants for voltage, ADC, and resistor values
+#define VCC 3.3                    // Supply voltage in volts
+#define MY_ADC_RESOLUTION 4095.0   // 12-bit ADC maximum value (0 to 4095)
+#define FIXED_RESISTOR 10000.0     // 10k ohm resistor in the voltage divider
+const float R10 = 225000.0;          // Nominal LDR resistance at a reference lux
 
-// Reference Resistance (LDR at 10 lux)
-const float R10 = 225000.0;
+// Calibration parameter for the LDR conversion equation
+// The relationship is: log10(R_LDR) = m * log10(Lux) + b
+// We are calibrating m (the slope); b is then computed from R10.
+float LDR_M = -1;    // Initial guess for m; adjust this for calibration
+float LDR_B = log10(R10) - LDR_M; // Derived intercept from nominal value
 
-// LDR Equation Parameters (log-log relationship)
-const float LDR_M = -1.2;
-float LDR_B = log10(R10) - LDR_M;
-
-// Calibration Constants
-const int NUM_PONTOS = 11;          // Number of calibration points
-const int NUM_READINGS = 20;        // Increased number of ADC readings to improve accuracy
-const int STABILIZATION_TIME = 3000; // Time (ms) to allow LED brightness to stabilize
-
-// Arrays to store measured values
-float dutyCycles[NUM_PONTOS];
-float luxValues[NUM_PONTOS];
-
-// Pin Definitions
-#define LED_PIN 15    // PWM pin for LED control
-#define SENSOR_PIN A0 // Analog pin for LDR reading
+// PWM and LED configuration
+const int LED_PIN = 15;    // LED pin driven by PWM
+const int DAC_RANGE = 4096; // PWM range (0 to 4095)
+const int NUM_STEPS = 11;  // We want 11 steps (0, 1, 2, ..., 10)
 
 void setup() {
   Serial.begin(115200);
-  
-  // Configure 12-bit ADC resolution (if supported)
-  #if defined(analogReadResolution)
   analogReadResolution(12);
-  #endif
-
-  // Set a high PWM frequency (e.g., 60kHz to avoid flickering)
-  analogWriteFreq(60000);      // Set PWM frequency to 60kHz
-  analogWriteRange(4096);      // Use full 12-bit range
-
-  Serial.println("Duty Cycle vs. Lux Measurements:");
-  delay(2000); // Allow system stabilization
-
-  // Calibration loop: Sweep through different duty cycles and measure Lux
-  for (int i = 0; i < NUM_PONTOS; i++) {
-    // Compute duty cycle (linearly spaced between 1 and 4096)
-    float u = 1 + (4095.0 * i) / (NUM_PONTOS - 1);
-    dutyCycles[i] = u;
-
-    // Set PWM output
-    analogWrite(LED_PIN, (int)u);
-
-    // Ensure steady-state by waiting before measuring
-    delay(STABILIZATION_TIME); 
-
-    // Take multiple ADC readings and average them
-    float totalVoltage = 0;
-    for (int j = 0; j < NUM_READINGS; j++) {
-      int adcValue = analogRead(SENSOR_PIN);
-      float voltage = (adcValue / MY_ADC_RESOLUTION) * VCC;
-      totalVoltage += voltage;
-      delay(20);  // Short delay between readings to avoid immediate noise
-    }
-    float avgVoltage = totalVoltage / NUM_READINGS;
-
-    // Avoid division by zero
-    if (avgVoltage <= 0) avgVoltage = 0.0001;
-
-    // Compute LDR resistance
-    float rLDR = FIXED_RESISTOR * (VCC / avgVoltage - 1);
-
-    // Compute Lux using log-log equation
-    float lux = pow(10, (log10(rLDR) - LDR_B) / LDR_M);
-
-    // Store Lux value
-    luxValues[i] = lux;
-  }
-
-  // Print Duty Cycle values
-  Serial.println("Duty Cycle:");
-  for (int i = 0; i < NUM_PONTOS; i++) {
-    Serial.print(dutyCycles[i], 2);
-    Serial.println();
-  }
-  Serial.println(); // New line
-
-  // Print Lux values
-  Serial.println("Lux:");
-  for (int i = 0; i < NUM_PONTOS; i++) {
-    Serial.print(luxValues[i], 2);
-    Serial.println();
-  }
-  Serial.println(); // New line
+  analogWriteResolution(12);
 }
 
 void loop() {
-  // Calibration runs only once in setup()
+  int pwmValues[NUM_STEPS];
+  float luxValues[NUM_STEPS];
+  
+  // Loop over 11 steps to sweep the PWM duty cycle from 0 to maximum
+  for (int step = 0; step < NUM_STEPS; step++) {
+    // Calculate the PWM value for this step
+    int pwmValue = (DAC_RANGE - 1) * step / (NUM_STEPS - 1);
+    pwmValues[step] = pwmValue;
+    
+    // Write PWM value to the LED
+    analogWrite(LED_PIN, pwmValue);
+    delay(500);  // Allow time for the LED and RC filter to settle
+    
+    // Read the ADC value from the voltage divider (LDR and fixed resistor)
+    int adcValue = analogRead(A0);
+    
+    // Convert ADC reading to voltage
+    float voltage = (adcValue / MY_ADC_RESOLUTION) * VCC;
+    if (voltage <= 0) {
+      Serial.println("Error: Voltage reading is 0.");
+      luxValues[step] = 0;
+      continue;
+    }
+    
+    // Calculate the LDR resistance using the voltage divider formula:
+    // V_out = VCC * (R_fixed / (R_fixed + R_LDR))
+    // => R_LDR = R_fixed * (VCC/V_out - 1)
+    float rLDR = FIXED_RESISTOR * (VCC / voltage - 1);
+    
+    // Compute lux using the log-log conversion formula:
+    // log10(Lux) = (log10(R_LDR) - b) / m  ==>  Lux = 10^((log10(R_LDR) - b) / m)
+    float lux = pow(10, (log10(rLDR) - LDR_B) / LDR_M);
+    luxValues[step] = lux;
+  }
+  
+  // Print all PWM (duty cycle) values first, one per line
+  Serial.println("PWM Duty Cycle Values:");
+  for (int i = 0; i < NUM_STEPS; i++) {
+    Serial.println(pwmValues[i]);
+  }
+  
+  // Then print all corresponding Lux values, one per line
+  Serial.println("Lux Values:");
+  for (int i = 0; i < NUM_STEPS; i++) {
+    Serial.println(luxValues[i], 2);
+  }
+  
+  Serial.println("Calibration cycle complete. Restarting in 5 seconds...");
+  delay(5000);
 }

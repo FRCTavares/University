@@ -1,0 +1,9 @@
+Dúvidas SCDTR:
+
+Lab 2
+- O meu LDR para o m encontrado quando a caixa está fechada e o led está desligado, tem um lux de à volta de 1.7 porquê?
+- A equação L = G*u + d serve para o quê? A meu entender serve para que seja possível que a partir do Lux definido no controlador, seja calculada qual o u da lâmpada necessário para o alcançar. É isso? e a equação do m e do b serve para poder ler o lux real observado no LDR? e com isso calcula-se o erro e aplica-se um u à lâmpada?
+
+Lab 3
+- O que é o wind up não compreendi bem. E como é suposto retirar a parte derivativa do PID? O controlador que já temos está bem?
+- Para armazenar os dados, estes vão ser armazenados dentro do pico?

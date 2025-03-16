@@ -11,24 +11,20 @@ const float R10 = 225000.0;
 // Derived from the datasheet for PGM5659D:
 // log10(R_LDR) = m * log10(Lux) + b, where m = -γ and b = log10(A)
 // For a nominal R10 of ~225kΩ and γ ≈ 0.8, we get:
-const float LDR_M = -1.2;             
+const float LDR_M = -1;             
 float LDR_B = log10(R10) - LDR_M;
 
-// Gain Calibration Constants (if needed)
-const float G = 1; //0.2045; // Fator de ganho (ajustar experimentalmente)
-const float d = 0; // 0.01; // Offset (ajustar experimentalmente)
 
 void setup() {
   Serial.begin(115200);
-  // Set analog resolution to 12 bits (if supported)
-  #if defined(analogReadResolution)
   analogReadResolution(12);
-  #endif
-
+  analogWriteResolution(12);
   Serial.println("LUX Measurement Initialized");
 }
 
 void loop() {
+  Serial.print(LDR_B);
+
   // Read the ADC value from the analog pin connected to the voltage divider
   int adcValue = analogRead(A0);
 
@@ -51,8 +47,6 @@ void loop() {
   // log10(R_LDR) = m * log10(Lux) + b  ->  log10(Lux) = (log10(rLDR) - b) / m
   float lux = pow(10, (log10(rLDR) - LDR_B) / LDR_M);
 
-  // Apply Gain Calibration (if needed)
-  //float correctedLux = d + G * ;
 
   // Print the values to the Serial Monitor
   Serial.print("ADC Value: ");
