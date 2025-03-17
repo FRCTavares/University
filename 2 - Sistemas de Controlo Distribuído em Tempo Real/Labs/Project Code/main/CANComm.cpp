@@ -1,0 +1,323 @@
+#include "CANComm.h"
+#include <SPI.h>
+#include "Globals.h"
+
+// Use the same pin configuration as the working example
+const int CAN_CS_PIN = 17;
+const int CAN_MOSI_PIN = 19;
+const int CAN_MISO_PIN = 16;
+const int CAN_SCK_PIN = 18;
+
+// Create the MCP2515 instance with matching pin configuration
+MCP2515 can0(spi0, CAN_CS_PIN, CAN_MOSI_PIN, CAN_MISO_PIN, CAN_SCK_PIN, 10000000);
+
+// Static variable to hold the registered callback
+static CANMessageCallback messageCallback = nullptr;
+
+// Statistics tracking
+static uint32_t msgSent = 0;
+static uint32_t msgReceived = 0;
+static uint32_t msgErrors = 0;
+static unsigned long lastLatencyMeasure = 0;
+static unsigned long totalLatency = 0;
+static uint32_t latencySamples = 0;
+
+void initCANComm() {
+  // Initialize SPI
+  SPI.begin();
+  
+  // Simple reset - like the working example
+  can0.reset();
+  
+  // Use 1000KBPS like the example (not 125KBPS)
+  can0.setBitrate(CAN_1000KBPS);
+  
+  // Set normal mode
+  can0.setNormalMode();
+  
+  Serial.println("CANComm: CAN initialized in normal mode");
+  
+  // Generate a unique node ID from the last 6 bits of the board's unique ID
+  pico_unique_board_id_t board_id;
+  pico_get_unique_board_id(&board_id);
+  nodeID = board_id.id[7] & 0x3F;  // Use last 6 bits for node ID (1-63)
+  if (nodeID == 0) nodeID = 1;      // Avoid broadcast address
+  
+  Serial.print("CANComm: Node ID assigned: ");
+  Serial.println(nodeID);
+}
+
+// Build a CAN message ID from components
+uint32_t buildCANId(uint8_t msgType, uint8_t destAddr, uint8_t priority) {
+  return ((uint32_t)msgType << 8) | ((uint32_t)destAddr << 2) | priority;
+}
+
+// Extract components from a CAN ID
+void parseCANId(uint32_t canId, uint8_t& msgType, uint8_t& destAddr, uint8_t& priority) {
+  msgType = (canId >> 8) & 0x07;
+  destAddr = (canId >> 2) & 0x3F;
+  priority = canId & 0x03;
+}
+
+// Convert float to bytes for CAN transmission (little-endian)
+void floatToBytes(float value, uint8_t* bytes) {
+  memcpy(bytes, &value, 4);
+}
+
+// Convert bytes back to float (little-endian)
+float bytesToFloat(const uint8_t* bytes) {
+  float value;
+  memcpy(&value, bytes, 4);
+  return value;
+}
+
+// Send a sensor reading to another node or broadcast
+bool sendSensorReading(uint8_t destAddr, uint8_t sensorType, float value) {
+  can_frame frame;
+  
+  // Build the CAN ID
+  frame.can_id = buildCANId(CAN_TYPE_SENSOR, destAddr, CAN_PRIO_NORMAL);
+  
+  // Set data length
+  frame.can_dlc = 8;
+  
+  // Payload: source node, sensor type, value as float, timestamp
+  frame.data[0] = nodeID;                   // Source node
+  frame.data[1] = sensorType;               // Sensor type (0 = lux, 1 = duty, etc)
+  
+  // Float value (4 bytes)
+  floatToBytes(value, &frame.data[2]);
+  
+  // Timestamp - 16-bit milliseconds counter
+  uint16_t timestamp = (uint16_t)(millis() & 0xFFFF);
+  frame.data[6] = timestamp & 0xFF;
+  frame.data[7] = (timestamp >> 8) & 0xFF;
+  
+  // Send the message
+  MCP2515::ERROR result = sendCANMessage(frame);
+  
+  if (result == MCP2515::ERROR_OK) {
+    msgSent++;
+    return true;
+  } else {
+    msgErrors++;
+    return false;
+  }
+}
+
+// Send a control command to another node
+bool sendControlCommand(uint8_t destAddr, uint8_t controlType, float value) {
+  can_frame frame;
+  
+  // Build the CAN ID
+  frame.can_id = buildCANId(CAN_TYPE_CONTROL, destAddr, CAN_PRIO_HIGH);
+  
+  // Set data length
+  frame.can_dlc = 8;
+  
+  // Payload: source node, control type, value as float, sequence number
+  frame.data[0] = nodeID;                   // Source node
+  frame.data[1] = controlType;              // Control type
+  
+  // Float value (4 bytes)
+  floatToBytes(value, &frame.data[2]);
+  
+  // Sequence number (for detecting lost messages)
+  static uint16_t seqNum = 0;
+  frame.data[6] = seqNum & 0xFF;
+  frame.data[7] = (seqNum >> 8) & 0xFF;
+  seqNum++;
+  
+  // Send the message
+  MCP2515::ERROR result = sendCANMessage(frame);
+  
+  if (result == MCP2515::ERROR_OK) {
+    msgSent++;
+    return true;
+  } else {
+    msgErrors++;
+    return false;
+  }
+}
+
+// Send a heartbeat message to indicate node is alive
+bool sendHeartbeat() {
+  can_frame frame;
+  
+  // Build the CAN ID
+  frame.can_id = buildCANId(CAN_TYPE_HEARTBEAT, CAN_ADDR_BROADCAST, CAN_PRIO_LOW);
+  
+  // Set data length
+  frame.can_dlc = 6;
+  
+  // Payload: source node, status flags, uptime
+  frame.data[0] = nodeID;
+  
+  // Status flags: bit0=feedback, bit1=occupancy
+  uint8_t statusFlags = 0;
+  if (feedbackControl) statusFlags |= 0x01;
+  if (occupancy) statusFlags |= 0x02;
+  frame.data[1] = statusFlags;
+  
+  // Node uptime in seconds
+  uint32_t uptime = getElapsedTime();
+  frame.data[2] = uptime & 0xFF;
+  frame.data[3] = (uptime >> 8) & 0xFF;
+  frame.data[4] = (uptime >> 16) & 0xFF;
+  frame.data[5] = (uptime >> 24) & 0xFF;
+  
+  // Send the message
+  MCP2515::ERROR result = sendCANMessage(frame);
+  
+  if (result == MCP2515::ERROR_OK) {
+    msgSent++;
+    return true;
+  } else {
+    msgErrors++;
+    return false;
+  }
+}
+
+void processIncomingMessage(const can_frame &msg) {
+  // Parse the CAN ID
+  uint8_t msgType, destAddr, priority;
+  parseCANId(msg.can_id, msgType, destAddr, priority);
+  
+  // Check if this message is for us (or broadcast)
+  if (destAddr != nodeID && destAddr != CAN_ADDR_BROADCAST) {
+    return; // Not for us
+  }
+  
+  // Message is for us, process based on type
+  uint8_t sourceNode = msg.data[0];
+  
+  switch (msgType) {
+    case CAN_TYPE_SENSOR: {
+      uint8_t sensorType = msg.data[1];
+      float value = bytesToFloat(&msg.data[2]);
+      uint16_t timestamp = ((uint16_t)msg.data[7] << 8) | msg.data[6];
+      
+      if (canMonitorEnabled) {
+        Serial.print("CAN: Node ");
+        Serial.print(sourceNode);
+        Serial.print(" sensor ");
+        Serial.print(sensorType);
+        Serial.print(" = ");
+        Serial.print(value);
+        Serial.print(" (ts: ");
+        Serial.print(timestamp);
+        Serial.println(")");
+      }
+      
+      // Add specific handling for sensor data
+      if (sensorType == 0) { // Lux
+        // Could store neighbor lux readings
+      }
+      break;
+    }
+    
+    case CAN_TYPE_CONTROL: {
+      uint8_t controlType = msg.data[1];
+      float value = bytesToFloat(&msg.data[2]);
+      uint16_t sequence = ((uint16_t)msg.data[7] << 8) | msg.data[6];
+      
+      if (canMonitorEnabled) {
+        Serial.print("CAN: Node ");
+        Serial.print(sourceNode);
+        Serial.print(" control ");
+        Serial.print(controlType);
+        Serial.print(" = ");
+        Serial.print(value);
+        Serial.print(" (seq: ");
+        Serial.print(sequence);
+        Serial.println(")");
+      }
+      
+      // Handle control commands
+      if (controlType == 0) { // Setpoint
+        setpointLux = value;
+        // Send acknowledgment?
+      }
+      break;
+    }
+    
+    case CAN_TYPE_HEARTBEAT: {
+      uint8_t statusFlags = msg.data[1];
+      uint32_t uptime = ((uint32_t)msg.data[5] << 24) | 
+                        ((uint32_t)msg.data[4] << 16) |
+                        ((uint32_t)msg.data[3] << 8) |
+                        msg.data[2];
+      
+      if (canMonitorEnabled) {
+        Serial.print("CAN: Node ");
+        Serial.print(sourceNode);
+        Serial.print(" heartbeat, uptime ");
+        Serial.print(uptime);
+        Serial.print("s, flags: ");
+        Serial.println(statusFlags, BIN);
+      }
+      break;
+    }
+    
+    // Add other message types as needed
+  }
+}
+
+void canCommLoop() {
+  // Check for received messages
+  can_frame msg;
+  if (can0.readMessage(&msg) == MCP2515::ERROR_OK) {
+    // Record statistics
+    msgReceived++;
+    
+    // Process the message
+    processIncomingMessage(msg);
+    
+    // If a callback has been registered, call it
+    if (messageCallback) {
+      messageCallback(msg);
+    }
+  }
+}
+
+MCP2515::ERROR sendCANMessage(const can_frame &frame) {
+  // Record send time for latency measurements
+  lastLatencyMeasure = micros();
+  
+  // Send the message
+  MCP2515::ERROR err = can0.sendMessage(&frame);
+  
+  // Update latency if successful (assumes hardware has sent the message)
+  if (err == MCP2515::ERROR_OK) {
+    unsigned long latency = micros() - lastLatencyMeasure;
+    totalLatency += latency;
+    latencySamples++;
+  }
+  
+  return err;
+}
+
+MCP2515::ERROR readCANMessage(struct can_frame *frame) {
+  return can0.readMessage(frame);
+}
+
+void setCANMessageCallback(CANMessageCallback callback) {
+  messageCallback = callback;
+}
+
+// Get communication statistics
+void getCANStats(uint32_t &sent, uint32_t &received, uint32_t &errors, float &avgLatency) {
+  sent = msgSent;
+  received = msgReceived;
+  errors = msgErrors;
+  avgLatency = latencySamples > 0 ? (float)totalLatency / latencySamples : 0.0f;
+}
+
+// Reset communication statistics
+void resetCANStats() {
+  msgSent = 0;
+  msgReceived = 0;
+  msgErrors = 0;
+  totalLatency = 0;
+  latencySamples = 0;
+}

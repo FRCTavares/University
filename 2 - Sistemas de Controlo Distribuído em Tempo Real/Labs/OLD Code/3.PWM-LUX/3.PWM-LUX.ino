@@ -10,7 +10,7 @@ const float R10 = 225000.0;          // Nominal LDR resistance at a reference lu
 // Calibration parameter for the LDR conversion equation
 // The relationship is: log10(R_LDR) = m * log10(Lux) + b
 // We are calibrating m (the slope); b is then computed from R10.
-float LDR_M = -1;    // Initial guess for m; adjust this for calibration
+float LDR_M = -0.9;    // Initial guess for m; adjust this for calibration
 float LDR_B = log10(R10) - LDR_M; // Derived intercept from nominal value
 
 // PWM and LED configuration
