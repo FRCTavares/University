@@ -940,6 +940,393 @@ def processo_estacionario(II, Y, Yl, I, nBus, time, timeForecast, show_plots=Fal
 
 
 # ============================================================================================================================================
+# Funções para Prais-Winsten (PW) - Desafio 2
+# ============================================================================================================================================
+def PW(rss_1, beta, i12, i1w, nBus, I, Y, Yl, time, timeForecast, show_plots=False):
+    """
+    Implementação do método Prais-Winsten para corrigir a autocorrelação dos resíduos.
+    A diferença principal em relação ao Cochrane-Orcutt é que o Prais-Winsten preserva 
+    a primeira observação, transformando-a de forma especial.
+    """
+    # Executar OLS independentemente para garantir dados limpos
+    X = np.ones((time, 2))
+    X[:, 1] = i1w[:time]
+    y = i12[:time]
+    
+    # Ajuste OLS inicial
+    X_t = X.T
+    beta_ols = np.linalg.inv(X_t @ X) @ (X_t @ y)
+    y_hat_ols = X @ beta_ols
+    residuals_ols = y - y_hat_ols
+    
+    # Calcular estatística DW e estimar rho inicial
+    dw_num = np.sum((residuals_ols[1:] - residuals_ols[:-1])**2)
+    dw_den = np.sum(residuals_ols**2)
+    dw = dw_num / dw_den
+    rho = 1 - dw/2
+    
+    print("\nO valor de Durbin-Watson (DW) é:", dw)
+    print("O valor inicial de rho é:", rho)
+    
+    # Garantir que rho esteja no intervalo válido
+    rho = max(min(rho, 0.99), -0.99)
+    
+    # Inicializar parâmetros para iteração
+    beta_pw = beta_ols.copy()
+    max_iter = 3
+    
+    # Armazenar histórico de parâmetros
+    betas_history = [beta_pw]
+    rho_history = [rho]
+    
+    # Iterações do método Prais-Winsten
+    for k in range(max_iter):
+        print(f"\nIteração {k+1}:")
+        print(f"rho = {rho:.4f}")
+        
+        # Criar matrizes para dados transformados
+        X_pw = np.zeros_like(X)
+        y_pw = np.zeros_like(y)
+        
+        # Transformação para t=1 (primeira observação - específico de Prais-Winsten)
+        factor = np.sqrt(1 - rho**2)
+        X_pw[0, :] = factor * X[0, :]
+        y_pw[0] = factor * y[0]
+        
+        # Transformação para t=2,...,T (igual a Cochrane-Orcutt)
+        for t in range(1, time):
+            X_pw[t, :] = X[t, :] - rho * X[t-1, :]
+            y_pw[t] = y[t] - rho * y[t-1]
+        
+        # Regressão com dados transformados
+        X_pw_t = X_pw.T
+        beta_pw = np.linalg.inv(X_pw_t @ X_pw) @ (X_pw_t @ y_pw)
+        
+        print(f"β₀ = {beta_pw[0]:.4f}, β₁ = {beta_pw[1]:.4f}")
+        
+        # Calcular valores ajustados para os dados originais
+        y_hat_pw = X @ beta_pw
+        
+        # Calcular novos resíduos
+        residuals_pw = y - y_hat_pw
+        
+        # Reestimar rho para próxima iteração usando os novos resíduos
+        r_lagged = residuals_pw[:-1]
+        r_current = residuals_pw[1:]
+        
+        # Calcular novo rho de maneira mais estável
+        if np.sum(r_lagged**2) > 0:
+            rho_new = np.sum(r_lagged * r_current) / np.sum(r_lagged**2)
+            # Garantir que rho está no intervalo válido
+            rho_new = max(min(rho_new, 0.99), -0.99)
+        else:
+            rho_new = 0
+            
+        # Verificar convergência
+        if abs(rho_new - rho) < 0.01:
+            print(f"Convergência atingida na iteração {k+1}")
+            rho = rho_new
+            break
+            
+        rho = rho_new
+        betas_history.append(beta_pw)
+        rho_history.append(rho)
+    
+    # Valores ajustados finais
+    y_hat_pw = X @ beta_pw
+    residuals_pw = y - y_hat_pw
+    
+    # Mostrar resultados da regressão
+    print("\nResultados finais:")
+    print("O valor dos Betas, usando Prais-Winsten, são:")
+    print("β₀ = {:.4f}, β₁ = {:.4f}".format(beta_pw[0], beta_pw[1]))
+    
+    print("\nComparação dos Betas:")
+    print("OLS: β₀ = {:.4f}, β₁ = {:.4f}".format(beta_ols[0], beta_ols[1]))
+    print("PW:  β₀ = {:.4f}, β₁ = {:.4f}".format(beta_pw[0], beta_pw[1]))
+    
+    # Obter a previsão de OLS e CO para comparar (usando as funções existentes)
+    I12f1 = beta_ols[0] + beta_ols[1] * i1w[time:time+timeForecast]  # OLS
+    
+    # Obter resultados do Cochrane-Orcutt (sem modificar os dados da função atual)
+    # Chamar CO para obter os coeficientes e previsões
+    _, I12f2 = CO(y_hat_ols, beta_ols, i12, i1w, nBus, I, Y, Yl, time, timeForecast, show_plots=False)
+    
+    # Vamos também calcular resíduos CO para comparação
+    # Primeiro precisamos calcular os betas CO
+    res_1 = i12[0:time] - y_hat_ols
+    for k in range(3):
+        r2 = res_1[0:time-1]
+        r1 = res_1[1:time]
+        ro_co = np.dot(np.dot((np.dot(np.transpose(r2),r2))**(-1),np.transpose(r2)),r1)
+        i1w_s = i1w[1:time] - np.dot(ro_co, i1w[0:time-1])
+        i12_s = i12[1:time] - np.dot(ro_co, i12[0:time-1])
+        B = np.ones((time-1,2))
+        B[:,1] = i1w_s
+        b_co = np.dot(np.dot(np.linalg.inv(np.dot(np.transpose(B),B)),np.transpose(B)),np.transpose(i12_s))
+        b_co[0] = np.divide(b_co[0], 1-ro_co)
+        y_hat_co = b_co[0] + np.dot(b_co[1], i1w[0:time])
+        res_1 = i12[0:time] - y_hat_co
+    
+    residuals_co = i12[0:time] - y_hat_co
+    
+    # Previsão usando Prais-Winsten
+    I12f3 = beta_pw[0] + beta_pw[1] * i1w[time:time+timeForecast]  # PW
+    
+    print("\nPrevisão da Corrente I12 usando OLS:", I12f1)
+    print("Previsão da Corrente I12 usando PW:", I12f3)
+    
+    # Preparar dados para gráficos
+    x = range(time)
+    xxx = range(time, time+timeForecast)
+    
+    # Valores reais e ajustados
+    yy1 = i12[0:time]                      # valores reais de i12 no treino
+    yy3 = y_hat_ols                        # valores ajustados OLS
+    yy4 = y_hat_pw                         # valores ajustados PW
+    yy5 = residuals_ols                    # resíduos OLS
+    yy6 = residuals_pw                     # resíduos PW
+    yy7 = i12[time:time+timeForecast]      # valores reais no teste
+    
+    # Gráfico 1: Previsões no período de teste
+    plt.figure(figsize=(10, 6))
+    plt.plot(xxx, yy7, 'ro-', label='I12 medido', linewidth=2)
+    plt.plot(xxx, I12f1, 'k--', marker='o', label='OLS')
+    plt.plot(xxx, I12f2, 'g-.', marker='^', label='CO')
+    plt.plot(xxx, I12f3, 'b-', marker='s', label='PW')
+    plt.legend()
+    plt.xlabel('Instante de tempo [h]')
+    plt.ylabel('Corrente I12')
+    plt.title('Comparação das previsões: OLS, CO e PW')
+    plt.grid(True)
+    plt.savefig('plots/PW1.png')
+    if show_plots:
+        plt.show()
+    else:
+        plt.close()
+        
+    # Gráfico 2: Valores ajustados no período de treino
+    plt.figure(figsize=(10, 6))
+    plt.plot(x, yy1, 'ro', label='I12 medido')
+    plt.plot(x, yy3, 'k--', label='OLS ajustado')
+    plt.plot(x, y_hat_co, 'g-.', label='CO ajustado')
+    plt.plot(x, yy4, 'b-', label='PW ajustado')
+    plt.legend()
+    plt.xlabel("Instante de tempo [h]")
+    plt.ylabel("Corrente I12")
+    plt.title('Valores ajustados: OLS, CO e PW')
+    plt.grid(True)
+    plt.savefig('plots/PW2.png')
+    if show_plots:
+        plt.show()
+    else:
+        plt.close()
+    
+    # Gráfico 3: Resíduos de todos os modelos
+    plt.figure(figsize=(10, 6))
+    plt.scatter(x, residuals_ols, color='black', marker='o', label='Resíduos OLS', alpha=0.7)
+    plt.scatter(x, residuals_co, color='green', marker='^', label='Resíduos CO', alpha=0.7)
+    plt.scatter(x, residuals_pw, color='blue', marker='s', label='Resíduos PW', alpha=0.7)
+    plt.axhline(y=0, color='r', linestyle='-', alpha=0.3)
+    plt.legend()
+    plt.xlabel("Instante de tempo [h]")
+    plt.ylabel("Resíduos")
+    plt.title('Comparação dos resíduos: OLS, CO e PW')
+    plt.grid(True)
+    plt.savefig('plots/PW3.png')
+    if show_plots:
+        plt.show()
+    else:
+        plt.close()
+    
+    # NOVO GRÁFICO: Função de Autocorrelação (ACF) dos resíduos para cada modelo
+    max_lag = 10
+    acf_vals_ols = []
+    acf_vals_co = []
+    acf_vals_pw = []
+    
+    # Calcular ACF para cada modelo
+    for lag in range(max_lag+1):
+        if lag == 0:
+            acf_vals_ols.append(1.0)
+            acf_vals_co.append(1.0)
+            acf_vals_pw.append(1.0)
+        else:
+            # ACF para OLS
+            if lag < len(residuals_ols):
+                r_ols = np.corrcoef(residuals_ols[lag:], residuals_ols[:-lag])[0,1]
+                acf_vals_ols.append(r_ols)
+            
+            # ACF para CO
+            if lag < len(residuals_co):
+                r_co = np.corrcoef(residuals_co[lag:], residuals_co[:-lag])[0,1]
+                acf_vals_co.append(r_co)
+            
+            # ACF para PW
+            if lag < len(residuals_pw):
+                r_pw = np.corrcoef(residuals_pw[lag:], residuals_pw[:-lag])[0,1]
+                acf_vals_pw.append(r_pw)
+    
+    # Plotar ACF
+    plt.figure(figsize=(12, 7))
+    plt.subplot(1, 3, 1)
+    plt.stem(range(len(acf_vals_ols)), acf_vals_ols, linefmt='k-', markerfmt='ko')
+    plt.axhline(y=0, color='r', linestyle='--', alpha=0.5)
+    plt.axhline(y=1.96/np.sqrt(time), color='b', linestyle='--', alpha=0.5)
+    plt.axhline(y=-1.96/np.sqrt(time), color='b', linestyle='--', alpha=0.5)
+    plt.title("ACF - Resíduos OLS")
+    plt.xlabel("Lag")
+    plt.ylabel("Autocorrelação")
+    plt.grid(True)
+    
+    plt.subplot(1, 3, 2)
+    plt.stem(range(len(acf_vals_co)), acf_vals_co, linefmt='g-', markerfmt='go')
+    plt.axhline(y=0, color='r', linestyle='--', alpha=0.5)
+    plt.axhline(y=1.96/np.sqrt(time), color='b', linestyle='--', alpha=0.5)
+    plt.axhline(y=-1.96/np.sqrt(time), color='b', linestyle='--', alpha=0.5)
+    plt.title("ACF - Resíduos CO")
+    plt.xlabel("Lag")
+    plt.grid(True)
+    
+    plt.subplot(1, 3, 3)
+    plt.stem(range(len(acf_vals_pw)), acf_vals_pw, linefmt='b-', markerfmt='bo')
+    plt.axhline(y=0, color='r', linestyle='--', alpha=0.5)
+    plt.axhline(y=1.96/np.sqrt(time), color='b', linestyle='--', alpha=0.5)
+    plt.axhline(y=-1.96/np.sqrt(time), color='b', linestyle='--', alpha=0.5)
+    plt.title("ACF - Resíduos PW")
+    plt.xlabel("Lag")
+    plt.grid(True)
+    
+    plt.tight_layout()
+    plt.savefig('plots/PW4_ACF.png')
+    if show_plots:
+        plt.show()
+    else:
+        plt.close()
+        
+    # NOVO GRÁFICO: Estatísticas de Durbin-Watson para cada modelo
+    # Calcular estatística DW para os outros modelos
+    dw_co_num = np.sum((residuals_co[1:] - residuals_co[:-1])**2)
+    dw_co_den = np.sum(residuals_co**2)
+    dw_co = dw_co_num / dw_co_den
+    
+    dw_pw_num = np.sum((residuals_pw[1:] - residuals_pw[:-1])**2)
+    dw_pw_den = np.sum(residuals_pw**2)
+    dw_pw = dw_pw_num / dw_pw_den
+    
+    rho_ols = 1 - dw/2
+    rho_co = 1 - dw_co/2
+    rho_pw = 1 - dw_pw/2
+    
+    print(f"\nComparação da estatística Durbin-Watson (mais próximo de 2 = melhor):")
+    print(f"DW OLS: {dw:.4f} (rho = {rho_ols:.4f})")
+    print(f"DW CO:  {dw_co:.4f} (rho = {rho_co:.4f})")
+    print(f"DW PW:  {dw_pw:.4f} (rho = {rho_pw:.4f})")
+    
+    plt.figure(figsize=(10, 6))
+    models = ['OLS', 'Cochrane-Orcutt', 'Prais-Winsten']
+    dw_values = [dw, dw_co, dw_pw]
+    colors = ['black', 'green', 'blue']
+    
+    bars = plt.bar(models, dw_values, color=colors, alpha=0.7)
+    plt.axhline(y=2.0, color='r', linestyle='--', label='Valor ideal (2.0)', alpha=0.8)
+    
+    # Adicionar valores
+    for bar in bars:
+        height = bar.get_height()
+        plt.text(bar.get_x() + bar.get_width()/2., height + 0.05,
+                f'{height:.4f}', ha='center', va='bottom')
+    
+    plt.title('Comparação das Estatísticas de Durbin-Watson')
+    plt.ylabel('Valor de DW')
+    plt.ylim(0, max(dw_values) * 1.2)  # Ajustar escala
+    plt.grid(axis='y', linestyle='--', alpha=0.7)
+    plt.legend()
+    plt.savefig('plots/PW5_DW.png')
+    if show_plots:
+        plt.show()
+    else:
+        plt.close()
+    
+    # Análise da qualidade das previsões
+    mse_ols = np.mean((yy7 - I12f1)**2)
+    mse_co = np.mean((yy7 - I12f2)**2)
+    mse_pw = np.mean((yy7 - I12f3)**2)
+    
+    print("\nAnálise de erro quadrático médio (MSE) no teste:")
+    print(f"MSE OLS: {mse_ols:.6f}")
+    print(f"MSE CO:  {mse_co:.6f}")
+    print(f"MSE PW:  {mse_pw:.6f}")
+    
+    # NOVO GRÁFICO: Comparação do MSE
+    plt.figure(figsize=(10, 6))
+    models = ['OLS', 'Cochrane-Orcutt', 'Prais-Winsten']
+    mse_values = [mse_ols, mse_co, mse_pw]
+    colors = ['black', 'green', 'blue']
+    
+    bars = plt.bar(models, mse_values, color=colors, alpha=0.7)
+    
+    # Adicionar valores
+    for bar in bars:
+        height = bar.get_height()
+        plt.text(bar.get_x() + bar.get_width()/2., height + 0.0005,
+                f'{height:.6f}', ha='center', va='bottom')
+    
+    plt.title('Comparação do MSE na previsão')
+    plt.ylabel('MSE')
+    plt.ylim(0, max(mse_values) * 1.2)  # Ajustar escala
+    plt.grid(axis='y', linestyle='--', alpha=0.7)
+    plt.savefig('plots/PW6_MSE.png')
+    if show_plots:
+        plt.show()
+    else:
+        plt.close()
+    
+    if mse_pw < mse_co:
+        print(f"\nPrais-Winsten melhorou a previsão em {(1-mse_pw/mse_co)*100:.2f}% comparado a Cochrane-Orcutt")
+    else:
+        print(f"\nCochrane-Orcutt teve melhor desempenho que Prais-Winsten neste caso")
+        
+    print(f"Melhoria do PW em relação ao OLS: {(1-mse_pw/mse_ols)*100:.2f}%")
+    
+    # Gráfico de evolução do rho e betas ao longo das iterações
+    if len(rho_history) > 1:
+        plt.figure(figsize=(12, 8))
+        plt.subplot(2, 1, 1)
+        plt.plot(range(len(rho_history)), rho_history, 'bo-', linewidth=2)
+        plt.title('Convergência do rho no método Prais-Winsten')
+        plt.xlabel('Iteração')
+        plt.ylabel('Valor de rho')
+        plt.grid(True)
+        
+        plt.subplot(2, 1, 2)
+        beta0_hist = [b[0] for b in betas_history]
+        beta1_hist = [b[1] for b in betas_history]
+        plt.plot(range(len(beta0_hist)), beta0_hist, 'ro-', label='β₀', linewidth=2)
+        plt.plot(range(len(beta1_hist)), beta1_hist, 'go-', label='β₁', linewidth=2)
+        plt.title('Convergência dos coeficientes')
+        plt.xlabel('Iteração')
+        plt.ylabel('Valor do coeficiente')
+        plt.legend()
+        plt.grid(True)
+        plt.tight_layout()
+        plt.savefig('plots/PW7_convergence.png')
+        if show_plots:
+            plt.show()
+        else:
+            plt.close()
+    
+    while True:
+        print("\nDeseja voltar ao menu principal? (s/n)")
+        choice = input()
+        if choice == 's':
+            return I12f1, I12f3
+        elif choice == 'n':
+            exit()
+        else:
+            print("Escolha inválida. Tente novamente.")
+
+# ============================================================================================================================================
 # Função Principal
 # ============================================================================================================================================
 def show_menu():
@@ -959,6 +1346,7 @@ def show_menu():
     print("3 - Autorregressão (AR)")
     print("4 - Autorregressão + Soma de Cargas")
     print("5 - Desafio 1: Processo Estacionário")
+    print("6 - Desafio 2: Prais-Winsten (PW)")
     print("\nAdicione 'p' após o número para mostrar os gráficos (ex: 1p)")
     print("=" * 80)
 
@@ -982,7 +1370,7 @@ def main():
     Y, Yl, G, B, I, nBus = prepare_network(Net_Info, Power_Info, SlackBus)
 
     # Definir a matriz de erros
-    II, i12, i1w = error_matrix_1(Y, Yl, I, nBus, time, timeForecast)   
+    II, i12, i1w = error_matrix_2(Y, Yl, I, nBus, time, timeForecast)   
 
     rss_1 = 0
     beta = np.zeros(2)
@@ -1011,6 +1399,10 @@ def main():
         elif option == 5:
             # Desafio 1
             ar_preds, co_preds, actual = processo_estacionario(II, Y, Yl, I, nBus, time, timeForecast, show_plots)
+
+        elif option == 6:
+            # Desafio 2
+            I12f1, I12f3 = PW(rss_1, beta, i12, i1w, nBus, I, Y, Yl, time, timeForecast, show_plots)
 
         else:
             print("Opção inválida. Tente novamente.")
