@@ -33,4 +33,6 @@ void setCANMessageCallback(CANMessageCallback callback);
 void getCANStats(uint32_t &sent, uint32_t &received, uint32_t &errors, float &avgLatency);
 void resetCANStats();
 
+extern MCP2515 can0;
+
 #endif // CANCOMM_H

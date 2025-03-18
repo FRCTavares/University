@@ -1,5 +1,7 @@
 #include "PIDController.h"
 #include "Globals.h"
+#include <Arduino.h>
+#
 
 PIDController::PIDController(float kp, float ki, float kd, float n, float samplingTime)
     : Kp(kp), Ki(ki), Kd(kd), N(n), h(samplingTime), Iterm(0), Dterm(0), e_old(0) {}

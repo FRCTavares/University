@@ -215,7 +215,25 @@ void processIncomingMessage(const can_frame &msg) {
       }
       break;
     }
+
     
+    case CAN_TYPE_HEARTBEAT: {
+      uint8_t statusFlags = msg.data[1];
+      uint32_t uptime = ((uint32_t)msg.data[5] << 24) | 
+                        ((uint32_t)msg.data[4] << 16) |
+                        ((uint32_t)msg.data[3] << 8) |
+                        msg.data[2];
+      
+      if (canMonitorEnabled) {
+        Serial.print("CAN: Node ");
+        Serial.print(sourceNode);
+        Serial.print(" heartbeat, uptime ");
+        Serial.print(uptime);
+        Serial.print("s, flags: ");
+        Serial.println(statusFlags, BIN);
+      }
+      break;
+    }
     case CAN_TYPE_CONTROL: {
       uint8_t controlType = msg.data[1];
       float value = bytesToFloat(&msg.data[2]);
@@ -238,27 +256,32 @@ void processIncomingMessage(const can_frame &msg) {
         setpointLux = value;
         // Send acknowledgment?
       }
-      break;
-    }
-    
-    case CAN_TYPE_HEARTBEAT: {
-      uint8_t statusFlags = msg.data[1];
-      uint32_t uptime = ((uint32_t)msg.data[5] << 24) | 
-                        ((uint32_t)msg.data[4] << 16) |
-                        ((uint32_t)msg.data[3] << 8) |
-                        msg.data[2];
-      
-      if (canMonitorEnabled) {
-        Serial.print("CAN: Node ");
-        Serial.print(sourceNode);
-        Serial.print(" heartbeat, uptime ");
-        Serial.print(uptime);
-        Serial.print("s, flags: ");
-        Serial.println(statusFlags, BIN);
+      else if (controlType == 2) { // Echo request
+        // Send echo response - use the received value
+        can_frame response;
+        response.can_id = buildCANId(CAN_TYPE_RESPONSE, sourceNode, CAN_PRIO_HIGH);
+        response.can_dlc = 8;
+        response.data[0] = nodeID;
+        response.data[1] = 0; // Response type 0 = echo
+        floatToBytes(value, &response.data[2]); // Echo back the same value
+        response.data[6] = msg.data[6]; // Copy sequence numbers
+        response.data[7] = msg.data[7];
+        sendCANMessage(response);
+      }
+      else if (controlType == 3) { // Ping/discovery
+        // Send a response to identify ourselves
+        can_frame response;
+        response.can_id = buildCANId(CAN_TYPE_RESPONSE, sourceNode, CAN_PRIO_NORMAL);
+        response.can_dlc = 8;
+        response.data[0] = nodeID;
+        response.data[1] = 1; // Response type 1 = discovery
+        floatToBytes(0, &response.data[2]); 
+        response.data[6] = 0;
+        response.data[7] = 0;
+        sendCANMessage(response);
       }
       break;
     }
-    
     // Add other message types as needed
   }
 }

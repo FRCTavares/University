@@ -7,6 +7,7 @@
 #include "LEDDriver.h"
 #include "Globals.h" 
 
+
 // Helper to split a command line into tokens by space
 static void parseTokens(const String &cmd, String tokens[], int maxTokens, int &numFound) {
   numFound = 0;
@@ -358,8 +359,10 @@ static void processCommandLine(const String &cmdLine) {
     Serial.println("ack");
     return;
   }
-  // CAN Commands handled if c0 == "can"
+  
 
+  
+  // CAN Commands handled if c0 == "can"
   // "can send <destNode> <msgType> <value>" => Send a CAN message
   else if (c0 == "can" && tokens[1] == "send") {
     if (numTokens < 5) { Serial.println("err"); return; }
@@ -386,7 +389,6 @@ static void processCommandLine(const String &cmdLine) {
     }
     return;
   }
-
   // "can periodic <0|1>" => Enable/disable periodic CAN transmission
   else if (c0 == "can" && tokens[1] == "periodic") {
     if (numTokens < 3) { Serial.println("err"); return; }
@@ -398,7 +400,6 @@ static void processCommandLine(const String &cmdLine) {
     Serial.println("ack");
     return;
   }
-
   // "can monitor <0|1>" => Enable/disable printing of received CAN messages
   else if (c0 == "can" && tokens[1] == "monitor") {
     if (numTokens < 3) { Serial.println("err"); return; }
@@ -410,7 +411,6 @@ static void processCommandLine(const String &cmdLine) {
     Serial.println("ack");
     return;
   }
-
   // "can stats" => Display CAN communication statistics
   else if (c0 == "can" && tokens[1] == "stats") {
     uint32_t sent, received, errors;
@@ -432,12 +432,219 @@ static void processCommandLine(const String &cmdLine) {
     Serial.println("ack");
     return;
   }
-
   // "can reset" => Reset CAN statistics
   else if (c0 == "can" && tokens[1] == "reset") {
     resetCANStats();
     Serial.println("CAN statistics reset");
     Serial.println("ack");
+    return;
+  }
+  // "can heartbeat" => Send a heartbeat message manually
+  else if (c0 == "can" && tokens[1] == "heartbeat") {
+    if(sendHeartbeat()) {
+      Serial.println("Heartbeat sent successfully");
+      Serial.println("ack");
+    } else {
+      Serial.println("Failed to send heartbeat");
+      Serial.println("err");
+    }
+    return;
+  }
+  // "can broadcast <value>" => Broadcast a value to all nodes
+  else if (c0 == "can" && tokens[1] == "broadcast") {
+    if (numTokens < 3) { Serial.println("err"); return; }
+    
+    float value = tokens[2].toFloat();
+    if(sendSensorReading(CAN_ADDR_BROADCAST, 0, value)) {
+      Serial.println("Broadcast sent successfully");
+      Serial.println("ack");
+    } else {
+      Serial.println("Failed to broadcast message");
+      Serial.println("err");
+    }
+    return;
+  }
+  // "can latency <destNode> <count>" => Measure round-trip latency
+  // "can scan" => Scan for active nodes on the network
+  else if (c0 == "can" && tokens[1] == "scan") {
+    Serial.println("Scanning for active CAN nodes...");
+    
+    // We'll track which nodes respond
+    bool nodeFound[64] = {false};
+    int foundCount = 0;
+    
+    // Send ping messages to all possible node addresses
+    for(uint8_t node = 1; node < 64; node++) {
+      // Send a special ping message
+      if(sendControlCommand(node, 3, 0)) {
+        // Give some time for node to respond
+        delay(50);
+        
+        // Process any responses that came in
+        for(int i = 0; i < 5; i++) {
+          can_frame frame;
+          if(readCANMessage(&frame) == MCP2515::ERROR_OK) {
+            uint8_t msgType, srcAddr, priority;
+            parseCANId(frame.can_id, msgType, srcAddr, priority);
+            
+            if(!nodeFound[srcAddr]) {
+              nodeFound[srcAddr] = true;
+              foundCount++;
+            }
+          }
+          delay(10);
+        }
+      }
+    }
+    
+    // Now send a broadcast message to catch any we missed
+    sendControlCommand(CAN_ADDR_BROADCAST, 3, 0);
+    delay(200);
+    
+    // Process any additional responses
+    for(int i = 0; i < 20; i++) {
+      can_frame frame;
+      if(readCANMessage(&frame) == MCP2515::ERROR_OK) {
+        uint8_t msgType, srcAddr, priority;
+        parseCANId(frame.can_id, msgType, srcAddr, priority);
+        
+        if(!nodeFound[srcAddr]) {
+          nodeFound[srcAddr] = true;
+          foundCount++;
+        }
+      }
+      delay(10);
+    }
+    
+    // Display results
+    Serial.print("Found ");
+    Serial.print(foundCount);
+    Serial.println(" active nodes:");
+    
+    for(uint8_t node = 1; node < 64; node++) {
+      if(nodeFound[node]) {
+        Serial.print("  Node ");
+        Serial.println(node);
+      }
+    }
+    
+    Serial.println("Network scan complete");
+    Serial.println("ack");
+    return;
+  }
+  
+  // "can latency <destNode> <count>" => Measure round-trip latency
+  else if (c0 == "can" && tokens[1] == "latency") {
+    if (numTokens < 4) { Serial.println("err"); return; }
+    
+    uint8_t destNode = tokens[2].toInt();
+    int count = tokens[3].toInt();
+    
+    Serial.print("Measuring round-trip latency to node ");
+    Serial.print(destNode);
+    Serial.print(" (");
+    Serial.print(count);
+    Serial.println(" samples)");
+    
+    unsigned long totalLatency = 0;
+    int successCount = 0;
+    
+    for(int i = 0; i < count; i++) {
+      unsigned long startTime = micros();
+      
+      // Send echo request (using control message type 2)
+      if(sendControlCommand(destNode, 2, startTime)) {
+        // Wait for response with timeout
+        unsigned long timeout = millis() + 500; // 500ms timeout
+        bool responseReceived = false;
+        
+        while(millis() < timeout && !responseReceived) {
+          can_frame frame;
+          if(readCANMessage(&frame) == MCP2515::ERROR_OK) {
+            // Parse message and check if it's an echo response
+            uint8_t msgType, srcAddr, priority;
+            parseCANId(frame.can_id, msgType, srcAddr, priority);
+            
+            if(msgType == CAN_TYPE_RESPONSE && srcAddr == destNode) {
+              unsigned long endTime = micros();
+              unsigned long latency = endTime - startTime;
+              totalLatency += latency;
+              successCount++;
+              responseReceived = true;
+              
+              Serial.print("Sample ");
+              Serial.print(i+1);
+              Serial.print(": ");
+              Serial.print(latency);
+              Serial.println(" us");
+            }
+          }
+        }
+        
+        if(!responseReceived) {
+          Serial.print("Sample ");
+          Serial.print(i+1);
+          Serial.println(": Timeout");
+        }
+      } else {
+        Serial.print("Sample ");
+        Serial.print(i+1);
+        Serial.println(": Send failed");
+      }
+      
+      delay(100); // Wait between samples
+    }
+    
+    Serial.println("Latency measurement complete");
+    if(successCount > 0) {
+      float avgLatency = (float)totalLatency / successCount;
+      Serial.print("Average round-trip latency: ");
+      Serial.print(avgLatency, 2);
+      Serial.println(" us");
+    } else {
+      Serial.println("No successful measurements");
+    }
+    Serial.println("ack");
+    return;
+  }
+  else if (c0 == "can" && tokens[1] == "loopback") {
+    Serial.println("Testing CAN controller in loopback mode...");
+    
+    // Switch to loopback mode (internal testing)
+    can0.reset();
+    can0.setBitrate(CAN_125KBPS);
+    can0.setLoopbackMode();
+    
+    // Send test message to self
+    can_frame testFrame;
+    testFrame.can_id = buildCANId(CAN_TYPE_CONTROL, nodeID, CAN_PRIO_NORMAL);
+    testFrame.can_dlc = 8;
+    testFrame.data[0] = nodeID;
+    testFrame.data[1] = 99;
+    floatToBytes(12345.67, &testFrame.data[2]);
+    testFrame.data[6] = 0;
+    testFrame.data[7] = 0;
+    
+    Serial.print("Sending test message: ");
+    MCP2515::ERROR sendResult = can0.sendMessage(&testFrame);
+    Serial.println(sendResult == MCP2515::ERROR_OK ? "SUCCESS" : "FAILED");
+    
+    // Try to receive it
+    delay(50);
+    can_frame rxFrame;
+    MCP2515::ERROR rxResult = can0.readMessage(&rxFrame);
+    
+    if (rxResult == MCP2515::ERROR_OK) {
+      Serial.println("Received loopback message - MCP2515 is working!");
+      // Return to normal mode
+      can0.reset();
+      can0.setBitrate(CAN_125KBPS);
+      can0.setNormalMode();
+      Serial.println("ack");
+    } else {
+      Serial.println("Failed to receive loopback message - hardware issue!");
+      Serial.println("err");
+    }
     return;
   }
     // If none matched:
