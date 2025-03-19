@@ -6,7 +6,6 @@
 #include <math.h>
 #include "LEDDriver.h"
 #include "Globals.h"
-#include "Globals.h" // This is needed to access enum LuminaireState and changeState()
 
 // Helper to split a command line into tokens by space
 static void parseTokens(const String &cmd, String tokens[], int maxTokens, int &numFound)
@@ -617,7 +616,7 @@ static void processCommandLine(const String &cmdLine)
         Serial.println("err: Unsupported remote variable query");
         return;
       }
-      delay(5000);
+
       // Send the query to the remote node
       if (sendControlCommand(targetNode, queryType, 0.0f))
       {
@@ -633,10 +632,12 @@ static void processCommandLine(const String &cmdLine)
           if (readCANMessage(&frame) == MCP2515::ERROR_OK)
           {
             // Parse message and check if it's a response from our target
-            uint8_t msgType, srcAddr, priority;
-            parseCANId(frame.can_id, msgType, srcAddr, priority);
+            uint8_t msgType, destAddr, priority;
+            parseCANId(frame.can_id, msgType, destAddr, priority);
 
-            if (msgType == CAN_TYPE_RESPONSE && srcAddr == targetNode)
+            uint8_t senderNodeID = frame.data[0];
+
+            if (msgType == CAN_TYPE_RESPONSE && senderNodeID == targetNode && (destAddr == nodeID || destAddr == CAN_ADDR_BROADCAST))
             {
               // Extract the response value and display
               float value = 0.0f;

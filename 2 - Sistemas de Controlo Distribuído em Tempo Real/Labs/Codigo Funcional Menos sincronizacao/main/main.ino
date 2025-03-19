@@ -605,6 +605,10 @@ void setup()
 {
   Serial.begin(115200);
 
+  // Debug board ID
+  pico_unique_board_id_t board_id;
+  pico_get_unique_board_id(&board_id);
+
   // Configure ADC and PWM
   analogReadResolution(12);
   analogWriteFreq(30000);
@@ -680,11 +684,11 @@ void loop()
   unsigned long now = millis();
 
   // Send heartbeat periodically
-  /*if (now - lastHeartbeat >= heartbeatInterval)
+  if (now - lastHeartbeat >= heartbeatInterval)
   {
     lastHeartbeat = now;
     sendHeartbeat();
-  }*/
+  }
 
   // Send sensor data if periodic mode is enabled
   if (periodicCANEnabled && (now - lastCANSend >= 1000))

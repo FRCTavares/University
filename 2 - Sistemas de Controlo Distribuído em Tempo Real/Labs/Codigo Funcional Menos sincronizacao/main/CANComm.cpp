@@ -176,6 +176,11 @@ bool sendQueryResponse(uint8_t destNode, float value)
   // Envie a mensagem
   MCP2515::ERROR result = sendCANMessage(frame);
 
+  Serial.print("DEBUG: Sent query response to node ");
+  Serial.print(destNode);
+  Serial.print(", value: ");
+  Serial.println(value);
+
   if (result == MCP2515::ERROR_OK)
   {
     msgSent++;
@@ -237,6 +242,9 @@ void processIncomingMessage(const can_frame &msg)
   // Parse the CAN ID
   uint8_t msgType, destAddr, priority;
   parseCANId(msg.can_id, msgType, destAddr, priority);
+
+  Serial.print("DEBUG: Received CAN message, type ");
+  Serial.print(msgType);
 
   // Check if this message is for us (or broadcast)
   if (destAddr != nodeID && destAddr != CAN_ADDR_BROADCAST)
