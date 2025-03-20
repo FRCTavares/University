@@ -1,29 +1,40 @@
 #pragma once
+#include <Arduino.h>
 
-struct LogEntry {
+// Define structure for circular buffer entries
+struct LogEntry
+{
     unsigned long timestamp;
     float lux;
     float duty;
 };
 
+// Buffer size
+#define LOG_SIZE 1200
+
 // Initialize storage
 void initStorage();
 
-// Log data point
+// Log a new data point
 void logData(unsigned long timestamp, float lux, float duty);
 
-// Data retrieval
-LogEntry* getLogBuffer();
+// Output buffer to serial
+void dumpBufferToSerial();
+
+// Access buffer for computations
+LogEntry *getLogBuffer();
 int getLogCount();
 bool isBufferFull();
 int getCurrentIndex();
 
-// Utility functions
-void dumpBufferToSerial();
-String getLastMinuteBuffer(const String &var, int index);
-
-// Metrics calculation
+// Compute and output metrics
+void computeAndPrintMetrics();
 float computeEnergyFromBuffer();
 float computeVisibilityErrorFromBuffer();
 float computeFlickerFromBuffer();
-void computeAndPrintMetrics();
+
+// STREAMING FUNCTIONS
+void startStream(const String &var, int index);
+void stopStream(const String &var, int index);
+void handleStreaming();
+String getLastMinuteBuffer(const String &var, int index);

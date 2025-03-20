@@ -14,6 +14,9 @@ float getLEDDutyCycle();
 float getLEDPercentage();
 int getLEDPWMValue();
 float getLEDPower();
+float getExternalIlluminance();
+float getPowerConsumption();
+unsigned long getElapsedTime();
 
 // Test LED functionality
 void testLED();
