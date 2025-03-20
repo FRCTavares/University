@@ -1,19 +1,46 @@
-// (LDR sensor implementation)
+/**
+ * SensorReader.cpp - Implementação do subsistema de leitura de sensores
+ *
+ * Este ficheiro implementa as funcionalidades de leitura e processamento de sensores:
+ * - Leitura do sensor LDR (Light Dependent Resistor) para medição de iluminação
+ * - Filtragem de ruído através de múltiplas amostras
+ * - Deteção e eliminação de outliers
+ * - Calibração do sensor
+ * - Conversão de valores ADC para unidades físicas (lux)
+ * - Suavização temporal através de média móvel exponencial
+ */
+
+//============================================================================
+// FICHEIROS INCLUÍDOS
+//============================================================================
+
 #include "SensorReader.h"
 #include "Configuration.h"
 #include <Arduino.h>
 #include <math.h>
 
-// --- Sensor calibration state ---
-float calibrationOffset = 0.0;
-float lastFilteredLux = -1.0;
-float LDR_B = log10(LDR_R10) - LDR_M;
+//============================================================================
+// VARIÁVEIS GLOBAIS
+//============================================================================
 
-// External light adaptation
-extern float lastExternalLux;
-extern float externalLuxAverage;
-unsigned long lastAdaptTime = 0;
+// --- Estado de calibração do sensor ---
+float calibrationOffset = 0.0;     // Offset de calibração para compensar desvios
+float lastFilteredLux = -1.0;      // Último valor filtrado de iluminação
+float LDR_B = log10(LDR_R10) - LDR_M;  // Constante B da equação logarítmica do LDR
 
+// Adaptação à luz externa
+extern float lastExternalLux;      // Última medição de luz externa (definida em LEDController.cpp)
+extern float externalLuxAverage;   // Média móvel da luz externa (definida em LEDController.cpp)
+unsigned long lastAdaptTime = 0;   // Timestamp da última adaptação
+
+//============================================================================
+// FUNÇÕES DE INICIALIZAÇÃO E CALIBRAÇÃO
+//============================================================================
+
+/**
+ * Inicializa o subsistema de sensores
+ * Configura pinos e reinicia os valores de calibração
+ */
 void initSensor()
 {
     pinMode(LDR_PIN, INPUT);
@@ -21,6 +48,17 @@ void initSensor()
     calibrationOffset = 0.0;
 }
 
+/**
+ * Lê e processa o valor de iluminação do sensor LDR
+ * Aplica várias técnicas de processamento de sinal para obter uma leitura precisa:
+ * 1. Recolha de múltiplas amostras para redução de ruído
+ * 2. Cálculo estatístico (média e desvio padrão)
+ * 3. Filtragem de outliers
+ * 4. Suavização temporal com média móvel exponencial
+ * 5. Calibração e verificação de limites
+ * 
+ * @return Valor de iluminação em lux
+ */
 float readLux()
 {
     float samples[NUM_SAMPLES];
@@ -102,6 +140,12 @@ float readLux()
     return calibratedLux;
 }
 
+/**
+ * Calibra o sensor de luz com um valor de referência conhecido
+ * Calcula e aplica um offset para ajustar as leituras do sensor
+ * 
+ * @param knownLux Valor de referência em lux para calibração
+ */
 void calibrateLuxSensor(float knownLux)
 {
     float measuredLux = 0.0;
@@ -132,6 +176,12 @@ void calibrateLuxSensor(float knownLux)
     Serial.println(calibrationOffset);
 }
 
+/**
+ * Obtém a tensão atual no pino do LDR
+ * Útil para diagnóstico do circuito e verificações de hardware
+ * 
+ * @return Tensão em Volts no pino do LDR
+ */
 float getVoltageAtLDR()
 {
     int adcValue = analogRead(LDR_PIN);

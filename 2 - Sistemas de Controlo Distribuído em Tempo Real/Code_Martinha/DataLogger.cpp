@@ -1,6 +1,25 @@
+/**
+ * DataLogger.cpp - Implementação do sistema de logging e métricas
+ *
+ * Este ficheiro implementa as funcionalidades de armazenamento e análise de dados:
+ * - Gestão de um buffer circular para armazenamento de medições
+ * - Cálculo de métricas de desempenho (energia, erro de visibilidade, cintilação)
+ * - Streaming de variáveis em tempo real
+ * - Exportação de dados históricos
+ * - Análise estatística do comportamento do sistema
+ */
+
+//============================================================================
+// FICHEIROS INCLUÍDOS
+//============================================================================
+
 #include "DataLogger.h"
 #include "Configuration.h"
 #include <Arduino.h>
+
+//============================================================================
+// VARIÁVEIS GLOBAIS
+//============================================================================
 
 LogEntry logBuffer[LOG_SIZE];
 int logIndex = 0;
@@ -21,8 +40,15 @@ static unsigned long lastStreamTime = 0;
 extern float readLux();
 extern float getPowerConsumption();
 
-// ===================== FUNÇÕES DE STREAMING =====================
+//============================================================================
+// FUNÇÕES DE STREAMING DE DADOS
+//============================================================================
 
+/**
+ * Inicia o streaming de uma variável específica
+ * @param var Nome da variável a ser monitorada
+ * @param index Índice do nó para identificação
+ */
 void startStream(const String &var, int index)
 {
     streamEnabled = true;
@@ -31,6 +57,11 @@ void startStream(const String &var, int index)
     Serial.println("ack");
 }
 
+/**
+ * Interrompe o streaming de uma variável
+ * @param var Nome da variável que estava sendo monitorada
+ * @param index Índice do nó associado
+ */
 void stopStream(const String &var, int index)
 {
     streamEnabled = false;
@@ -41,6 +72,10 @@ void stopStream(const String &var, int index)
     Serial.println(index);
 }
 
+/**
+ * Processa o envio periódico de dados em streaming
+ * Deve ser chamado ciclicamente no loop principal
+ */
 void handleStreaming()
 {
     if (!streamEnabled || (millis() - lastStreamTime < STREAM_INTERVAL))
@@ -90,6 +125,12 @@ void handleStreaming()
     }
 }
 
+/**
+ * Obtém dados históricos do buffer para visualização
+ * @param var Nome da variável a ser extraída
+ * @param index Índice do nó (não utilizado nesta implementação)
+ * @return String formatada com valores separados por vírgula
+ */
 String getLastMinuteBuffer(const String &var, int index)
 {
     String result = "";
@@ -100,7 +141,7 @@ String getLastMinuteBuffer(const String &var, int index)
     LogEntry *buffer = getLogBuffer();
     int startIndex = isBufferFull() ? getCurrentIndex() : 0;
 
-    // Número máximo de amostras a retornar (para evitar overflow no buffer serial)
+    // Número máximo de amostras a retornar (para evitar overflow no buffer)
     const int MAX_SAMPLES = 60;
     int sampleCount = min(count, MAX_SAMPLES);
 
@@ -113,7 +154,7 @@ String getLastMinuteBuffer(const String &var, int index)
 
         if (var.equalsIgnoreCase("y"))
         {
-            // Para valores de iluminância
+            // Para valores de iluminação
             result += String(buffer[realIndex].lux, 1);
         }
         else if (var.equalsIgnoreCase("u"))
@@ -131,14 +172,25 @@ String getLastMinuteBuffer(const String &var, int index)
     return result;
 }
 
-// ===================== FUNÇÕES DO CIRCULAR BUFFER =====================
+//============================================================================
+// FUNÇÕES DO CIRCULAR BUFFER
+//============================================================================
 
+/**
+ * Inicializa o sistema de armazenamento
+ */
 void initStorage()
 {
     logIndex = 0;
     bufferFull = false;
 }
 
+/**
+ * Armazena uma nova entrada de log no buffer circular
+ * @param timestamp Timestamp da medição em millisegundos
+ * @param lux Valor de iluminação medido
+ * @param duty Duty cycle atual do LED [0..1]
+ */
 void logData(unsigned long timestamp, float lux, float duty)
 {
     logBuffer[logIndex].timestamp = timestamp;
@@ -153,6 +205,10 @@ void logData(unsigned long timestamp, float lux, float duty)
     }
 }
 
+/**
+ * Exporta todo o conteúdo do buffer para a interface Serial
+ * Formato: timestamp_ms,rawLux,duty
+ */
 void dumpBufferToSerial()
 {
     Serial.println("timestamp_ms,rawLux,duty");
@@ -173,29 +229,54 @@ void dumpBufferToSerial()
         Serial.println(d, 4);
     }
 
-    Serial.println("End of dump.\n");
+    Serial.println("Fim da Exportação de Dados dos Buffer\n");
 }
 
+/**
+ * Obtém ponteiro para o buffer de log
+ * @return Ponteiro para o array de entradas de log
+ */
 LogEntry *getLogBuffer()
 {
     return logBuffer;
 }
 
+/**
+ * Obtém o número de entradas válidas no buffer
+ * @return Número de entradas armazenadas
+ */
 int getLogCount()
 {
     return bufferFull ? LOG_SIZE : logIndex;
 }
 
+/**
+ * Verifica se o buffer está completo
+ * @return true se o buffer já deu uma volta completa
+ */
 bool isBufferFull()
 {
     return bufferFull;
 }
 
+/**
+ * Obtém o índice atual de escrita no buffer
+ * @return Índice onde a próxima entrada será escrita
+ */
 int getCurrentIndex()
 {
     return logIndex;
 }
 
+
+//============================================================================
+// FUNÇÕES DE ANÁLISE E MÉTRICAS
+//============================================================================
+
+/**
+ * Calcula e imprime métricas de desempenho do sistema
+ * com base nos dados armazenados no buffer circular
+ */
 void computeAndPrintMetrics()
 {
     float E = computeEnergyFromBuffer();
@@ -212,6 +293,10 @@ void computeAndPrintMetrics()
     Serial.println("----------------------------------------\n");
 }
 
+/**
+ * Calcula o consumo de energia com base nas medições armazenadas
+ * @return Energia consumida estimada em Joules
+ */
 float computeEnergyFromBuffer()
 {
     int count = getLogCount();
@@ -248,6 +333,10 @@ float computeEnergyFromBuffer()
     return totalE;
 }
 
+/**
+ * Calcula o erro médio de visibilidade (quando iluminação < setpoint)
+ * @return Erro médio de visibilidade em lux
+ */
 float computeVisibilityErrorFromBuffer()
 {
     int count = getLogCount();
@@ -277,6 +366,11 @@ float computeVisibilityErrorFromBuffer()
     return (totalErr / sampleCount);
 }
 
+/**
+ * Calcula a métrica de cintilação (flicker) com base na
+ * frequência e magnitude das inversões de direção do duty cycle
+ * @return Valor da métrica de cintilação
+ */
 float computeFlickerFromBuffer()
 {
     int count = getLogCount();

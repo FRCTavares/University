@@ -1,24 +1,60 @@
+/**
+ * StateManager.cpp - Implementação do gestor de estados do LED
+ *
+ * Este ficheiro implementa a máquina de estados que controla o comportamento do LED:
+ * - Gestão dos estados de operação (desligado, não-ocupado, ocupado)
+ * - Transições entre estados com atualização automática dos setpoints
+ * - Reinicialização segura do controlador durante transições
+ * - Notificação das mudanças de estado para outros nós na rede CAN
+ * - Recuperação do estado após reinicialização
+ */
+
+//============================================================================
+// FICHEIROS INCLUÍDOS
+//============================================================================
+
 #include "StateManager.h"
 #include "Configuration.h"
 #include "CANCom.h"
 #include "PIDController.h"
 
-// Current state
+//============================================================================
+// VARIÁVEIS GLOBAIS
+//============================================================================
+
+// Estado atual do LED
 LuminaireState luminaireState = STATE_UNOCCUPIED;
 
-// Control system variables
-extern float setpointLux;
-extern bool feedbackControl;
+// Variáveis externas do sistema de controlo
+extern float setpointLux;      // Setpoint de iluminação
+extern bool feedbackControl;   // Ativa/desativa controlo em malha fechada
 
+//============================================================================
+// FUNÇÕES DE INICIALIZAÇÃO
+//============================================================================
+
+/**
+ * Inicializa o gestor de estados do LED
+ * Define o estado inicial e as configurações de controlo correspondentes
+ */
 void initStateManager()
 {
-    // Initialize with default state
+    // Inicializar com o estado predefinido
     luminaireState = STATE_UNOCCUPIED;
     setpointLux = SETPOINT_UNOCCUPIED;
     feedbackControl = true;
 }
 
-// Função para mudar o estado e atualizar os setpoints de acordo
+//============================================================================
+// FUNÇÕES DE CONTROLO DE ESTADO
+//============================================================================
+
+/**
+ * Muda o estado do LED e atualiza os setpoints e modos de controlo
+ * Também notifica outros nós na rede sobre a mudança de estado
+ * 
+ * @param newState Novo estado para o qual a LED deve transitar
+ */
 void changeState(LuminaireState newState)
 {
     // Não fazer nada se o estado não mudar
@@ -51,18 +87,29 @@ void changeState(LuminaireState newState)
     // Reiniciar o controlador PID para evitar windup integral durante transições
     pid.reset();
 
-    // Atualizar iluminância de referência para cálculo de métricas
+    // Atualizar iluminação de referência para cálculo de métricas
     refIlluminance = setpointLux;
 
     // Transmitir mudança de estado para a rede
     sendControlCommand(CAN_ADDR_BROADCAST, CAN_CTRL_STATE_CHANGE, (float)luminaireState);
 }
 
+/**
+ * Obtém o estado atual do LED
+ * 
+ * @return Estado atual (OFF, UNOCCUPIED ou OCCUPIED)
+ */
 LuminaireState getCurrentState()
 {
     return luminaireState;
 }
 
+/**
+ * Obtém o setpoint de iluminação correspondente a um determinado estado
+ * 
+ * @param state Estado para o qual se pretende saber o setpoint
+ * @return Valor do setpoint de iluminação em lux
+ */
 float getStateSetpoint(LuminaireState state)
 {
     switch (state)

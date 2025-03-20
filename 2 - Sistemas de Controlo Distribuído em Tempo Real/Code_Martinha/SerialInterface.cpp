@@ -1,3 +1,19 @@
+/**
+ * SerialInterface.cpp - Implementação da interface de comandos via porta série
+ *
+ * Este ficheiro implementa o interpretador de comandos que permite controlar o sistema:
+ * - Processamento de comandos via interface USB/Serial
+ * - Parsing e validação de entradas do utilizador
+ * - Encaminhamento de comandos para nós locais ou remotos via CAN-BUS
+ * - Interface de controlo para ajuste de parâmetros do sistema
+ * - Funções de consulta para monitorização do estado do sistema
+ * - Diagnóstico e estatísticas da rede CAN
+ */
+
+//============================================================================
+// FICHEIROS INCLUÍDOS
+//============================================================================
+
 #include "SerialInterface.h"
 #include "Configuration.h"
 #include "LEDController.h"
@@ -8,22 +24,45 @@
 #include "PIDController.h"
 #include <Arduino.h>
 
-// External variables
-extern float setpointLux;      // Desired lux (setpoint)
-extern float dutyCycle;        // Current duty cycle [0..1]
-extern bool feedbackControl;   // Enable/disable feedback control
-extern bool canMonitorEnabled; // Display received messages
+//============================================================================
+// VARIÁVEIS GLOBAIS
+//============================================================================
 
-// Buffer for incoming serial commands
+// Variáveis externas
+extern float setpointLux;      // iluminação desejada (setpoint)
+extern float dutyCycle;        // Ciclo de trabalho atual [0..1]
+extern bool feedbackControl;   // Ativa/desativa controlo por realimentação
+extern bool canMonitorEnabled; // Mostrar mensagens recebidas
+
+// Buffer para comandos recebidos pela porta série
 static String input = "";
 
-// Iniciar a interface de comandos
+//============================================================================
+// INICIALIZAÇÃO
+//============================================================================
+
+/**
+ * Inicializa a interface de comandos série
+ * Configura a comunicação serial com a velocidade adequada
+ */
 void initSerialInterface()
 {
     Serial.begin(115200);
 }
 
-// Auxiliar para dividir uma linha de comando em tokens por espaço
+//============================================================================
+// FUNÇÕES AUXILIARES DE PARSING
+//============================================================================
+
+/**
+ * Divide uma linha de comando em tokens separados por espaço
+ * Utilizado para interpretar comandos com múltiplos parâmetros
+ * 
+ * @param cmd String de comando a ser analisada
+ * @param tokens Array onde os tokens encontrados serão armazenados
+ * @param maxTokens Número máximo de tokens a serem extraídos
+ * @param numFound Referência para armazenar o número de tokens encontrados
+ */
 static void parseTokens(const String &cmd, String tokens[], int maxTokens, int &numFound)
 {
     numFound = 0;
@@ -44,7 +83,12 @@ static void parseTokens(const String &cmd, String tokens[], int maxTokens, int &
     }
 }
 
-// Função auxiliar para verificar se o comando deve ser executado localmente ou reencaminhado
+/**
+ * Determina se um comando deve ser processado localmente ou encaminhado via CAN
+ * 
+ * @param targetNode ID do nó alvo do comando
+ * @return true se o comando deve ser encaminhado, false se deve ser processado localmente
+ */
 static bool shouldForwardCommand(uint8_t targetNode)
 {
     // Se o destino for transmissão (0) ou corresponder a este nó, processar localmente
@@ -56,7 +100,16 @@ static bool shouldForwardCommand(uint8_t targetNode)
     return true;
 }
 
-// Processa uma única linha de comando da porta Serial
+//============================================================================
+// PROCESSAMENTO DE COMANDOS
+//============================================================================
+
+/**
+ * Processa uma linha de comando recebida pela interface série
+ * Analisa e executa comandos de controlo, medição e comunicação CAN
+ * 
+ * @param cmdLine Linha de comando a ser processada
+ */
 static void processCommandLine(const String &cmdLine)
 {
     String trimmed = cmdLine;
@@ -64,7 +117,7 @@ static void processCommandLine(const String &cmdLine)
     if (trimmed.length() == 0)
         return;
 
-    // Tokenizar
+    // Tokenizar o comando para análise
     const int MAX_TOKENS = 6;
     String tokens[MAX_TOKENS];
     int numTokens = 0;
@@ -73,7 +126,7 @@ static void processCommandLine(const String &cmdLine)
         return;
 
     String c0 = tokens[0];
-    // c0.toLowerCase();
+
 
     // ------------------- COMANDOS DE CONTROLO -------------------
 
@@ -170,7 +223,7 @@ static void processCommandLine(const String &cmdLine)
             if (sendControlCommand(CAN_ADDR_BROADCAST, 5, val))
             {
                 // Também aplicar localmente, pois a difusão inclui este nó
-                setLEDDutyCycle(val);
+                setLEDPercentage(val);
                 Serial.println("ack");
             }
             else
@@ -181,15 +234,13 @@ static void processCommandLine(const String &cmdLine)
         }
 
         // Aplicar localmente
-
         setLEDPercentage(val);
         Serial.println("ack");
         return;
     }
-    // "w <i> <watts>" => definir LED por potência em watts
+    
     else if (c0 == "w")
     {
-
         if (numTokens < 3)
         {
             Serial.println("err");
@@ -240,7 +291,7 @@ static void processCommandLine(const String &cmdLine)
         Serial.println("ack");
         return;
     }
-    // "o <i> <val>" => definir estado de ocupação
+    
     else if (c0 == "o")
     {
         if (numTokens < 3)
@@ -399,7 +450,7 @@ static void processCommandLine(const String &cmdLine)
         Serial.println("ack");
         return;
     }
-    // "r <i> <val>" => definir referência de iluminância
+    // "r <i> <val>" => definir referência de iluminação
     else if (c0 == "r")
     {
         if (numTokens < 3)
@@ -420,7 +471,7 @@ static void processCommandLine(const String &cmdLine)
         // Verificar se precisamos de reencaminhar este comando
         if (shouldForwardCommand(targetNode))
         {
-            // Reencaminhar para nó específico - tipo de controlo 10 = referência de iluminância
+            // Reencaminhar para nó específico - tipo de controlo 10 = referência de iluminação
             if (sendControlCommand(targetNode, 10, val))
             {
                 Serial.println("ack");
@@ -454,6 +505,10 @@ static void processCommandLine(const String &cmdLine)
         Serial.println("ack");
         return;
     }
+    //============================================================================
+    // COMANDOS DE STREAMING
+    //============================================================================
+    
     // "s <x> <i>" => iniciar fluxo da variável em tempo real <x> para a secretária <i>
     else if (c0 == "s")
     {
@@ -577,8 +632,9 @@ static void processCommandLine(const String &cmdLine)
         Serial.println("ack");
         return;
     }
-
-    // ------------------- COMANDOS DE MÉTRICAS -------------------
+    //============================================================================
+    // COMANDOS DE MÉTRICAS
+    //============================================================================
 
     // Se o primeiro token for 'g' => "g <sub> <i>"
     else if (c0 == "g")
@@ -616,9 +672,9 @@ static void processCommandLine(const String &cmdLine)
             else if (subCommand == "f")
                 queryType = 26; // Controlo por feedback
             else if (subCommand == "r")
-                queryType = 27; // Referência de iluminância
+                queryType = 27; // Referência de iluminação
             else if (subCommand == "y")
-                queryType = 28; // Iluminância atual
+                queryType = 28; // iluminação atual
             else if (subCommand == "p")
                 queryType = 29; // Consumo de energia
             else if (subCommand == "t")
@@ -626,7 +682,7 @@ static void processCommandLine(const String &cmdLine)
             else if (subCommand == "v")
                 queryType = 31; // Tensão no LDR
             else if (subCommand == "d")
-                queryType = 32; // Iluminância externa
+                queryType = 32; // iluminação externa
             else
             {
                 Serial.println("err: Consulta de variável remota não suportada");
@@ -701,6 +757,7 @@ static void processCommandLine(const String &cmdLine)
             }
             return;
         }
+
 
         // Processar localmente
         // Comandos de métricas
@@ -803,7 +860,7 @@ static void processCommandLine(const String &cmdLine)
             Serial.println(vLdr, 3);
             return;
         }
-        // "g d <i>" => iluminância externa => "d <i> <val>"
+        // "g d <i>" => iluminação externa => "d <i> <val>"
         else if (subCommand == "d")
         {
             float dVal = getExternalIlluminance();
@@ -859,8 +916,11 @@ static void processCommandLine(const String &cmdLine)
             return;
         }
     }
-    // ------------------- COMANDOS CAN -------------------
-
+    
+    //============================================================================
+    // COMANDOS CAN
+    //============================================================================
+    
     // Comandos CAN tratados se c0 == "c"
     // "c sd <destNode> <msgType> <value>" => Enviar uma mensagem CAN
     else if (c0 == "c" && tokens[1] == "sd")
@@ -924,16 +984,16 @@ static void processCommandLine(const String &cmdLine)
         float avgLatency;
         getCANStats(sent, received, errors, avgLatency);
 
-        Serial.println("CAN Statistics:");
-        Serial.print("  Node ID: ");
+        Serial.println("Estatísticas CAN:");
+        Serial.print("  ID do Nó: ");
         Serial.println(nodeID);
-        Serial.print("  Messages sent: ");
+        Serial.print("  Mensagens enviadas: ");
         Serial.println(sent);
-        Serial.print("  Messages received: ");
+        Serial.print("  Mensagens recebidas: ");
         Serial.println(received);
-        Serial.print("  Errors: ");
+        Serial.print("  Erros: ");
         Serial.println(errors);
-        Serial.print("  Avg. latency: ");
+        Serial.print("  Latência média: ");
         Serial.print(avgLatency);
         Serial.println(" us");
         Serial.println("ack");
@@ -943,29 +1003,29 @@ static void processCommandLine(const String &cmdLine)
     else if (c0 == "c" && tokens[1] == "r")
     {
         resetCANStats();
-        Serial.println("CAN statistics reset");
+        Serial.println("Estatísticas CAN reiniciadas");
         Serial.println("ack");
         return;
     }
     // "c sc" => Scan for active nodes on the network
     else if (c0 == "c" && tokens[1] == "sc")
     {
-        Serial.println("Scanning for active CAN nodes...");
+        Serial.println("A procurar nós CAN ativos...");
 
-        // We'll track which nodes respond
+        // Iremos rastrear quais nós respondem
         bool nodeFound[64] = {false};
         int foundCount = 0;
 
-        // Send ping messages to all possible node addresses
+        // Enviar mensagens de ping para todos os endereços de nó possíveis
         for (uint8_t node = 1; node < 64; node++)
         {
-            // Send a special ping message
+            // Enviar uma mensagem especial de ping
             if (sendControlCommand(node, 3, 0))
             {
-                // Give some time for node to respond
+                // Dar algum tempo para o nó responder
                 delay(50);
 
-                // Process any responses that came in
+                // Processar quaisquer respostas que chegaram
                 for (int i = 0; i < 5; i++)
                 {
                     can_frame frame;
@@ -985,11 +1045,11 @@ static void processCommandLine(const String &cmdLine)
             }
         }
 
-        // Now send a broadcast message to catch any we missed
+        // Agora enviar uma mensagem de difusão para capturar qualquer um que perdemos
         sendControlCommand(CAN_ADDR_BROADCAST, 3, 0);
         delay(200);
 
-        // Process any additional responses
+        // Processar quaisquer respostas adicionais
         for (int i = 0; i < 20; i++)
         {
             can_frame frame;
@@ -1007,21 +1067,21 @@ static void processCommandLine(const String &cmdLine)
             delay(10);
         }
 
-        // Display results
-        Serial.print("Found ");
+        // Mostrar resultados
+        Serial.print("Encontrados ");
         Serial.print(foundCount);
-        Serial.println(" active nodes:");
+        Serial.println(" nós ativos:");
 
         for (uint8_t node = 1; node < 64; node++)
         {
             if (nodeFound[node])
             {
-                Serial.print("  Node ");
+                Serial.print("  Nó ");
                 Serial.println(node);
             }
         }
 
-        Serial.println("Network scan complete");
+        Serial.println("Análise da rede concluída");
         Serial.println("ack");
         return;
     }
@@ -1037,11 +1097,11 @@ static void processCommandLine(const String &cmdLine)
         uint8_t destNode = tokens[2].toInt();
         int count = tokens[3].toInt();
 
-        Serial.print("Measuring round-trip latency to node ");
+        Serial.print("A medir latência de ida e volta para o nó ");
         Serial.print(destNode);
         Serial.print(" (");
         Serial.print(count);
-        Serial.println(" samples)");
+        Serial.println(" amostras)");
 
         unsigned long totalLatency = 0;
         int successCount = 0;
@@ -1050,11 +1110,11 @@ static void processCommandLine(const String &cmdLine)
         {
             unsigned long startTime = micros();
 
-            // Send echo request (using control message type 2)
+            // Enviar pedido de eco (usando tipo de mensagem de controlo 2)
             if (sendControlCommand(destNode, 2, startTime))
             {
-                // Wait for response with timeout
-                unsigned long timeout = millis() + 500; // 500ms timeout
+                // Aguardar resposta com tempo limite
+                unsigned long timeout = millis() + 500; // 500ms de tempo limite
                 bool responseReceived = false;
 
                 while (millis() < timeout && !responseReceived)
@@ -1062,7 +1122,7 @@ static void processCommandLine(const String &cmdLine)
                     can_frame frame;
                     if (readCANMessage(&frame) == MCP2515::ERROR_OK)
                     {
-                        // Parse message and check if it's an echo response
+                        // Analisar mensagem e verificar se é uma resposta de eco
                         uint8_t msgType, srcAddr, priority;
                         parseCANId(frame.can_id, msgType, srcAddr, priority);
 
@@ -1074,7 +1134,7 @@ static void processCommandLine(const String &cmdLine)
                             successCount++;
                             responseReceived = true;
 
-                            Serial.print("Sample ");
+                            Serial.print("Amostra ");
                             Serial.print(i + 1);
                             Serial.print(": ");
                             Serial.print(latency);
@@ -1085,37 +1145,42 @@ static void processCommandLine(const String &cmdLine)
 
                 if (!responseReceived)
                 {
-                    Serial.print("Sample ");
+                    Serial.print("Amostra ");
                     Serial.print(i + 1);
                     Serial.println(": Timeout");
                 }
             }
             else
             {
-                Serial.print("Sample ");
+                Serial.print("Amostra ");
                 Serial.print(i + 1);
-                Serial.println(": Send failed");
+                Serial.println(": Falha no envio");
             }
 
-            delay(100); // Wait between samples
+            delay(100); // Aguardar entre amostras
         }
 
-        Serial.println("Latency measurement complete");
+        Serial.println("Medição de latência concluída");
         if (successCount > 0)
         {
             float avgLatency = (float)totalLatency / successCount;
-            Serial.print("Average round-trip latency: ");
+            Serial.print("Latência média de ida e volta: ");
             Serial.print(avgLatency, 2);
             Serial.println(" us");
         }
         else
         {
-            Serial.println("No successful measurements");
+            Serial.println("Sem medições bem-sucedidas");
         }
         Serial.println("ack");
         return;
     }
-    // "state <i> <state>" => set luminaire state (off/unoccupied/occupied)
+   
+    //============================================================================
+    // COMANDOS DE ESTADO
+    //============================================================================
+    
+    // "state <i> <state>" => definir estado do LED (off/unoccupied/occupied)
     else if (c0 == "st")
     {
         if (numTokens < 3)
@@ -1128,7 +1193,7 @@ static void processCommandLine(const String &cmdLine)
         String stateStr = tokens[2];
         stateStr.toLowerCase();
 
-        // Convert state string to value for CAN transmission
+        // Converter string de estado para valor para transmissão CAN
         int stateVal = 0;
         if (stateStr == "off")
             stateVal = 0;
@@ -1142,27 +1207,27 @@ static void processCommandLine(const String &cmdLine)
             return;
         }
 
-        // Check if we need to forward this command
+        // Verificar se precisamos de reencaminhar este comando
         if (shouldForwardCommand(targetNode))
         {
-            // Forward to specific node - control type 13 = luminaire state
+            // Reencaminhar para nó específico - tipo de controlo 13 = estado do LED
             if (sendControlCommand(targetNode, 13, stateVal))
             {
                 Serial.println("ack");
             }
             else
             {
-                Serial.println("err: CAN forwarding failed");
+                Serial.println("err: Falha no reencaminhamento CAN");
             }
             return;
         }
 
-        // Handle broadcast case (targetNode = 0)
+        // Tratar o caso de difusão (targetNode = 0)
         if (targetNode == 0)
         {
             if (sendControlCommand(CAN_ADDR_BROADCAST, 13, stateVal))
             {
-                // Also apply locally since broadcast includes this node
+                // Também aplicar localmente, pois a difusão inclui este nó
                 if (stateStr == "off")
                     changeState(STATE_OFF);
                 else if (stateStr == "unoccupied")
@@ -1173,12 +1238,12 @@ static void processCommandLine(const String &cmdLine)
             }
             else
             {
-                Serial.println("err: CAN broadcast failed");
+                Serial.println("err: Falha na difusão CAN");
             }
             return;
         }
 
-        // Apply locally
+        // Aplicar localmente
         if (stateStr == "off")
             changeState(STATE_OFF);
         else if (stateStr == "unoccupied")
@@ -1192,7 +1257,10 @@ static void processCommandLine(const String &cmdLine)
     return;
 }
 
-// Processar comandos seriais recebidos
+/**
+ * Lê e processa comandos recebidos pela porta série
+ * Deve ser chamada ciclicamente no loop principal
+ */
 void processSerialCommands()
 {
     if (Serial.available() > 0)
@@ -1201,13 +1269,13 @@ void processSerialCommands()
 
         if (c == '\n')
         {
-            // Process the completed command
+            // Processar o comando completo
             processCommandLine(input);
-            input = ""; // Clear the input buffer
+            input = ""; // Limpar o buffer de entrada
         }
-        else if (c != '\r') // Ignore carriage returns
+        else if (c != '\r') // Ignorar retornos de carro
         {
-            // Add character to the buffer
+            // Adicionar caractere ao buffer
             input += c;
         }
     }

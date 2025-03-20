@@ -1,3 +1,18 @@
+/**
+ * LEDController.cpp - Implementação do controlador de iluminação LED
+ *
+ * Este ficheiro implementa as funcionalidades de controlo da iluminação:
+ * - Gestão do ciclo de trabalho (duty cycle) do LED
+ * - Adaptação às condições de iluminação externa
+ * - Estimativa de consumo energético
+ * - Calibração da resposta do LED
+ * - Interface para diferentes formas de controlo (percentagem, PWM, potência)
+ */
+
+//============================================================================
+// FICHEIROS INCLUÍDOS
+//============================================================================
+
 #include "LEDController.h"
 #include "Configuration.h"
 #include "SensorReader.h"
@@ -6,16 +21,28 @@
 #include "DataLogger.h"
 #include <Arduino.h>
 
+//============================================================================
+// VARIÁVEIS GLOBAIS E CONSTANTES
+//============================================================================
 
 // Variáveis estáticas para o módulo
-static int ledPin = LED_PIN; // Use value from Configuration.h
-static int pwmMax = PWM_MAX; // Use value from Configuration.h
-static int pwmMin = PWM_MIN; // Use value from Configuration.h
+static int ledPin = LED_PIN; // Pino do LED definido em Configuration.h
+static int pwmMax = PWM_MAX; // Valor máximo de PWM definido em Configuration.h
+static int pwmMin = PWM_MIN; // Valor mínimo de PWM definido em Configuration.h
 
 // --- Adaptação à Luz Externa ---
-float lastExternalLux = 0.0;
-float externalLuxAverage = 0.0;
+float lastExternalLux = 0.0;     // Última medição de luz externa estimada
+float externalLuxAverage = 0.0;  // Média móvel da luz externa
 
+//============================================================================
+// FUNÇÕES DE ADAPTAÇÃO AMBIENTAL
+//============================================================================
+
+/**
+ * Estima a iluminação externa subtraindo a contribuição do LED
+ * da medição total do sensor
+ * @return iluminação externa estimada em lux
+ */
 float getExternalIlluminance()
 {
     float measuredLux = readLux();
@@ -34,7 +61,7 @@ float getExternalIlluminance()
     // Calcular estimativa atual de lux externo
     float currentExternalLux = max(0.0f, measuredLux - ledContribution);
 
-    // Aplicar média de movimento lento à iluminância externa
+    // Aplicar média de movimento lento à iluminação externa
     if (lastExternalLux == 0.0)
     {
         externalLuxAverage = currentExternalLux;
@@ -49,6 +76,10 @@ float getExternalIlluminance()
     return externalLuxAverage;
 }
 
+/**
+ * Adapta o controlo do LED às mudanças na iluminação externa
+ * Implementa uma estratégia de feedforward para ajudar o controlo PID
+ */
 void adaptToExternalLight()
 {
     static unsigned long lastAdaptTime = 0;
@@ -61,7 +92,7 @@ void adaptToExternalLight()
     }
     lastAdaptTime = millis();
 
-    // Obter iluminância externa atual
+    // Obter iluminação externa atual
     float externalLux = getExternalIlluminance();
 
     // Ignorar primeira execução ou quando em modo manual
@@ -102,16 +133,32 @@ void adaptToExternalLight()
     }
 }
 
+/**
+ * Calcula o consumo de energia atual do LED
+ * @return Consumo de energia em Watts
+ */
 float getPowerConsumption()
 {
     return dutyCycle * MAX_POWER_WATTS;
 }
 
+/**
+ * Obtém o tempo decorrido desde o início da execução
+ * @return Tempo decorrido em segundos
+ */
 unsigned long getElapsedTime()
 {
     return millis() / 1000;
 }
 
+//============================================================================
+// INICIALIZAÇÃO E TESTE DO LED
+//============================================================================
+
+/**
+ * Executa um teste visual rápido do LED
+ * Aumenta e diminui a intensidade para verificar o funcionamento
+ */
 void testLED()
 {
     // Teste rápido do LED aumentando e diminuindo a intensidade
@@ -134,6 +181,10 @@ void testLED()
     Serial.println("Teste do LED concluído.");
 }
 
+/**
+ * Inicializa o driver do LED configurando o pino e parâmetros iniciais
+ * @param pin Número do pino Arduino para o LED
+ */
 void initLEDDriver(int pin)
 {
     ledPin = pin;
@@ -145,7 +196,7 @@ void initLEDDriver(int pin)
     analogWrite(ledPin, pwmMin);
     dutyCycle = 0.0; // Utilizar a variável global de duty cycle
 
-    // Mensagem de depuração apenas se a depuração estiver ativada
+    // Mensagem de debug apenas se a debug estiver ativada
     if (DEBUG_MODE && DEBUG_LED)
     {
         Serial.print("Driver LED inicializado no pino ");
@@ -153,6 +204,14 @@ void initLEDDriver(int pin)
     }
 }
 
+//============================================================================
+// FUNÇÕES DE CONTROLO DO LED
+//============================================================================
+
+/**
+ * Define o duty cycle do LED diretamente
+ * @param newDutyCycle Novo duty cycle entre 0.0 e 1.0
+ */
 void setLEDDutyCycle(float newDutyCycle)
 {
     // Validar e restringir entrada
@@ -171,7 +230,7 @@ void setLEDDutyCycle(float newDutyCycle)
     // Atualizar o duty cycle global
     dutyCycle = newDutyCycle;
 
-    // Mensagem de depuração apenas se a depuração estiver ativada
+    // Mensagem de debug apenas se a debug estiver ativada
     if (DEBUG_MODE && DEBUG_LED)
     {
         Serial.print("Duty cycle do LED definido para: ");
@@ -179,13 +238,17 @@ void setLEDDutyCycle(float newDutyCycle)
     }
 }
 
+/**
+ * Define a intensidade do LED como percentagem
+ * @param percentage Percentagem de intensidade (0-100%)
+ */
 void setLEDPercentage(float percentage)
 {
     percentage = constrain(percentage, 0.0f, 100.0f);
     float newDutyCycle = percentage / 100.0f;
     setLEDDutyCycle(newDutyCycle);
 
-    // Mensagem de depuração apenas se a depuração estiver ativada
+    // Mensagem de debug apenas se a debug estiver ativada
     if (DEBUG_MODE && DEBUG_LED)
     {
         Serial.print("Percentagem do LED definida para: ");
@@ -193,6 +256,10 @@ void setLEDPercentage(float percentage)
     }
 }
 
+/**
+ * Define o valor PWM direto para o LED
+ * @param pwmValue Valor PWM entre pwmMin e pwmMax
+ */
 void setLEDPWMValue(int pwmValue)
 {
     pwmValue = constrain(pwmValue, pwmMin, pwmMax);
@@ -201,7 +268,7 @@ void setLEDPWMValue(int pwmValue)
     // Atualizar duty cycle global
     dutyCycle = (float)pwmValue / pwmMax;
 
-    // Mensagem de depuração apenas se a depuração estiver ativada
+    // Mensagem de debug apenas se a debug estiver ativada
     if (DEBUG_MODE && DEBUG_LED)
     {
         Serial.print("Valor PWM do LED definido para: ");
@@ -209,13 +276,17 @@ void setLEDPWMValue(int pwmValue)
     }
 }
 
+/**
+ * Define a potência do LED em Watts
+ * @param powerWatts Potência desejada em Watts (0-MAX_POWER_WATTS)
+ */
 void setLEDPower(float powerWatts)
 {
     powerWatts = constrain(powerWatts, 0.0f, MAX_POWER_WATTS);
     float newDutyCycle = powerWatts / MAX_POWER_WATTS;
     setLEDDutyCycle(newDutyCycle);
 
-    // Mensagem de depuração apenas se a depuração estiver ativada
+    // Mensagem de debug apenas se a debug estiver ativada
     if (DEBUG_MODE && DEBUG_LED)
     {
         Serial.print("Potência do LED definida para: ");
@@ -223,21 +294,41 @@ void setLEDPower(float powerWatts)
     }
 }
 
+//============================================================================
+// FUNÇÕES DE LEITURA DE ESTADO DO LED
+//============================================================================
+
+/**
+ * Obtém o duty cycle atual do LED
+ * @return Duty cycle entre 0.0 e 1.0
+ */
 float getLEDDutyCycle()
 {
     return dutyCycle;
 }
 
+/**
+ * Obtém a percentagem atual de intensidade do LED
+ * @return Percentagem entre 0 e 100
+ */
 float getLEDPercentage()
 {
     return dutyCycle * 100.0f;
 }
 
+/**
+ * Obtém o valor PWM atual do LED
+ * @return Valor PWM entre pwmMin e pwmMax
+ */
 int getLEDPWMValue()
 {
     return (int)(dutyCycle * pwmMax);
 }
 
+/**
+ * Obtém a potência atual do LED em Watts
+ * @return Potência em Watts
+ */
 float getLEDPower()
 {
     return dutyCycle * MAX_POWER_WATTS;

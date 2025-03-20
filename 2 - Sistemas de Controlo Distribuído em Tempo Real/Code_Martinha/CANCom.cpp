@@ -520,13 +520,13 @@ void processIncomingMessage(const can_frame &msg)
             }
         }
         else if (controlType == 10)
-        { // Iluminância de referência
+        { // iluminação de referência
             refIlluminance = value;
             setpointLux = value;
 
             if (canMonitorEnabled)
             {
-                Serial.print("CAN: A definir iluminância de referência para ");
+                Serial.print("CAN: A definir iluminação de referência para ");
                 Serial.println(value);
             }
         }
@@ -539,7 +539,7 @@ void processIncomingMessage(const can_frame &msg)
 
             // Extração do código da variável a partir do valor float
             int varCode = (int)value;
-            String var = "y"; // Variável padrão (iluminância)
+            String var = "y"; // Variável padrão (iluminação)
 
             // Mapeamento de códigos para variáveis
             if (varCode == 1)
@@ -574,7 +574,7 @@ void processIncomingMessage(const can_frame &msg)
                 stopStream(var, sourceNode);
         }
         else if (controlType == 13)
-        { // Estado do luminária
+        { // Estado do LED
             int stateVal = (int)value;
             if (stateVal == 0)
                 changeState(STATE_OFF);
@@ -615,11 +615,11 @@ void processIncomingMessage(const can_frame &msg)
             case 26: // Controlo por feedback
                 responseValue = feedbackControl ? 1.0f : 0.0f;
                 break;
-            case 27: // Iluminância de referência
+            case 27: // iluminação de referência
                 responseValue = refIlluminance;
                 break;
-            case 28: // Iluminância atual
-                Serial.println("Consulta para iluminância atual");
+            case 28: // iluminação atual
+                Serial.println("Consulta para iluminação atual");
                 responseValue = readLux();
                 break;
             case 29: // Consumo de potência
@@ -631,7 +631,7 @@ void processIncomingMessage(const can_frame &msg)
             case 31: // Tensão no LDR
                 responseValue = getVoltageAtLDR();
                 break;
-            case 32: // Iluminância externa
+            case 32: // iluminação externa
                 responseValue = getExternalIlluminance();
                 break;
             default:
