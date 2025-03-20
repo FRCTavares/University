@@ -515,6 +515,11 @@ void startStream(const String &var, int index)
 void stopStream(const String &var, int index)
 {
   streamingEnabled = false;
+  streamingVar = "";  // Clear the variable
+  Serial.print("Stopped streaming ");
+  Serial.print(var);
+  Serial.print(" for node ");
+  Serial.println(index);
 }
 
 // --- Handle streaming in the main loop ---
@@ -525,32 +530,45 @@ void handleStreaming()
     return; // Not streaming or not time to stream yet
   }
 
-  lastStreamTime = millis();
+  unsigned long currentTime = millis();
+  lastStreamTime = currentTime;
   String var = streamingVar;
   int index = streamingIndex;
 
   if (var.equalsIgnoreCase("y"))
   {
     float lux = readLux();
-    Serial.print("y ");
+    Serial.print("s ");  // Add "s" prefix
+    Serial.print(var);
+    Serial.print(" ");
     Serial.print(index);
     Serial.print(" ");
-    Serial.println(lux, 2);
+    Serial.print(lux, 2);
+    Serial.print(" ");
+    Serial.println(currentTime);  // Add timestamp
   }
   else if (var.equalsIgnoreCase("u"))
   {
-    Serial.print("u ");
+    Serial.print("s ");  // Add "s" prefix
+    Serial.print(var);
+    Serial.print(" ");
     Serial.print(index);
     Serial.print(" ");
-    Serial.println(dutyCycle, 4);
+    Serial.print(dutyCycle, 4);
+    Serial.print(" ");
+    Serial.println(currentTime);  // Add timestamp
   }
   else if (var.equalsIgnoreCase("p"))
   {
     float power = getPowerConsumption();
-    Serial.print("p ");
+    Serial.print("s ");  // Add "s" prefix
+    Serial.print(var);
+    Serial.print(" ");
     Serial.print(index);
     Serial.print(" ");
-    Serial.println(power, 2);
+    Serial.print(power, 2);
+    Serial.print(" ");
+    Serial.println(currentTime);  // Add timestamp
   }
 }
 
@@ -682,13 +700,6 @@ void loop()
 
   // (I) Periodic CAN tasks
   unsigned long now = millis();
-
-  // Send heartbeat periodically
-  if (now - lastHeartbeat >= heartbeatInterval)
-  {
-    lastHeartbeat = now;
-    sendHeartbeat();
-  }
 
   // Send sensor data if periodic mode is enabled
   if (periodicCANEnabled && (now - lastCANSend >= 1000))

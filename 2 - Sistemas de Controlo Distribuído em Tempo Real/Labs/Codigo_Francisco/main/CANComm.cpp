@@ -2,6 +2,7 @@
 #include <SPI.h>
 #include "Globals.h"
 #include "Metrics.h"
+#include "LEDDriver.h"
 
 // Use the same pin configuration as the working example
 const int CAN_CS_PIN = 17;
@@ -176,6 +177,11 @@ bool sendQueryResponse(uint8_t destNode, float value)
   // Envie a mensagem
   MCP2515::ERROR result = sendCANMessage(frame);
 
+  Serial.print("DEBUG: Sent query response to node ");
+  Serial.print(destNode);
+  Serial.print(", value: ");
+  Serial.println(value);
+
   if (result == MCP2515::ERROR_OK)
   {
     msgSent++;
@@ -238,6 +244,14 @@ void processIncomingMessage(const can_frame &msg)
   uint8_t msgType, destAddr, priority;
   parseCANId(msg.can_id, msgType, destAddr, priority);
 
+  if (canMonitorEnabled)
+  {
+    Serial.print("DEBUG: Received CAN message, type ");
+    Serial.print(msgType);
+    Serial.print(", source ");
+    Serial.print(msg.data[0]);
+  }
+
   // Check if this message is for us (or broadcast)
   if (destAddr != nodeID && destAddr != CAN_ADDR_BROADCAST)
   {
@@ -266,12 +280,6 @@ void processIncomingMessage(const can_frame &msg)
       Serial.print(" (ts: ");
       Serial.print(timestamp);
       Serial.println(")");
-    }
-
-    // Add specific handling for sensor data
-    if (sensorType == 0)
-    { // Lux
-      // Could store neighbor lux readings
     }
     break;
   }
@@ -344,6 +352,57 @@ void processIncomingMessage(const can_frame &msg)
       response.data[6] = 0;
       response.data[7] = 0;
       sendCANMessage(response);
+    }
+    else if (controlType == 4) { // Set duty cycle
+      setLEDDutyCycle(value);
+      if (canMonitorEnabled) {
+        Serial.print("CAN: Setting duty cycle to ");
+        Serial.println(value);
+      }
+    }
+    else if (controlType == 5) { // Set LED percentage
+      setLEDPercentage(value);
+      if (canMonitorEnabled) {
+        Serial.print("CAN: Setting LED percentage to ");
+        Serial.println(value);
+      }
+    }
+    else if (controlType == 6) { // Set LED power in watts
+      setLEDPower(value);
+      if (canMonitorEnabled) {
+        Serial.print("CAN: Setting LED power to ");
+        Serial.println(value);
+      }
+    }
+    else if (controlType == 7) { // Set occupancy
+      occupancy = (value != 0.0f);
+      if (canMonitorEnabled) {
+        Serial.print("CAN: Setting occupancy to ");
+        Serial.println(occupancy ? "true" : "false");
+      }
+    }
+    else if (controlType == 8) { // Set anti-windup
+      antiWindup = (value != 0.0f);
+      if (canMonitorEnabled) {
+        Serial.print("CAN: Setting anti-windup to ");
+        Serial.println(antiWindup ? "true" : "false");
+      }
+    }
+    else if (controlType == 9) { // Set feedback control
+      feedbackControl = (value != 0.0f);
+      if (canMonitorEnabled) {
+        Serial.print("CAN: Setting feedback control to ");
+        Serial.println(feedbackControl ? "true" : "false");
+      }
+    }
+    else if (controlType == 10) { // Reference illuminance
+      refIlluminance = value;
+      setpointLux = value;
+      
+      if (canMonitorEnabled) {
+        Serial.print("CAN: Setting reference illuminance to ");
+        Serial.println(value);
+      }
     }
     else if (controlType == 11)
     { // Stream start
@@ -454,6 +513,7 @@ void processIncomingMessage(const can_frame &msg)
         responseValue = refIlluminance;
         break;
       case 28:
+        Serial.println("Query for current illuminance");
         responseValue = readLux();
         break;
       case 29:
