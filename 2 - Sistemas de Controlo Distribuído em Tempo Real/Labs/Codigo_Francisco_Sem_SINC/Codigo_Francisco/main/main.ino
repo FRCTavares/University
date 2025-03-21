@@ -334,7 +334,7 @@ float readLux()
 void calibrateLuxSensor(float knownLux)
 {
   float measuredLux = 0.0;
-  const int CAL_SAMPLES = 20;
+  const int CAL_SAMPLES = 10;
 
   for (int i = 0; i < CAL_SAMPLES; i++)
   {
@@ -350,7 +350,7 @@ void calibrateLuxSensor(float knownLux)
     float rawLux = pow(10, logLux);
 
     measuredLux += rawLux;
-    delay(50);
+    delay(5000);
   }
   measuredLux /= CAL_SAMPLES;
 
@@ -515,7 +515,7 @@ void startStream(const String &var, int index)
 void stopStream(const String &var, int index)
 {
   streamingEnabled = false;
-  streamingVar = "";  // Clear the variable
+  streamingVar = ""; // Clear the variable
   Serial.print("Stopped streaming ");
   Serial.print(var);
   Serial.print(" for node ");
@@ -538,37 +538,37 @@ void handleStreaming()
   if (var.equalsIgnoreCase("y"))
   {
     float lux = readLux();
-    Serial.print("s ");  // Add "s" prefix
+    Serial.print("s "); // Add "s" prefix
     Serial.print(var);
     Serial.print(" ");
     Serial.print(index);
     Serial.print(" ");
     Serial.print(lux, 2);
     Serial.print(" ");
-    Serial.println(currentTime);  // Add timestamp
+    Serial.println(currentTime); // Add timestamp
   }
   else if (var.equalsIgnoreCase("u"))
   {
-    Serial.print("s ");  // Add "s" prefix
+    Serial.print("s "); // Add "s" prefix
     Serial.print(var);
     Serial.print(" ");
     Serial.print(index);
     Serial.print(" ");
     Serial.print(dutyCycle, 4);
     Serial.print(" ");
-    Serial.println(currentTime);  // Add timestamp
+    Serial.println(currentTime); // Add timestamp
   }
   else if (var.equalsIgnoreCase("p"))
   {
     float power = getPowerConsumption();
-    Serial.print("s ");  // Add "s" prefix
+    Serial.print("s "); // Add "s" prefix
     Serial.print(var);
     Serial.print(" ");
     Serial.print(index);
     Serial.print(" ");
     Serial.print(power, 2);
     Serial.print(" ");
-    Serial.println(currentTime);  // Add timestamp
+    Serial.println(currentTime); // Add timestamp
   }
 }
 
@@ -631,6 +631,9 @@ void setup()
   analogReadResolution(12);
   analogWriteFreq(30000);
   analogWriteRange(PWM_MAX);
+
+  // Calibrate the LDR sensor
+  calibrateLuxSensor(10.0);
 
   // Initialize LED driver with the LED pin
   initLEDDriver(LED_PIN);
