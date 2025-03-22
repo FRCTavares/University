@@ -53,7 +53,7 @@ unsigned long lastHeartbeat = 0;                // Timestamp do último heartbea
 unsigned long heartbeatInterval = 5000;         // Intervalo entre heartbeats (ms)
 
 // --- Controlador PID ---
-PIDController pid(KP, KI, KD, FILTER_N, DT); // Inicialização com parâmetros de Configuration.h
+PIDController pid(KP, KI, 1.0, 1.0); // Using default Beta=1.0 and Gamma=1.0
 
 //============================================================================
 // INICIALIZAÇÃO

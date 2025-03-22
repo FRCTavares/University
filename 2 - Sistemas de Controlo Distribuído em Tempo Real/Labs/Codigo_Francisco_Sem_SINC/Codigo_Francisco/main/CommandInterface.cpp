@@ -7,7 +7,19 @@
 #include "LEDDriver.h"
 #include "Globals.h"
 
-// Helper to split a command line into tokens by space
+static void printHelp();
+//-----------------------------------------------------------------------------
+// COMMAND PARSING HELPERS
+//-----------------------------------------------------------------------------
+
+/**
+ * Split a command line into space-separated tokens
+ * 
+ * @param cmd The command string to parse
+ * @param tokens Output array to store the parsed tokens
+ * @param maxTokens Maximum number of tokens to extract
+ * @param numFound Output parameter for number of tokens found
+ */
 static void parseTokens(const String &cmd, String tokens[], int maxTokens, int &numFound)
 {
   numFound = 0;
@@ -28,7 +40,12 @@ static void parseTokens(const String &cmd, String tokens[], int maxTokens, int &
   }
 }
 
-// Helper function to check if command should execute locally or be forwarded
+/**
+ * Determine if a command should be executed locally or forwarded to another node
+ * 
+ * @param targetNode The node ID specified in the command
+ * @return true if command should be forwarded, false for local execution
+ */
 static bool shouldForwardCommand(uint8_t targetNode)
 {
   // If target is broadcast (0) or matches this node, process locally
@@ -40,7 +57,16 @@ static bool shouldForwardCommand(uint8_t targetNode)
   return true;
 }
 
-// Processes a single command line from Serial
+//-----------------------------------------------------------------------------
+// COMMAND PROCESSING
+//-----------------------------------------------------------------------------
+
+/**
+ * Process a single command line from Serial
+ * Parses and executes commands for control, metrics, and CAN operations
+ * 
+ * @param cmdLine The command string to process
+ */
 static void processCommandLine(const String &cmdLine)
 {
   String trimmed = cmdLine;
@@ -48,7 +74,7 @@ static void processCommandLine(const String &cmdLine)
   if (trimmed.length() == 0)
     return;
 
-  // Tokenize
+  // Tokenize the command line
   const int MAX_TOKENS = 6;
   String tokens[MAX_TOKENS];
   int numTokens = 0;
@@ -57,11 +83,12 @@ static void processCommandLine(const String &cmdLine)
     return;
 
   String c0 = tokens[0];
-  //c0.toLowerCase();
 
-  // ------------------- CONTROL COMMANDS -------------------
+  //-----------------------------------------------------------------------------
+  // LED CONTROL COMMANDS
+  //-----------------------------------------------------------------------------
 
-  // "u <i> <val>" => set duty cycle
+  // "u <i> <val>" => set duty cycle (0.0-1.0)
   if (c0 == "u")
   {
     if (numTokens < 3)
@@ -115,7 +142,8 @@ static void processCommandLine(const String &cmdLine)
     Serial.println("ack");
     return;
   }
-  // "p <i> <percentage>" => set LED by percentage
+  
+  // "p <i> <percentage>" => set LED by percentage (0-100%)
   else if (c0 == "p")
   {
     if (numTokens < 3)
@@ -165,15 +193,14 @@ static void processCommandLine(const String &cmdLine)
     }
 
     // Apply locally
-
     setLEDPercentage(val);
     Serial.println("ack");
     return;
   }
+  
   // "w <i> <watts>" => set LED by power in watts
   else if (c0 == "w")
   {
-
     if (numTokens < 3)
     {
       Serial.println("err");
@@ -224,7 +251,12 @@ static void processCommandLine(const String &cmdLine)
     Serial.println("ack");
     return;
   }
-  // "o <i> <val>" => set occupancy state
+
+  //-----------------------------------------------------------------------------
+  // SYSTEM STATE CONTROL COMMANDS
+  //-----------------------------------------------------------------------------
+  
+  // "o <i> <val>" => set occupancy state (0=unoccupied, 1=occupied)
   else if (c0 == "o")
   {
     if (numTokens < 3)
@@ -277,7 +309,8 @@ static void processCommandLine(const String &cmdLine)
     Serial.println("ack");
     return;
   }
-  // "a <i> <val>" => set anti-windup on/off
+  
+  // "a <i> <val>" => set anti-windup on/off (0=off, 1=on)
   else if (c0 == "a")
   {
     if (numTokens < 3)
@@ -330,7 +363,8 @@ static void processCommandLine(const String &cmdLine)
     Serial.println("ack");
     return;
   }
-  // "f <i> <val>" => set feedback control on/off
+  
+  // "f <i> <val>" => set feedback control on/off (0=off, 1=on)
   else if (c0 == "f")
   {
     if (numTokens < 3)
@@ -383,7 +417,8 @@ static void processCommandLine(const String &cmdLine)
     Serial.println("ack");
     return;
   }
-  // "r <i> <val>" => set illuminance reference
+  
+  // "r <i> <val>" => set illuminance reference (lux)
   else if (c0 == "r")
   {
     if (numTokens < 3)
@@ -438,6 +473,19 @@ static void processCommandLine(const String &cmdLine)
     Serial.println("ack");
     return;
   }
+  // "h" => Print help information
+  else if (c0 == "h")
+  {
+    printHelp();
+    return;
+  }
+
+  
+
+  //-----------------------------------------------------------------------------
+  // DATA STREAMING COMMANDS
+  //-----------------------------------------------------------------------------
+  
   // "s <x> <i>" => start stream of real-time variable <x> for desk <i>
   else if (c0 == "s")
   {
@@ -454,36 +502,36 @@ static void processCommandLine(const String &cmdLine)
     if (shouldForwardCommand(targetNode))
     {
       // Stream start = control type 11
-      // We'll encode the variable type in the value field:
-      // 'y'=0, 'u'=1, 'p'=2, etc.
+      // Encode the variable type in the value field
       float varCode = 0; // Default for 'y' (lux)
 
+      // Map variable names to numeric codes for CAN transmission
       if (var.equalsIgnoreCase("u"))
-        varCode = 1;
+        varCode = 1;      // Duty cycle
       else if (var.equalsIgnoreCase("p"))
-        varCode = 2;
+        varCode = 2;      // Power percentage
       else if (var.equalsIgnoreCase("o"))
-        varCode = 3;
+        varCode = 3;      // Occupancy
       else if (var.equalsIgnoreCase("a"))
-        varCode = 4;
+        varCode = 4;      // Anti-windup
       else if (var.equalsIgnoreCase("f"))
-        varCode = 5;
+        varCode = 5;      // Feedback control
       else if (var.equalsIgnoreCase("r"))
-        varCode = 6;
+        varCode = 6;      // Reference illuminance
       else if (var.equalsIgnoreCase("y"))
-        varCode = 0;
+        varCode = 0;      // Illuminance (lux)
       else if (var.equalsIgnoreCase("v"))
-        varCode = 7;
+        varCode = 7;      // LDR voltage
       else if (var.equalsIgnoreCase("d"))
-        varCode = 8;
+        varCode = 8;      // External illuminance
       else if (var.equalsIgnoreCase("t"))
-        varCode = 9;
+        varCode = 9;      // Elapsed time
       else if (var.equalsIgnoreCase("V"))
-        varCode = 10;
+        varCode = 10;     // Visibility error
       else if (var.equalsIgnoreCase("F"))
-        varCode = 11;
+        varCode = 11;     // Flicker
       else if (var.equalsIgnoreCase("E"))
-        varCode = 12;
+        varCode = 12;     // Energy
 
       if (sendControlCommand(targetNode, 11, varCode))
       {
@@ -499,7 +547,8 @@ static void processCommandLine(const String &cmdLine)
     startStream(var, targetNode);
     return;
   }
-  // "S <x> <i>" => stop stream
+  
+  // "S <x> <i>" => stop stream of variable <x> for desk <i>
   else if (c0 == "S")
   {
     if (numTokens < 3)
@@ -515,35 +564,36 @@ static void processCommandLine(const String &cmdLine)
     if (shouldForwardCommand(targetNode))
     {
       // Stream stop = control type 12
-      // We'll encode the variable type in the value field
+      // Encode the variable type in the value field
       float varCode = 0; // Default for 'y' (lux)
 
+      // Map variable names to numeric codes for CAN transmission
       if (var.equalsIgnoreCase("u"))
-        varCode = 1;
+        varCode = 1;      // Duty cycle
       else if (var.equalsIgnoreCase("p"))
-        varCode = 2;
+        varCode = 2;      // Power percentage
       else if (var.equalsIgnoreCase("o"))
-        varCode = 3;
+        varCode = 3;      // Occupancy
       else if (var.equalsIgnoreCase("a"))
-        varCode = 4;
+        varCode = 4;      // Anti-windup
       else if (var.equalsIgnoreCase("f"))
-        varCode = 5;
+        varCode = 5;      // Feedback control
       else if (var.equalsIgnoreCase("r"))
-        varCode = 6;
+        varCode = 6;      // Reference illuminance
       else if (var.equalsIgnoreCase("y"))
-        varCode = 0;
+        varCode = 0;      // Illuminance (lux)
       else if (var.equalsIgnoreCase("v"))
-        varCode = 7;
+        varCode = 7;      // LDR voltage
       else if (var.equalsIgnoreCase("d"))
-        varCode = 8;
+        varCode = 8;      // External illuminance
       else if (var.equalsIgnoreCase("t"))
-        varCode = 9;
+        varCode = 9;      // Elapsed time
       else if (var.equalsIgnoreCase("V"))
-        varCode = 10;
+        varCode = 10;     // Visibility error
       else if (var.equalsIgnoreCase("F"))
-        varCode = 11;
+        varCode = 11;     // Flicker
       else if (var.equalsIgnoreCase("E"))
-        varCode = 12;
+        varCode = 12;     // Energy
 
       if (sendControlCommand(targetNode, 12, varCode))
       {
@@ -562,9 +612,11 @@ static void processCommandLine(const String &cmdLine)
     return;
   }
 
-  // ------------------- METRIC COMMANDS -------------------
+  //-----------------------------------------------------------------------------
+  // METRICS AND DATA QUERY COMMANDS
+  //-----------------------------------------------------------------------------
 
-  // If first token is 'g' => "g <sub> <i>"
+  // "g <var> <i>" => Get value of variable <var> from node <i>
   else if (c0 == "g")
   {
     if (numTokens < 3)
@@ -582,35 +634,36 @@ static void processCommandLine(const String &cmdLine)
     // Check if we need to forward this command
     if (shouldForwardCommand(targetNode))
     {
-      // Map the get command to a CAN query message type (using code 20-30)
+      // Map the get command to a CAN query message type (using code 20-32)
       uint8_t queryType = 20; // Default query type
 
+      // Map variable types to query codes
       if (originalCase == "V")
-        queryType = 20; // Visibility error
+        queryType = 20;        // Visibility error
       else if (originalCase == "F")
-        queryType = 21; // Flicker
+        queryType = 21;        // Flicker
       else if (originalCase == "E")
-        queryType = 22; // Energy
+        queryType = 22;        // Energy
       else if (subCommand == "u")
-        queryType = 23; // Duty cycle
+        queryType = 23;        // Duty cycle
       else if (subCommand == "o")
-        queryType = 24; // Occupancy
+        queryType = 24;        // Occupancy
       else if (subCommand == "a")
-        queryType = 25; // Anti-windup
+        queryType = 25;        // Anti-windup
       else if (subCommand == "f")
-        queryType = 26; // Feedback control
+        queryType = 26;        // Feedback control
       else if (subCommand == "r")
-        queryType = 27; // Reference illuminance
+        queryType = 27;        // Reference illuminance
       else if (subCommand == "y")
-        queryType = 28; // Current illuminance
+        queryType = 28;        // Current illuminance
       else if (subCommand == "p")
-        queryType = 29; // Power consumption
+        queryType = 29;        // Power consumption
       else if (subCommand == "t")
-        queryType = 30; // Elapsed time
+        queryType = 30;        // Elapsed time
       else if (subCommand == "v")
-        queryType = 31; // LDR voltage
+        queryType = 31;        // LDR voltage
       else if (subCommand == "d")
-        queryType = 32; // External illuminance
+        queryType = 32;        // External illuminance
       else
       {
         Serial.println("err: Unsupported remote variable query");
@@ -637,11 +690,11 @@ static void processCommandLine(const String &cmdLine)
 
             uint8_t senderNodeID = frame.data[0];
 
-            if (msgType == CAN_TYPE_RESPONSE && senderNodeID == targetNode && (destAddr == nodeID || destAddr == CAN_ADDR_BROADCAST))
+            if (msgType == CAN_TYPE_RESPONSE && senderNodeID == targetNode && 
+                (destAddr == nodeID || destAddr == CAN_ADDR_BROADCAST))
             {
               // Extract the response value and display
-              float value = 0.0f;
-              value = bytesToFloat(&frame.data[2]);
+              float value = bytesToFloat(&frame.data[2]);
 
               // Format the response based on the original query type
               if (originalCase == "V" || originalCase == "F" || originalCase == "E")
@@ -658,15 +711,17 @@ static void processCommandLine(const String &cmdLine)
 
               // Format the value with appropriate precision
               if (subCommand == "u" || originalCase == "F" || originalCase == "E")
-                Serial.println(value, 4);
-              else if (originalCase == "V" || subCommand == "y" || subCommand == "p" || subCommand == "d")
-                Serial.println(value, 2);
+                Serial.println(value, 4);  // 4 decimal places
+              else if (originalCase == "V" || subCommand == "y" || 
+                      subCommand == "p" || subCommand == "d")
+                Serial.println(value, 2);  // 2 decimal places
               else if (subCommand == "v")
-                Serial.println(value, 3);
-              else if (subCommand == "o" || subCommand == "a" || subCommand == "f" || subCommand == "t")
-                Serial.println((int)value);
+                Serial.println(value, 3);  // 3 decimal places
+              else if (subCommand == "o" || subCommand == "a" || 
+                      subCommand == "f" || subCommand == "t")
+                Serial.println((int)value); // Integer values
               else
-                Serial.println(value);
+                Serial.println(value);     // Default format
 
               responseReceived = true;
             }
@@ -686,8 +741,9 @@ static void processCommandLine(const String &cmdLine)
       return;
     }
 
-    // Process locally
-    // Metric commands
+    // Handle local metric queries
+    
+    // Quality metrics
     // "g V <i>" => "V <i> <val>" (Visibility error metric)
     if (originalCase == "V")
     {
@@ -719,7 +775,8 @@ static void processCommandLine(const String &cmdLine)
       return;
     }
 
-    // "g u <i>" => "u <i> <val>"
+    // Control system variables
+    // "g u <i>" => "u <i> <val>" (duty cycle)
     if (subCommand == "u")
     {
       Serial.print("u ");
@@ -728,7 +785,7 @@ static void processCommandLine(const String &cmdLine)
       Serial.println(dutyCycle, 4);
       return;
     }
-    // "g o <i>" => "o <i> <val>"
+    // "g o <i>" => "o <i> <val>" (occupancy)
     else if (subCommand == "o")
     {
       int occVal = occupancy ? 1 : 0;
@@ -738,7 +795,7 @@ static void processCommandLine(const String &cmdLine)
       Serial.println(occVal);
       return;
     }
-    // "g a <i>" => "a <i> <val>"
+    // "g a <i>" => "a <i> <val>" (anti-windup)
     else if (subCommand == "a")
     {
       int awVal = antiWindup ? 1 : 0;
@@ -748,7 +805,7 @@ static void processCommandLine(const String &cmdLine)
       Serial.println(awVal);
       return;
     }
-    // "g f <i>" => "f <i> <val>"
+    // "g f <i>" => "f <i> <val>" (feedback control)
     else if (subCommand == "f")
     {
       int fbVal = feedbackControl ? 1 : 0;
@@ -758,7 +815,7 @@ static void processCommandLine(const String &cmdLine)
       Serial.println(fbVal);
       return;
     }
-    // "g r <i>" => "r <i> <val>"
+    // "g r <i>" => "r <i> <val>" (reference illuminance)
     else if (subCommand == "r")
     {
       Serial.print("r ");
@@ -767,7 +824,7 @@ static void processCommandLine(const String &cmdLine)
       Serial.println(refIlluminance, 4);
       return;
     }
-    // "g y <i>" => "y <i> <val>"
+    // "g y <i>" => "y <i> <val>" (current illuminance)
     else if (subCommand == "y")
     {
       float lux = readLux();
@@ -777,6 +834,8 @@ static void processCommandLine(const String &cmdLine)
       Serial.println(lux, 2);
       return;
     }
+    
+    // Sensor measurements
     // "g v <i>" => measure voltage level at LDR => "v <i> <val>"
     else if (subCommand == "v")
     {
@@ -817,6 +876,8 @@ static void processCommandLine(const String &cmdLine)
       Serial.println(sec);
       return;
     }
+    
+    // Historical data buffer
     // "g b <x> <i>" => "b <x> <i> <val1>,<val2>..."
     else if (subCommand == "b")
     {
@@ -843,263 +904,318 @@ static void processCommandLine(const String &cmdLine)
       return;
     }
   }
-  // ------------------- CAN COMMANDS -------------------
 
-  // CAN Commands handled if c0 == "c"
-  // "c sd <destNode> <msgType> <value>" => Send a CAN message
-  else if (c0 == "c" && tokens[1] == "sd")
+//-----------------------------------------------------------------------------
+// CONTROLLER PARAMETER COMMANDS
+//-----------------------------------------------------------------------------
+
+// "k <i> <param> <value>" => set controller parameter
+else if (c0 == "k")
+{
+  if (numTokens < 4)
   {
-    if (numTokens < 5)
-    {
-      Serial.println("err");
-      return;
-    }
+    Serial.println("err");
+    return;
+  }
 
-    uint8_t destNode = tokens[2].toInt();
-    uint8_t msgType = tokens[3].toInt();
-    float value = tokens[4].toFloat();
+  uint8_t targetNode = tokens[1].toInt();
+  String param = tokens[2];
+  float value = tokens[3].toFloat();
 
-    bool success = false;
-
-    if (msgType == 0)
-    {                                                   // Control message
-      success = sendControlCommand(destNode, 0, value); // Type 0 = setpoint
-    }
-    else if (msgType == 1)
-    {                                                  // Sensor reading
-      success = sendSensorReading(destNode, 0, value); // Type 0 = lux
-    }
+  // Check if we need to forward this command
+  if (shouldForwardCommand(targetNode))
+  {
+    // Map parameter to control code for CAN
+    uint8_t paramCode = 0;
+    if (param.equalsIgnoreCase("beta"))
+      paramCode = 15;
+    else if (param.equalsIgnoreCase("kp"))
+      paramCode = 16;
+    else if (param.equalsIgnoreCase("ki"))
+      paramCode = 17;
     else
     {
-      Serial.println("err: Invalid message type");
+      Serial.println("err: unknown parameter");
       return;
     }
-
-    if (success)
+    
+    if (sendControlCommand(targetNode, paramCode, value))
     {
       Serial.println("ack");
     }
     else
     {
-      Serial.println("err: Send failed");
+      Serial.println("err: CAN forwarding failed");
     }
     return;
   }
-  // "c m <0|1>" => Enable/disable printing of received CAN messages
-  else if (c0 == "c" && tokens[1] == "m")
+
+  // Handle locally
+  if (param.equalsIgnoreCase("beta"))
   {
-    if (numTokens < 3)
+    if (value < 0.0 || value > 1.0)
     {
-      Serial.println("err");
+      Serial.println("err: beta must be between 0.0 and 1.0");
       return;
     }
-
-    canMonitorEnabled = (tokens[2].toInt() == 1);
-
-    Serial.print("CAN monitoring ");
-    Serial.println(canMonitorEnabled ? "enabled" : "disabled");
+    pid.setWeighting(value);
     Serial.println("ack");
-    return;
   }
-  // "c st" => Display CAN communication statistics
-  else if (c0 == "c" && tokens[1] == "st")
+  else if (param.equalsIgnoreCase("kp"))
   {
-    uint32_t sent, received, errors;
-    float avgLatency;
-    getCANStats(sent, received, errors, avgLatency);
-
-    Serial.println("CAN Statistics:");
-    Serial.print("  Node ID: ");
-    Serial.println(nodeID);
-    Serial.print("  Messages sent: ");
-    Serial.println(sent);
-    Serial.print("  Messages received: ");
-    Serial.println(received);
-    Serial.print("  Errors: ");
-    Serial.println(errors);
-    Serial.print("  Avg. latency: ");
-    Serial.print(avgLatency);
-    Serial.println(" us");
+    // Get current Ki
+    float p, i;
+    pid.getTerms(p, i);
+    float currentKi = KI; // Use default if we can't get it
+    pid.setGains(value, currentKi);
     Serial.println("ack");
-    return;
   }
-  // "c r" => Reset CAN statistics
-  else if (c0 == "c" && tokens[1] == "r")
+  else if (param.equalsIgnoreCase("ki"))
   {
-    resetCANStats();
-    Serial.println("CAN statistics reset");
+    // Get current Kp
+    float currentKp = KP; // Default if we can't get it
+    pid.setGains(currentKp, value);
     Serial.println("ack");
-    return;
   }
-  // "c sc" => Scan for active nodes on the network
-  else if (c0 == "c" && tokens[1] == "sc")
+  else
   {
-    Serial.println("Scanning for active CAN nodes...");
+    Serial.println("err: unknown parameter");
+  }
+  return;
+}
 
-    // We'll track which nodes respond
-    bool nodeFound[64] = {false};
-    int foundCount = 0;
+  //-----------------------------------------------------------------------------
+  // CAN NETWORK COMMANDS
+  //-----------------------------------------------------------------------------
 
-    // Send ping messages to all possible node addresses
-    for (uint8_t node = 1; node < 64; node++)
+  // "c <subcommand> [params]" => CAN-related commands
+  else if (c0 == "c")
+  { 
+    // "c m <0|1>" => Enable/disable CAN message monitoring
+    if (tokens[1] == "m")
     {
-      // Send a special ping message
-      if (sendControlCommand(node, 3, 0))
+      if (numTokens < 3)
       {
-        // Give some time for node to respond
-        delay(50);
-
-        // Process any responses that came in
-        for (int i = 0; i < 5; i++)
-        {
-          can_frame frame;
-          if (readCANMessage(&frame) == MCP2515::ERROR_OK)
-          {
-            uint8_t msgType, srcAddr, priority;
-            parseCANId(frame.can_id, msgType, srcAddr, priority);
-
-            if (!nodeFound[srcAddr])
-            {
-              nodeFound[srcAddr] = true;
-              foundCount++;
-            }
-          }
-          delay(10);
-        }
+        Serial.println("err");
+        return;
       }
-    }
 
-    // Now send a broadcast message to catch any we missed
-    sendControlCommand(CAN_ADDR_BROADCAST, 3, 0);
-    delay(200);
+      canMonitorEnabled = (tokens[2].toInt() == 1);
 
-    // Process any additional responses
-    for (int i = 0; i < 20; i++)
-    {
-      can_frame frame;
-      if (readCANMessage(&frame) == MCP2515::ERROR_OK)
-      {
-        uint8_t msgType, srcAddr, priority;
-        parseCANId(frame.can_id, msgType, srcAddr, priority);
-
-        if (!nodeFound[srcAddr])
-        {
-          nodeFound[srcAddr] = true;
-          foundCount++;
-        }
-      }
-      delay(10);
-    }
-
-    // Display results
-    Serial.print("Found ");
-    Serial.print(foundCount);
-    Serial.println(" active nodes:");
-
-    for (uint8_t node = 1; node < 64; node++)
-    {
-      if (nodeFound[node])
-      {
-        Serial.print("  Node ");
-        Serial.println(node);
-      }
-    }
-
-    Serial.println("Network scan complete");
-    Serial.println("ack");
-    return;
-  }
-  // "c l <destNode> <count>" => Measure round-trip latency
-  else if (c0 == "c" && tokens[1] == "l")
-  {
-    if (numTokens < 4)
-    {
-      Serial.println("err");
+      Serial.print("CAN monitoring ");
+      Serial.println(canMonitorEnabled ? "enabled" : "disabled");
+      Serial.println("ack");
       return;
     }
-
-    uint8_t destNode = tokens[2].toInt();
-    int count = tokens[3].toInt();
-
-    Serial.print("Measuring round-trip latency to node ");
-    Serial.print(destNode);
-    Serial.print(" (");
-    Serial.print(count);
-    Serial.println(" samples)");
-
-    unsigned long totalLatency = 0;
-    int successCount = 0;
-
-    for (int i = 0; i < count; i++)
+    
+    // "c st" => Display CAN communication statistics
+    else if (tokens[1] == "st")
     {
-      unsigned long startTime = micros();
+      uint32_t sent, received, errors;
+      float avgLatency;
+      getCANStats(sent, received, errors, avgLatency);
 
-      // Send echo request (using control message type 2)
-      if (sendControlCommand(destNode, 2, startTime))
+      Serial.println("CAN Statistics:");
+      Serial.print("  Node ID: ");
+      Serial.println(nodeID);
+      Serial.print("  Messages sent: ");
+      Serial.println(sent);
+      Serial.print("  Messages received: ");
+      Serial.println(received);
+      Serial.print("  Errors: ");
+      Serial.println(errors);
+      Serial.print("  Avg. latency: ");
+      Serial.print(avgLatency);
+      Serial.println(" us");
+      Serial.println("ack");
+      return;
+    }
+    
+    // "c r" => Reset CAN statistics counters
+    else if (tokens[1] == "r")
+    {
+      resetCANStats();
+      Serial.println("CAN statistics reset");
+      Serial.println("ack");
+      return;
+    }
+    
+    // "c sc" => Scan for active nodes on the CAN network
+    else if (tokens[1] == "sc")
+    {
+      Serial.println("Scanning for active CAN nodes...");
+
+      // Track which nodes respond
+      bool nodeFound[64] = {false};
+      int foundCount = 0;
+
+      // Send ping messages to all possible node addresses
+      for (uint8_t node = 1; node < 64; node++)
       {
-        // Wait for response with timeout
-        unsigned long timeout = millis() + 500; // 500ms timeout
-        bool responseReceived = false;
-
-        while (millis() < timeout && !responseReceived)
+        // Send a special ping message (control type 3 = discovery)
+        if (sendControlCommand(node, 3, 0))
         {
-          can_frame frame;
-          if (readCANMessage(&frame) == MCP2515::ERROR_OK)
+          // Give some time for node to respond
+          delay(50);
+
+          // Process any responses that came in
+          for (int i = 0; i < 5; i++)
           {
-            // Parse message and check if it's an echo response
-            uint8_t msgType, srcAddr, priority;
-            parseCANId(frame.can_id, msgType, srcAddr, priority);
-
-            if (msgType == CAN_TYPE_RESPONSE && srcAddr == destNode)
+            can_frame frame;
+            if (readCANMessage(&frame) == MCP2515::ERROR_OK)
             {
-              unsigned long endTime = micros();
-              unsigned long latency = endTime - startTime;
-              totalLatency += latency;
-              successCount++;
-              responseReceived = true;
+              uint8_t msgType, srcAddr, priority;
+              parseCANId(frame.can_id, msgType, srcAddr, priority);
 
-              Serial.print("Sample ");
-              Serial.print(i + 1);
-              Serial.print(": ");
-              Serial.print(latency);
-              Serial.println(" us");
+              if (!nodeFound[srcAddr])
+              {
+                nodeFound[srcAddr] = true;
+                foundCount++;
+              }
             }
+            delay(10);
           }
         }
+      }
 
-        if (!responseReceived)
+      // Now send a broadcast message to catch any we missed
+      sendControlCommand(CAN_ADDR_BROADCAST, 3, 0);
+      delay(200);
+
+      // Process any additional responses
+      for (int i = 0; i < 20; i++)
+      {
+        can_frame frame;
+        if (readCANMessage(&frame) == MCP2515::ERROR_OK)
+        {
+          uint8_t msgType, srcAddr, priority;
+          parseCANId(frame.can_id, msgType, srcAddr, priority);
+
+          if (!nodeFound[srcAddr])
+          {
+            nodeFound[srcAddr] = true;
+            foundCount++;
+          }
+        }
+        delay(10);
+      }
+
+      // Display results
+      Serial.print("Found ");
+      Serial.print(foundCount);
+      Serial.println(" active nodes:");
+
+      for (uint8_t node = 1; node < 64; node++)
+      {
+        if (nodeFound[node])
+        {
+          Serial.print("  Node ");
+          Serial.println(node);
+        }
+      }
+
+      Serial.println("Network scan complete");
+      Serial.println("ack");
+      return;
+    }
+    
+    // "c l <destNode> <count>" => Measure round-trip latency
+    else if (tokens[1] == "l")
+    {
+      if (numTokens < 4)
+      {
+        Serial.println("err");
+        return;
+      }
+
+      uint8_t destNode = tokens[2].toInt();
+      int count = tokens[3].toInt();
+
+      Serial.print("Measuring round-trip latency to node ");
+      Serial.print(destNode);
+      Serial.print(" (");
+      Serial.print(count);
+      Serial.println(" samples)");
+
+      unsigned long totalLatency = 0;
+      int successCount = 0;
+
+      for (int i = 0; i < count; i++)
+      {
+        unsigned long startTime = micros();
+
+        // Send echo request (using control message type 2 = echo)
+        if (sendControlCommand(destNode, 2, startTime))
+        {
+          // Wait for response with timeout
+          unsigned long timeout = millis() + 500; // 500ms timeout
+          bool responseReceived = false;
+
+          while (millis() < timeout && !responseReceived)
+          {
+            can_frame frame;
+            if (readCANMessage(&frame) == MCP2515::ERROR_OK)
+            {
+              // Check if it's an echo response
+              uint8_t msgType, srcAddr, priority;
+              parseCANId(frame.can_id, msgType, srcAddr, priority);
+
+              if (msgType == CAN_TYPE_RESPONSE && srcAddr == destNode)
+              {
+                unsigned long endTime = micros();
+                unsigned long latency = endTime - startTime;
+                totalLatency += latency;
+                successCount++;
+                responseReceived = true;
+
+                Serial.print("Sample ");
+                Serial.print(i + 1);
+                Serial.print(": ");
+                Serial.print(latency);
+                Serial.println(" us");
+              }
+            }
+          }
+
+          if (!responseReceived)
+          {
+            Serial.print("Sample ");
+            Serial.print(i + 1);
+            Serial.println(": Timeout");
+          }
+        }
+        else
         {
           Serial.print("Sample ");
           Serial.print(i + 1);
-          Serial.println(": Timeout");
+          Serial.println(": Send failed");
         }
+
+        delay(100); // Wait between samples
+      }
+
+      Serial.println("Latency measurement complete");
+      if (successCount > 0)
+      {
+        float avgLatency = (float)totalLatency / successCount;
+        Serial.print("Average round-trip latency: ");
+        Serial.print(avgLatency, 2);
+        Serial.println(" us");
       }
       else
       {
-        Serial.print("Sample ");
-        Serial.print(i + 1);
-        Serial.println(": Send failed");
+        Serial.println("No successful measurements");
       }
-
-      delay(100); // Wait between samples
+      Serial.println("ack");
+      return;
     }
-
-    Serial.println("Latency measurement complete");
-    if (successCount > 0)
-    {
-      float avgLatency = (float)totalLatency / successCount;
-      Serial.print("Average round-trip latency: ");
-      Serial.print(avgLatency, 2);
-      Serial.println(" us");
-    }
-    else
-    {
-      Serial.println("No successful measurements");
-    }
-    Serial.println("ack");
-    return;
   }
-  // "state <i> <state>" => set luminaire state (off/unoccupied/occupied)
+  
+  //-----------------------------------------------------------------------------
+  // LUMINAIRE STATE COMMANDS
+  //-----------------------------------------------------------------------------
+  
+  // "st <i> <state>" => set luminaire state (off/unoccupied/occupied)
   else if (c0 == "st")
   {
     if (numTokens < 3)
@@ -1172,11 +1288,16 @@ static void processCommandLine(const String &cmdLine)
     Serial.println("ack");
     return;
   }
+
+  // Default response for unrecognized commands
   Serial.println("ack");
   return;
 }
 
-// Called repeatedly in loop() to process any serial input
+/**
+ * Process any pending serial commands
+ * This function should be called regularly in the main loop
+ */
 void processSerialCommands()
 {
   if (Serial.available() > 0)
@@ -1188,4 +1309,60 @@ void processSerialCommands()
       processCommandLine(input);
     }
   }
+}
+
+/**
+ * Print a comprehensive list of all available commands
+ * Organizes commands by category and provides descriptions
+ */
+static void printHelp() {
+  Serial.println("\n===== Distributed Lighting Control System Commands =====\n");
+  
+  Serial.println("------- LED CONTROL -------");
+  Serial.println("u <i> <val>  : Set duty cycle (0.0-1.0) for node i");
+  Serial.println("p <i> <val>  : Set brightness percentage (0-100%) for node i");
+  Serial.println("w <i> <val>  : Set power in watts for node i");
+
+  Serial.println("\n------- CONTROLLER PARAMETERS -------");
+  Serial.println("k <i> beta <val>: Set setpoint weighting factor (0.0-1.0) for node i");
+  Serial.println("k <i> kp <val>  : Set proportional gain for node i");
+  Serial.println("k <i> ki <val>  : Set integral gain for node i");
+  
+  Serial.println("\n------- SYSTEM STATE -------");
+  Serial.println("o <i> <val>  : Set occupancy (0=unoccupied, 1=occupied) for node i");
+  Serial.println("a <i> <val>  : Set anti-windup (0=off, 1=on) for node i");
+  Serial.println("f <i> <val>  : Set feedback control (0=off, 1=on) for node i");
+  Serial.println("r <i> <val>  : Set illuminance reference (lux) for node i");
+  Serial.println("st <i> <state>: Set luminaire state (off/unoccupied/occupied) for node i");
+  
+  Serial.println("\n------- DATA STREAMING -------");
+  Serial.println("s <x> <i>    : Start streaming variable x from node i");
+  Serial.println("S <x> <i>    : Stop streaming variable x from node i");
+  Serial.println("  Variables: y=illuminance, u=duty, p=power, o=occupancy,");
+  Serial.println("             a=anti-windup, f=feedback, r=reference,");
+  Serial.println("             v=LDR voltage, d=external illuminance,");
+  Serial.println("             t=elapsed time, V=visibility error,");
+  Serial.println("             F=flicker, E=energy");
+  
+  Serial.println("\n------- DATA QUERIES -------");
+  Serial.println("g <var> <i>  : Get value of variable <var> from node i");
+  Serial.println("  Variables: Same as streaming, plus:");
+  Serial.println("  g b <x> <i>: Get buffer history of variable x from node i");
+  
+  Serial.println("\n------- CAN NETWORK -------");
+  Serial.println("c m <0|1>    : Disable/enable CAN message monitoring");
+  Serial.println("c st         : Display CAN communication statistics");
+  Serial.println("c r          : Reset CAN statistics counters");
+  Serial.println("c sc         : Scan for active nodes on the CAN network");
+  Serial.println("c l <i> <n>  : Measure round-trip latency to node i (n samples)");
+  
+  Serial.println("\n------- SYSTEM -------");
+  Serial.println("h            : Display this help information");
+  
+  Serial.println("\nNode addressing:");
+  Serial.println("  i = 0      : Broadcast to all nodes");
+  Serial.println("  i = n      : Address specific node n");
+  Serial.println("  Use this node's ID for local commands\n");
+  
+  Serial.println("======================================================\n");
 }

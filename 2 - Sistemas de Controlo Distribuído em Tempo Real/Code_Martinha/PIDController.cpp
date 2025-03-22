@@ -1,10 +1,10 @@
 /**
- * PIDController.cpp - Implementação do controlador PID
+ * PIDController.cpp - Implementação do controlador PI
  *
- * Este ficheiro implementa um controlador PID com funcionalidades avançadas:
- * - Controlo Proporcional, Integral e Derivativo
- * - Proteção anti-windup para evitar saturação do integrador
- * - Filtragem do termo derivativo para reduzir sensibilidade ao ruído
+ * Este ficheiro implementa um controlador PI com funcionalidades avançadas:
+ * - Controlo Proporcional e Integral
+ * - Ponderação do setpoint no termo proporcional
+ * - Proteção anti-windup por back-calculation
  * - Capacidade de ajuste dinâmico dos ganhos
  * - Suporte para alteração do setpoint interno para algoritmos de coordenação
  */
@@ -25,16 +25,15 @@
  * Construtor da classe PIDController
  * @param kp Ganho proporcional
  * @param ki Ganho integral
- * @param kd Ganho derivativo
- * @param n Fator de filtragem do termo derivativo
- * @param samplingTime Tempo de amostragem em segundos
+ * @param beta Fator de ponderação do setpoint (0-1)
+ * @param gamma Ganho de back-calculation para anti-windup
  */
-PIDController::PIDController(float kp, float ki, float kd, float n, float samplingTime)
-    : Kp(kp), Ki(ki), Kd(kd), N(n), h(samplingTime), Iterm(0), Dterm(0), e_old(0),
+PIDController::PIDController(float kp, float ki, float beta, float gamma)
+    : Kp(kp), Ki(ki), Beta(beta), Gamma(gamma), h(0.01f), Pterm(0), Iterm(0), e_old(0),
       internalTarget(0), useInternalTarget(false) {}
 
 /**
- * Calcula a ação de controlo do PID
+ * Calcula a ação de controlo do PI
  * @param setpoint Valor desejado da variável de processo
  * @param measurement Valor atual medido da variável de processo
  * @return Ação de controlo calculada
@@ -44,12 +43,16 @@ float PIDController::compute(float setpoint, float measurement)
     // Usar alvo interno se definido pela lógica de coordenação
     float actualSetpoint = useInternalTarget ? internalTarget : setpoint;
 
+    // Termo proporcional com ponderação de setpoint
+    Pterm = Kp * (Beta * actualSetpoint - measurement);
+    
+    // Cálculo do erro para o termo integral
     float e = actualSetpoint - measurement;
 
     // Saída de debug
     if (DEBUG_MODE && DEBUG_PID)
     {
-        Serial.print("PID: SP=");
+        Serial.print("PI: SP=");
         Serial.print(actualSetpoint);
         Serial.print(" PV=");
         Serial.print(measurement);
@@ -57,26 +60,22 @@ float PIDController::compute(float setpoint, float measurement)
         Serial.println(e);
     }
 
-    // Termo proporcional
-    float Pterm = Kp * e;
-
-    // Termo derivativo com filtragem
-    float derivative = (e - e_old) / h;
-    float alpha = N * h;
-    Dterm = (alpha * derivative + Dterm) / (1 + alpha);
-    float D_out = Kd * Dterm;
-
     // Calcular ação de controlo não saturada
-    float u_unsat = Pterm + Iterm + D_out;
-
-    // Anti-windup: Apenas integrar se o controlo não estiver saturado
-    if ((u_unsat < PWM_MAX || e < 0) && (u_unsat > PWM_MIN || e > 0))
-    {
-        Iterm += Ki * e * h;
-    }
-
+    float u = Pterm + Iterm;
+    
+    // Aplicar saturação
+    float u_sat = u;
+    if (u > PWM_MAX) u_sat = PWM_MAX;
+    if (u < PWM_MIN) u_sat = PWM_MIN;
+    
+    // Anti-windup por back-calculation
+    float windup_error = u_sat - u;
+    
+    // Atualizar termo integral usando método de Euler e back-calculation
+    Iterm += Ki * e * h + Gamma * windup_error * h;
+    
     e_old = e;
-    return Pterm + Iterm + D_out;
+    return u_sat;
 }
 
 /**
@@ -85,8 +84,8 @@ float PIDController::compute(float setpoint, float measurement)
  */
 void PIDController::reset()
 {
+    Pterm = 0;
     Iterm = 0;
-    Dterm = 0;
     e_old = 0;
 }
 
@@ -94,13 +93,29 @@ void PIDController::reset()
  * Define novos ganhos para o controlador
  * @param kp Novo ganho proporcional
  * @param ki Novo ganho integral
- * @param kd Novo ganho derivativo
  */
-void PIDController::setGains(float kp, float ki, float kd)
+void PIDController::setGains(float kp, float ki)
 {
     Kp = kp;
     Ki = ki;
-    Kd = kd;
+}
+
+/**
+ * Define o fator de ponderação de setpoint
+ * @param beta Novo fator de ponderação (0-1)
+ */
+void PIDController::setSetpointWeight(float beta)
+{
+    Beta = beta;
+}
+
+/**
+ * Define o ganho de anti-windup
+ * @param gamma Novo ganho de back-calculation
+ */
+void PIDController::setAntiWindupGain(float gamma)
+{
+    Gamma = gamma;
 }
 
 /**
@@ -138,24 +153,20 @@ void PIDController::restoreExternalTarget()
  * Obtém os ganhos atuais do controlador
  * @param kp Referência para armazenar o ganho proporcional
  * @param ki Referência para armazenar o ganho integral
- * @param kd Referência para armazenar o ganho derivativo
  */
-void PIDController::getGains(float &kp, float &ki, float &kd) const
+void PIDController::getGains(float &kp, float &ki) const
 {
     kp = Kp;
     ki = Ki;
-    kd = Kd;
 }
 
 /**
  * Obtém os termos atuais de controlo para análise
  * @param p Referência para armazenar o termo proporcional
  * @param i Referência para armazenar o termo integral
- * @param d Referência para armazenar o termo derivativo
  */
-void PIDController::getTerms(float &p, float &i, float &d) const
+void PIDController::getTerms(float &p, float &i) const
 {
-    p = Kp * e_old; // Proporcional ao último erro
-    i = Iterm;      // Termo integral acumulado
-    d = Kd * Dterm; // Termo derivativo filtrado
+    p = Pterm;  // Termo proporcional atual
+    i = Iterm;  // Termo integral acumulado
 }

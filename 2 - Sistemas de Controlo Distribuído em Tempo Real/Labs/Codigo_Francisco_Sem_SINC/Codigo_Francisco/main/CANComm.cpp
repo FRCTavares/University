@@ -4,19 +4,23 @@
 #include "Metrics.h"
 #include "LEDDriver.h"
 
-// Use the same pin configuration as the working example
+//-----------------------------------------------------------------------------
+// CONFIGURATION AND INITIALIZATION
+//-----------------------------------------------------------------------------
+
+// CAN controller pin configuration
 const int CAN_CS_PIN = 17;
 const int CAN_MOSI_PIN = 19;
 const int CAN_MISO_PIN = 16;
 const int CAN_SCK_PIN = 18;
 
-// Create the MCP2515 instance with matching pin configuration
+// MCP2515 CAN controller instance with 10MHz clock
 MCP2515 can0(spi0, CAN_CS_PIN, CAN_MOSI_PIN, CAN_MISO_PIN, CAN_SCK_PIN, 10000000);
 
-// Static variable to hold the registered callback
+// Callback for custom message handling
 static CANMessageCallback messageCallback = nullptr;
 
-// Statistics tracking
+// Statistics for network performance monitoring
 static uint32_t msgSent = 0;
 static uint32_t msgReceived = 0;
 static uint32_t msgErrors = 0;
@@ -24,40 +28,65 @@ static unsigned long lastLatencyMeasure = 0;
 static unsigned long totalLatency = 0;
 static uint32_t latencySamples = 0;
 
+/**
+ * Initialize the CAN communication interface
+ * - Sets up SPI
+ * - Configures CAN controller
+ * - Assigns unique node ID based on board ID
+ */
 void initCANComm()
 {
-  // Initialize SPI
+  // Initialize SPI for CAN controller communication
   SPI.begin();
 
-  // Simple reset - like the working example
+  // Reset CAN controller to clear any previous state
   can0.reset();
 
-  // Use 1000KBPS like the example (not 125KBPS)
+  // Set CAN bus speed to 1Mbps
   can0.setBitrate(CAN_1000KBPS);
 
-  // Set normal mode
+  // Set normal mode (not loopback or listen-only)
   can0.setNormalMode();
 
   Serial.println("CANComm: CAN initialized in normal mode");
 
-  // Generate a unique node ID from the last 6 bits of the board's unique ID
+  // Generate unique node ID from board-specific identifier
+  // Uses last 6 bits of unique ID to create node addresses 1-63
   pico_unique_board_id_t board_id;
   pico_get_unique_board_id(&board_id);
   nodeID = board_id.id[7] & 0x3F; // Use last 6 bits for node ID (1-63)
   if (nodeID == 0)
-    nodeID = 1; // Avoid broadcast address
+    nodeID = 1; // Avoid broadcast address (0)
 
   Serial.print("CANComm: Node ID assigned: ");
   Serial.println(nodeID);
 }
 
-// Build a CAN message ID from components
+//-----------------------------------------------------------------------------
+// MESSAGE FORMATTING AND PARSING
+//-----------------------------------------------------------------------------
+
+/**
+ * Create a CAN message ID from component fields
+ * 
+ * @param msgType Message type (3 bits, 0-7)
+ * @param destAddr Destination address (6 bits, 0-63)
+ * @param priority Message priority (2 bits, 0-3)
+ * @return Combined CAN ID
+ */
 uint32_t buildCANId(uint8_t msgType, uint8_t destAddr, uint8_t priority)
 {
   return ((uint32_t)msgType << 8) | ((uint32_t)destAddr << 2) | priority;
 }
 
-// Extract components from a CAN ID
+/**
+ * Extract component fields from a CAN message ID
+ * 
+ * @param canId CAN ID to parse
+ * @param msgType Output parameter for message type
+ * @param destAddr Output parameter for destination address
+ * @param priority Output parameter for message priority
+ */
 void parseCANId(uint32_t canId, uint8_t &msgType, uint8_t &destAddr, uint8_t &priority)
 {
   msgType = (canId >> 8) & 0x07;
@@ -65,13 +94,23 @@ void parseCANId(uint32_t canId, uint8_t &msgType, uint8_t &destAddr, uint8_t &pr
   priority = canId & 0x03;
 }
 
-// Convert float to bytes for CAN transmission (little-endian)
+/**
+ * Convert float to byte array for CAN transmission (little-endian)
+ * 
+ * @param value Float value to convert
+ * @param bytes Output byte array (must be at least 4 bytes)
+ */
 void floatToBytes(float value, uint8_t *bytes)
 {
   memcpy(bytes, &value, 4);
 }
 
-// Convert bytes back to float (little-endian)
+/**
+ * Convert byte array back to float (little-endian)
+ * 
+ * @param bytes Input byte array (must be at least 4 bytes)
+ * @return Reconstructed float value
+ */
 float bytesToFloat(const uint8_t *bytes)
 {
   float value;
@@ -79,30 +118,42 @@ float bytesToFloat(const uint8_t *bytes)
   return value;
 }
 
-// Send a sensor reading to another node or broadcast
+//-----------------------------------------------------------------------------
+// MESSAGE SENDING FUNCTIONS
+//-----------------------------------------------------------------------------
+
+/**
+ * Send sensor reading to a specific node or broadcast
+ * 
+ * @param destAddr Destination node address (0 for broadcast)
+ * @param sensorType Type of sensor data (0=lux, 1=duty cycle, etc.)
+ * @param value Sensor reading value
+ * @return True if message sent successfully
+ */
 bool sendSensorReading(uint8_t destAddr, uint8_t sensorType, float value)
 {
   can_frame frame;
 
-  // Build the CAN ID
+  // Configure message ID with normal priority
   frame.can_id = buildCANId(CAN_TYPE_SENSOR, destAddr, CAN_PRIO_NORMAL);
-
-  // Set data length
   frame.can_dlc = 8;
 
-  // Payload: source node, sensor type, value as float, timestamp
-  frame.data[0] = nodeID;     // Source node
-  frame.data[1] = sensorType; // Sensor type (0 = lux, 1 = duty, etc)
-
-  // Float value (4 bytes)
+  // Payload format:
+  // [0] = Source node ID
+  // [1] = Sensor type
+  // [2-5] = Float value (4 bytes)
+  // [6-7] = Timestamp (16-bit milliseconds)
+  frame.data[0] = nodeID;
+  frame.data[1] = sensorType;
+  
   floatToBytes(value, &frame.data[2]);
 
-  // Timestamp - 16-bit milliseconds counter
+  // Include millisecond timestamp for timing analysis
   uint16_t timestamp = (uint16_t)(millis() & 0xFFFF);
   frame.data[6] = timestamp & 0xFF;
   frame.data[7] = (timestamp >> 8) & 0xFF;
 
-  // Send the message
+  // Send the message and update statistics
   MCP2515::ERROR result = sendCANMessage(frame);
 
   if (result == MCP2515::ERROR_OK)
@@ -117,31 +168,39 @@ bool sendSensorReading(uint8_t destAddr, uint8_t sensorType, float value)
   }
 }
 
-// Send a control command to another node
+/**
+ * Send a control command to another node
+ * 
+ * @param destAddr Destination node address
+ * @param controlType Control command type
+ * @param value Command parameter value
+ * @return True if message sent successfully
+ */
 bool sendControlCommand(uint8_t destAddr, uint8_t controlType, float value)
 {
   can_frame frame;
 
-  // Build the CAN ID
+  // Configure message ID with high priority
   frame.can_id = buildCANId(CAN_TYPE_CONTROL, destAddr, CAN_PRIO_HIGH);
-
-  // Set data length
   frame.can_dlc = 8;
 
-  // Payload: source node, control type, value as float, sequence number
-  frame.data[0] = nodeID;      // Source node
-  frame.data[1] = controlType; // Control type
-
-  // Float value (4 bytes)
+  // Payload format:
+  // [0] = Source node ID
+  // [1] = Control type
+  // [2-5] = Float value (4 bytes)
+  // [6-7] = Sequence number (16-bit)
+  frame.data[0] = nodeID;
+  frame.data[1] = controlType;
+  
   floatToBytes(value, &frame.data[2]);
 
-  // Sequence number (for detecting lost messages)
+  // Include sequence number for detecting lost messages
   static uint16_t seqNum = 0;
   frame.data[6] = seqNum & 0xFF;
   frame.data[7] = (seqNum >> 8) & 0xFF;
   seqNum++;
 
-  // Send the message
+  // Send the message and update statistics
   MCP2515::ERROR result = sendCANMessage(frame);
 
   if (result == MCP2515::ERROR_OK)
@@ -156,25 +215,35 @@ bool sendControlCommand(uint8_t destAddr, uint8_t controlType, float value)
   }
 }
 
-// Send a response to a query message
+/**
+ * Send response to a query message
+ * 
+ * @param destNode Destination node address
+ * @param value Response value
+ * @return True if message sent successfully
+ */
 bool sendQueryResponse(uint8_t destNode, float value)
 {
   can_frame frame;
+  
+  // Configure message ID with normal priority
   frame.can_id = buildCANId(CAN_TYPE_RESPONSE, destNode, CAN_PRIO_NORMAL);
-  frame.can_dlc = 8; // Use 8 bytes como todas as outras mensagens
+  frame.can_dlc = 8;
 
-  // Inclua o ID do nó emissor e um tipo de resposta
-  frame.data[0] = nodeID; // ID do nó que está respondendo
-  frame.data[1] = 2;      // Tipo 2 = resposta de consulta
-
-  // Coloque o valor float em bytes 2-5
+  // Payload format:
+  // [0] = Source node ID
+  // [1] = Response type (2 = query response)
+  // [2-5] = Float value (4 bytes)
+  // [6-7] = Reserved (set to 0)
+  frame.data[0] = nodeID;
+  frame.data[1] = 2;  // Type 2 = query response
+  
   floatToBytes(value, &frame.data[2]);
-
-  // Bytes 6-7 podem ser usados para sequência ou deixados como zero
+  
   frame.data[6] = 0;
   frame.data[7] = 0;
 
-  // Envie a mensagem
+  // Send the message and log debug info
   MCP2515::ERROR result = sendCANMessage(frame);
 
   Serial.print("DEBUG: Sent query response to node ");
@@ -182,6 +251,7 @@ bool sendQueryResponse(uint8_t destNode, float value)
   Serial.print(", value: ");
   Serial.println(value);
 
+  // Update statistics based on result
   if (result == MCP2515::ERROR_OK)
   {
     msgSent++;
@@ -194,21 +264,26 @@ bool sendQueryResponse(uint8_t destNode, float value)
   }
 }
 
-// Send a heartbeat message to indicate node is alive
+/**
+ * Send heartbeat message to indicate node is active
+ * 
+ * @return True if message sent successfully
+ */
 bool sendHeartbeat()
 {
   can_frame frame;
 
-  // Build the CAN ID
+  // Configure message ID for broadcast with low priority
   frame.can_id = buildCANId(CAN_TYPE_HEARTBEAT, CAN_ADDR_BROADCAST, CAN_PRIO_LOW);
-
-  // Set data length
   frame.can_dlc = 6;
 
-  // Payload: source node, status flags, uptime
+  // Payload format:
+  // [0] = Source node ID
+  // [1] = Status flags (bit0=feedback, bit1=occupancy)
+  // [2-5] = Node uptime in seconds (32-bit)
   frame.data[0] = nodeID;
 
-  // Status flags: bit0=feedback, bit1=occupancy
+  // Create status flags byte from control settings
   uint8_t statusFlags = 0;
   if (feedbackControl)
     statusFlags |= 0x01;
@@ -216,14 +291,14 @@ bool sendHeartbeat()
     statusFlags |= 0x02;
   frame.data[1] = statusFlags;
 
-  // Node uptime in seconds
+  // Include node uptime in seconds
   uint32_t uptime = getElapsedTime();
   frame.data[2] = uptime & 0xFF;
   frame.data[3] = (uptime >> 8) & 0xFF;
   frame.data[4] = (uptime >> 16) & 0xFF;
   frame.data[5] = (uptime >> 24) & 0xFF;
 
-  // Send the message
+  // Send the message and update statistics
   MCP2515::ERROR result = sendCANMessage(frame);
 
   if (result == MCP2515::ERROR_OK)
@@ -238,12 +313,22 @@ bool sendHeartbeat()
   }
 }
 
+//-----------------------------------------------------------------------------
+// MESSAGE PROCESSING
+//-----------------------------------------------------------------------------
+
+/**
+ * Process an incoming CAN message
+ * 
+ * @param msg The received CAN message
+ */
 void processIncomingMessage(const can_frame &msg)
 {
-  // Parse the CAN ID
+  // Extract message components from CAN ID
   uint8_t msgType, destAddr, priority;
   parseCANId(msg.can_id, msgType, destAddr, priority);
 
+  // Debug output if monitoring is enabled
   if (canMonitorEnabled)
   {
     Serial.print("DEBUG: Received CAN message, type ");
@@ -252,306 +337,303 @@ void processIncomingMessage(const can_frame &msg)
     Serial.print(msg.data[0]);
   }
 
-  // Check if this message is for us (or broadcast)
+  // Check if message is addressed to this node or is broadcast
   if (destAddr != nodeID && destAddr != CAN_ADDR_BROADCAST)
   {
-    return; // Not for us
+    return; // Message not for us, ignore
   }
 
-  // Message is for us, process based on type
+  // Extract source node ID from first byte of payload
   uint8_t sourceNode = msg.data[0];
 
+  // Process message based on type
   switch (msgType)
   {
-  case CAN_TYPE_SENSOR:
-  {
-    uint8_t sensorType = msg.data[1];
-    float value = bytesToFloat(&msg.data[2]);
-    uint16_t timestamp = ((uint16_t)msg.data[7] << 8) | msg.data[6];
-
-    if (canMonitorEnabled)
+    //-------------------------------------------------------------------------
+    // SENSOR MESSAGE HANDLING
+    //-------------------------------------------------------------------------
+    case CAN_TYPE_SENSOR:
     {
-      Serial.print("CAN: Node ");
-      Serial.print(sourceNode);
-      Serial.print(" sensor ");
-      Serial.print(sensorType);
-      Serial.print(" = ");
-      Serial.print(value);
-      Serial.print(" (ts: ");
-      Serial.print(timestamp);
-      Serial.println(")");
-    }
-    break;
-  }
-  case CAN_TYPE_HEARTBEAT:
-  {
-    uint8_t statusFlags = msg.data[1];
-    uint32_t uptime = ((uint32_t)msg.data[5] << 24) |
-                      ((uint32_t)msg.data[4] << 16) |
-                      ((uint32_t)msg.data[3] << 8) |
-                      msg.data[2];
+      uint8_t sensorType = msg.data[1];
+      float value = bytesToFloat(&msg.data[2]);
+      uint16_t timestamp = ((uint16_t)msg.data[7] << 8) | msg.data[6];
 
-    if (canMonitorEnabled)
-    {
-      Serial.print("CAN: Node ");
-      Serial.print(sourceNode);
-      Serial.print(" heartbeat, uptime ");
-      Serial.print(uptime);
-      Serial.print("s, flags: ");
-      Serial.println(statusFlags, BIN);
-    }
-    break;
-  }
-  case CAN_TYPE_CONTROL:
-  {
-    uint8_t controlType = msg.data[1];
-    float value = bytesToFloat(&msg.data[2]);
-    uint16_t sequence = ((uint16_t)msg.data[7] << 8) | msg.data[6];
-
-    if (canMonitorEnabled)
-    {
-      Serial.print("CAN: Node ");
-      Serial.print(sourceNode);
-      Serial.print(" control ");
-      Serial.print(controlType);
-      Serial.print(" = ");
-      Serial.print(value);
-      Serial.print(" (seq: ");
-      Serial.print(sequence);
-      Serial.println(")");
-    }
-
-    // Handle control commands
-    if (controlType == 0)
-    { // Setpoint
-      setpointLux = value;
-      // Send acknowledgment?
-    }
-    else if (controlType == 2)
-    { // Echo request
-      // Send echo response - use the received value
-      can_frame response;
-      response.can_id = buildCANId(CAN_TYPE_RESPONSE, sourceNode, CAN_PRIO_HIGH);
-      response.can_dlc = 8;
-      response.data[0] = nodeID;
-      response.data[1] = 0;                   // Response type 0 = echo
-      floatToBytes(value, &response.data[2]); // Echo back the same value
-      response.data[6] = msg.data[6];         // Copy sequence numbers
-      response.data[7] = msg.data[7];
-      sendCANMessage(response);
-    }
-    else if (controlType == 3)
-    { // Ping/discovery
-      // Send a response to identify ourselves
-      can_frame response;
-      response.can_id = buildCANId(CAN_TYPE_RESPONSE, sourceNode, CAN_PRIO_NORMAL);
-      response.can_dlc = 8;
-      response.data[0] = nodeID;
-      response.data[1] = 1; // Response type 1 = discovery
-      floatToBytes(0, &response.data[2]);
-      response.data[6] = 0;
-      response.data[7] = 0;
-      sendCANMessage(response);
-    }
-    else if (controlType == 4) { // Set duty cycle
-      setLEDDutyCycle(value);
-      if (canMonitorEnabled) {
-        Serial.print("CAN: Setting duty cycle to ");
-        Serial.println(value);
-      }
-    }
-    else if (controlType == 5) { // Set LED percentage
-      setLEDPercentage(value);
-      if (canMonitorEnabled) {
-        Serial.print("CAN: Setting LED percentage to ");
-        Serial.println(value);
-      }
-    }
-    else if (controlType == 6) { // Set LED power in watts
-      setLEDPower(value);
-      if (canMonitorEnabled) {
-        Serial.print("CAN: Setting LED power to ");
-        Serial.println(value);
-      }
-    }
-    else if (controlType == 7) { // Set occupancy
-      occupancy = (value != 0.0f);
-      if (canMonitorEnabled) {
-        Serial.print("CAN: Setting occupancy to ");
-        Serial.println(occupancy ? "true" : "false");
-      }
-    }
-    else if (controlType == 8) { // Set anti-windup
-      antiWindup = (value != 0.0f);
-      if (canMonitorEnabled) {
-        Serial.print("CAN: Setting anti-windup to ");
-        Serial.println(antiWindup ? "true" : "false");
-      }
-    }
-    else if (controlType == 9) { // Set feedback control
-      feedbackControl = (value != 0.0f);
-      if (canMonitorEnabled) {
-        Serial.print("CAN: Setting feedback control to ");
-        Serial.println(feedbackControl ? "true" : "false");
-      }
-    }
-    else if (controlType == 10) { // Reference illuminance
-      refIlluminance = value;
-      setpointLux = value;
-      
-      if (canMonitorEnabled) {
-        Serial.print("CAN: Setting reference illuminance to ");
-        Serial.println(value);
-      }
-    }
-    else if (controlType == 11)
-    { // Stream start
-      // Extract variable type from value
-      int varCode = (int)value;
-      String var = "y"; // Default
-
-      if (varCode == 1)
-        var = "u";
-      else if (varCode == 2)
-        var = "p";
-      else if (varCode == 3)
-        var = "o";
-      else if (varCode == 4)
-        var = "a";
-      else if (varCode == 5)
-        var = "f";
-      else if (varCode == 6)
-        var = "r";
-      else if (varCode == 7)
-        var = "v";
-      else if (varCode == 8)
-        var = "d";
-      else if (varCode == 9)
-        var = "t";
-      else if (varCode == 10)
-        var = "V";
-      else if (varCode == 11)
-        var = "F";
-      else if (varCode == 12)
-        var = "E";
-
-      startStream(var, sourceNode);
-    }
-    else if (controlType == 12)
-    { // Stream stop
-      // Extract variable type from value
-      int varCode = (int)value;
-      String var = "y"; // Default
-
-      if (varCode == 1)
-        var = "u";
-      else if (varCode == 2)
-        var = "p";
-      else if (varCode == 3)
-        var = "o";
-      else if (varCode == 4)
-        var = "a";
-      else if (varCode == 5)
-        var = "f";
-      else if (varCode == 6)
-        var = "r";
-      else if (varCode == 7)
-        var = "v";
-      else if (varCode == 8)
-        var = "d";
-      else if (varCode == 9)
-        var = "t";
-      else if (varCode == 10)
-        var = "V";
-      else if (varCode == 11)
-        var = "F";
-      else if (varCode == 12)
-        var = "E";
-
-      stopStream(var, sourceNode);
-    }
-    else if (controlType == 13)
-    { // Luminaire state
-      int stateVal = (int)value;
-      if (stateVal == 0)
-        changeState(STATE_OFF);
-      else if (stateVal == 1)
-        changeState(STATE_UNOCCUPIED);
-      else if (stateVal == 2)
-        changeState(STATE_OCCUPIED);
-    }
-    else if (controlType >= 20 && controlType <= 32)
-    {
-      // This is a query message, send back a response
-      float responseValue = 0.0f;
-
-      // Get the requested value
-      switch (controlType)
+      // Output debug info if monitoring enabled
+      if (canMonitorEnabled)
       {
-      case 20:
-        responseValue = computeVisibilityErrorFromBuffer();
-        break;
-      case 21:
-        responseValue = computeFlickerFromBuffer();
-        break;
-      case 22:
-        responseValue = computeEnergyFromBuffer();
-        break;
-      case 23:
-        responseValue = dutyCycle;
-        break;
-      case 24:
-        responseValue = occupancy ? 1.0f : 0.0f;
-        break;
-      case 25:
-        responseValue = antiWindup ? 1.0f : 0.0f;
-        break;
-      case 26:
-        responseValue = feedbackControl ? 1.0f : 0.0f;
-        break;
-      case 27:
-        responseValue = refIlluminance;
-        break;
-      case 28:
-        Serial.println("Query for current illuminance");
-        responseValue = readLux();
-        break;
-      case 29:
-        responseValue = getPowerConsumption();
-        break;
-      case 30:
-        responseValue = getElapsedTime();
-        break;
-      case 31:
-        responseValue = getVoltageAtLDR();
-        break;
-      case 32:
-        responseValue = getExternalIlluminance();
-        break;
-      default:
-        return; // Unknown query type
+        Serial.print("CAN: Node ");
+        Serial.print(sourceNode);
+        Serial.print(" sensor ");
+        Serial.print(sensorType);
+        Serial.print(" = ");
+        Serial.print(value);
+        Serial.print(" (ts: ");
+        Serial.print(timestamp);
+        Serial.println(")");
       }
-      // Send a response message with the value
-      sendQueryResponse(sourceNode, responseValue);
+      break;
     }
-    break;
-  }
+    
+    //-------------------------------------------------------------------------
+    // HEARTBEAT MESSAGE HANDLING
+    //-------------------------------------------------------------------------
+    case CAN_TYPE_HEARTBEAT:
+    {
+      uint8_t statusFlags = msg.data[1];
+      uint32_t uptime = ((uint32_t)msg.data[5] << 24) |
+                        ((uint32_t)msg.data[4] << 16) |
+                        ((uint32_t)msg.data[3] << 8) |
+                        msg.data[2];
+
+      // Output debug info if monitoring enabled
+      if (canMonitorEnabled)
+      {
+        Serial.print("CAN: Node ");
+        Serial.print(sourceNode);
+        Serial.print(" heartbeat, uptime ");
+        Serial.print(uptime);
+        Serial.print("s, flags: ");
+        Serial.println(statusFlags, BIN);
+      }
+      break;
+    }
+    
+    //-------------------------------------------------------------------------
+    // CONTROL MESSAGE HANDLING
+    //-------------------------------------------------------------------------
+    case CAN_TYPE_CONTROL:
+    {
+      uint8_t controlType = msg.data[1];
+      float value = bytesToFloat(&msg.data[2]);
+      uint16_t sequence = ((uint16_t)msg.data[7] << 8) | msg.data[6];
+
+      // Output debug info if monitoring enabled
+      if (canMonitorEnabled)
+      {
+        Serial.print("CAN: Node ");
+        Serial.print(sourceNode);
+        Serial.print(" control ");
+        Serial.print(controlType);
+        Serial.print(" = ");
+        Serial.print(value);
+        Serial.print(" (seq: ");
+        Serial.print(sequence);
+        Serial.println(")");
+      }
+
+      // Handle different control commands based on type
+      
+      // Basic setpoint control
+      if (controlType == 0) { 
+        setpointLux = value;
+      }
+      // Echo request - respond with same value
+      else if (controlType == 2) { 
+        can_frame response;
+        response.can_id = buildCANId(CAN_TYPE_RESPONSE, sourceNode, CAN_PRIO_HIGH);
+        response.can_dlc = 8;
+        response.data[0] = nodeID;
+        response.data[1] = 0;                   // Response type 0 = echo
+        floatToBytes(value, &response.data[2]); // Echo back the same value
+        response.data[6] = msg.data[6];         // Copy sequence numbers
+        response.data[7] = msg.data[7];
+        sendCANMessage(response);
+      }
+      // Ping/discovery - respond with node ID
+      else if (controlType == 3) { 
+        can_frame response;
+        response.can_id = buildCANId(CAN_TYPE_RESPONSE, sourceNode, CAN_PRIO_NORMAL);
+        response.can_dlc = 8;
+        response.data[0] = nodeID;
+        response.data[1] = 1; // Response type 1 = discovery
+        floatToBytes(0, &response.data[2]);
+        response.data[6] = 0;
+        response.data[7] = 0;
+        sendCANMessage(response);
+      }
+      // LED output control commands
+      else if (controlType == 4) { // Set duty cycle directly
+        setLEDDutyCycle(value);
+        if (canMonitorEnabled) {
+          Serial.print("CAN: Setting duty cycle to ");
+          Serial.println(value);
+        }
+      }
+      else if (controlType == 5) { // Set LED percentage
+        setLEDPercentage(value);
+        if (canMonitorEnabled) {
+          Serial.print("CAN: Setting LED percentage to ");
+          Serial.println(value);
+        }
+      }
+      else if (controlType == 6) { // Set LED power in watts
+        setLEDPower(value);
+        if (canMonitorEnabled) {
+          Serial.print("CAN: Setting LED power to ");
+          Serial.println(value);
+        }
+      }
+      // System state control commands
+      else if (controlType == 7) { // Set occupancy
+        occupancy = (value != 0.0f);
+        if (canMonitorEnabled) {
+          Serial.print("CAN: Setting occupancy to ");
+          Serial.println(occupancy ? "true" : "false");
+        }
+      }
+      else if (controlType == 8) { // Set anti-windup
+        antiWindup = (value != 0.0f);
+        if (canMonitorEnabled) {
+          Serial.print("CAN: Setting anti-windup to ");
+          Serial.println(antiWindup ? "true" : "false");
+        }
+      }
+      else if (controlType == 9) { // Set feedback control
+        feedbackControl = (value != 0.0f);
+        if (canMonitorEnabled) {
+          Serial.print("CAN: Setting feedback control to ");
+          Serial.println(feedbackControl ? "true" : "false");
+        }
+      }
+      else if (controlType == 10) { // Reference illuminance
+        refIlluminance = value;
+        setpointLux = value;
+        
+        if (canMonitorEnabled) {
+          Serial.print("CAN: Setting reference illuminance to ");
+          Serial.println(value);
+        }
+      }
+      // Stream control commands
+      else if (controlType == 11 || controlType == 12) { 
+        // Stream start (11) or stop (12)
+        // Extract variable type from value code
+        int varCode = (int)value;
+        String var = "y"; // Default
+        
+        // Map variable codes to variable names
+        if (varCode == 1)
+          var = "u";
+        else if (varCode == 2)
+          var = "p";
+        else if (varCode == 3)
+          var = "o";
+        else if (varCode == 4)
+          var = "a";
+        else if (varCode == 5)
+          var = "f";
+        else if (varCode == 6)
+          var = "r";
+        else if (varCode == 7)
+          var = "v";
+        else if (varCode == 8)
+          var = "d";
+        else if (varCode == 9)
+          var = "t";
+        else if (varCode == 10)
+          var = "V";
+        else if (varCode == 11)
+          var = "F";
+        else if (varCode == 12)
+          var = "E";
+
+        // Call appropriate stream function
+        if (controlType == 11)
+          startStream(var, sourceNode);
+        else
+          stopStream(var, sourceNode);
+      }
+      // Luminaire state control
+      else if (controlType == 13) { 
+        int stateVal = (int)value;
+        if (stateVal == 0)
+          changeState(STATE_OFF);
+        else if (stateVal == 1)
+          changeState(STATE_UNOCCUPIED);
+        else if (stateVal == 2)
+          changeState(STATE_OCCUPIED);
+      }
+      // Query commands (types 20-32)
+      else if (controlType >= 20 && controlType <= 32) {
+        // Get requested value based on query type
+        float responseValue = 0.0f;
+        
+        switch (controlType) {
+          case 20: // Visibility error
+            responseValue = computeVisibilityErrorFromBuffer();
+            break;
+          case 21: // Flicker
+            responseValue = computeFlickerFromBuffer();
+            break;
+          case 22: // Energy
+            responseValue = computeEnergyFromBuffer();
+            break;
+          case 23: // Duty cycle
+            responseValue = dutyCycle;
+            break;
+          case 24: // Occupancy state
+            responseValue = occupancy ? 1.0f : 0.0f;
+            break;
+          case 25: // Anti-windup state
+            responseValue = antiWindup ? 1.0f : 0.0f;
+            break;
+          case 26: // Feedback control state
+            responseValue = feedbackControl ? 1.0f : 0.0f;
+            break;
+          case 27: // Reference illuminance
+            responseValue = refIlluminance;
+            break;
+          case 28: // Current illuminance
+            Serial.println("Query for current illuminance");
+            responseValue = readLux();
+            break;
+          case 29: // Power consumption
+            responseValue = getPowerConsumption();
+            break;
+          case 30: // Elapsed time
+            responseValue = getElapsedTime();
+            break;
+          case 31: // LDR voltage
+            responseValue = getVoltageAtLDR();
+            break;
+          case 32: // External illuminance
+            responseValue = getExternalIlluminance();
+            break;
+          default:
+            return; // Unknown query type
+        }
+        
+        // Send response with requested value
+        sendQueryResponse(sourceNode, responseValue);
+      }
+      break;
+    }
   }
 }
 
+//-----------------------------------------------------------------------------
+// COMMUNICATION LOOP AND UTILITY FUNCTIONS
+//-----------------------------------------------------------------------------
+
+/**
+ * Main CAN communication processing loop
+ * - Checks for incoming messages
+ * - Processes messages and triggers callbacks
+ */
 void canCommLoop()
 {
-  // Check for received messages
   can_frame msg;
+  
+  // Check if there's a message waiting
   if (can0.readMessage(&msg) == MCP2515::ERROR_OK)
   {
-    // Record statistics
+    // Update statistics
     msgReceived++;
 
-    // Process the message
+    // Process the received message
     processIncomingMessage(msg);
 
-    // If a callback has been registered, call it
+    // Call user-provided callback if registered
     if (messageCallback)
     {
       messageCallback(msg);
@@ -559,15 +641,21 @@ void canCommLoop()
   }
 }
 
+/**
+ * Send a CAN message and track performance metrics
+ * 
+ * @param frame CAN message to send
+ * @return Error code from CAN controller
+ */
 MCP2515::ERROR sendCANMessage(const can_frame &frame)
 {
-  // Record send time for latency measurements
+  // Record send time for latency measurement
   lastLatencyMeasure = micros();
 
   // Send the message
   MCP2515::ERROR err = can0.sendMessage(&frame);
 
-  // Update latency if successful (assumes hardware has sent the message)
+  // Update latency statistics if successful
   if (err == MCP2515::ERROR_OK)
   {
     unsigned long latency = micros() - lastLatencyMeasure;
@@ -578,17 +666,35 @@ MCP2515::ERROR sendCANMessage(const can_frame &frame)
   return err;
 }
 
+/**
+ * Read a CAN message directly from the controller
+ * 
+ * @param frame Pointer to store the received message
+ * @return Error code from CAN controller
+ */
 MCP2515::ERROR readCANMessage(struct can_frame *frame)
 {
   return can0.readMessage(frame);
 }
 
+/**
+ * Register a callback function for CAN message handling
+ * 
+ * @param callback Function to call when messages are received
+ */
 void setCANMessageCallback(CANMessageCallback callback)
 {
   messageCallback = callback;
 }
 
-// Get communication statistics
+/**
+ * Get communication statistics
+ * 
+ * @param sent Output parameter for sent message count
+ * @param received Output parameter for received message count
+ * @param errors Output parameter for error count
+ * @param avgLatency Output parameter for average message latency (microseconds)
+ */
 void getCANStats(uint32_t &sent, uint32_t &received, uint32_t &errors, float &avgLatency)
 {
   sent = msgSent;
@@ -597,7 +703,9 @@ void getCANStats(uint32_t &sent, uint32_t &received, uint32_t &errors, float &av
   avgLatency = latencySamples > 0 ? (float)totalLatency / latencySamples : 0.0f;
 }
 
-// Reset communication statistics
+/**
+ * Reset all communication statistics
+ */
 void resetCANStats()
 {
   msgSent = 0;

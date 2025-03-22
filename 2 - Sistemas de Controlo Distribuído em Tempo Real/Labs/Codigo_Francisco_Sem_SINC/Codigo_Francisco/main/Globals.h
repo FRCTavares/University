@@ -1,73 +1,276 @@
 #ifndef GLOBALS_H
 #define GLOBALS_H
 
-#define MAX_ILLUMINANCE 2000.0f
+/**
+ * Globals.h - Shared Definitions and Global Variables
+ * 
+ * This header centralizes all global variables, constants, and shared function
+ * declarations used across the distributed lighting control system. It enables
+ * modules to access common state information without circular dependencies.
+ */
 
 #include <Arduino.h>
 
-// --- Global Constants ---
+//=============================================================================
+// SYSTEM CONSTANTS
+//=============================================================================
+
+/**
+ * Maximum supported illuminance level in lux
+ * Defines the upper limit for illuminance measurements and setpoints
+ */
+#define MAX_ILLUMINANCE 2000.0f
+
+/**
+ * Maximum power consumption of LED at full brightness (watts)
+ * Used for power consumption calculations and energy metrics
+ */
 extern const float MAX_POWER_WATTS;
 
-// --- Control System State ---
-extern float setpointLux;    // Desired lux (setpoint)
-extern float dutyCycle;      // Current duty cycle [0..1]
-extern float refIlluminance; // Reference illuminance
-extern bool occupancy;       // Occupancy flag
-extern bool antiWindup;      // Anti-windup flag for PID controller
-extern bool feedbackControl; // Enable/disable feedback control
+//=============================================================================
+// SYSTEM STATE ENUMERATIONS
+//=============================================================================
 
-// Define luminaire states
+/**
+ * Luminaire operating states
+ * Defines the possible operational modes of each lighting node
+ */
 enum LuminaireState
 {
-    STATE_OFF = 0,        // No one in office
-    STATE_UNOCCUPIED = 1, // No one at desk, low light
-    STATE_OCCUPIED = 2    // Desk is busy, full light
+    STATE_OFF = 0,        // Complete shutdown, no illumination
+    STATE_UNOCCUPIED = 1, // Low ambient lighting when area is unoccupied
+    STATE_OCCUPIED = 2    // Full task lighting when workspace is in use
 };
 
-// Declare in global section
+//=============================================================================
+// CONTROL SYSTEM STATE
+//=============================================================================
+
+/**
+ * Current target illuminance level in lux
+ * This is the desired light level the system attempts to maintain
+ */
+extern float setpointLux;
+
+/**
+ * Current LED brightness as duty cycle [0.0-1.0]
+ * Represents the proportion of time the LED is on during PWM cycle
+ */
+extern float dutyCycle;
+
+/**
+ * Reference illuminance for quality metrics
+ * Used to evaluate lighting quality relative to desired level
+ */
+extern float refIlluminance;
+
+/**
+ * Workspace occupancy state flag
+ * true = occupied, false = unoccupied
+ */
+extern bool occupancy;
+
+/**
+ * PID controller anti-windup flag
+ * Enables/disables integral windup protection
+ */
+extern bool antiWindup;
+
+/**
+ * Feedback control mode flag
+ * true = automatic control using illuminance feedback
+ * false = manual control using direct duty cycle setting
+ */
+extern bool feedbackControl;
+
+/**
+ * Current luminaire operating state
+ * Determines overall behavior mode of the lighting node
+ */
 extern LuminaireState luminaireState;
 
-// --- Debug Flags ---
-extern bool DEBUG_MODE;     // Master debug switch
-extern bool DEBUG_LED;      // LED driver debug messages
-extern bool DEBUG_SENSOR;   // Sensor readings debug
-extern bool DEBUG_PID;      // PID control debug
-extern bool DEBUG_PLOTTING; // Serial plotter output
+//=============================================================================
+// DEBUG FLAGS
+//=============================================================================
 
-// --- CAN Communication Flags ---
-extern bool periodicCANEnabled; // Enable periodic message sending
-extern bool canMonitorEnabled;  // Display received messages
-extern uint8_t nodeID;          // This node's identifier
+/**
+ * Master debug switch
+ * Enables/disables all debug output
+ */
+extern bool DEBUG_MODE;
 
-// --- CAN Message Types ---
-#define CAN_TYPE_CONTROL 0x00      // Control messages (setpoints, modes)
-#define CAN_TYPE_SENSOR 0x01       // Sensor data (illuminance, duty cycle)
-#define CAN_TYPE_STATUS 0x02       // Status information (power, mode)
-#define CAN_TYPE_CONFIG 0x03       // Configuration parameters
-#define CAN_TYPE_ERROR 0x04        // Error reports
-#define CAN_TYPE_QUERY 0x05        // Data requests
-#define CAN_TYPE_RESPONSE 0x06     // Responses to queries
-#define CAN_TYPE_HEARTBEAT 0x07    // Node presence signals
-#define CAN_CTRL_STATE_CHANGE 0x10 // Or choose another appropriate value that doesn't conflict
+/**
+ * LED driver debug messages
+ * Shows detailed information about LED control operations
+ */
+extern bool DEBUG_LED;
 
-// CAN priority levels
+/**
+ * Sensor readings debug
+ * Shows raw and processed sensor values
+ */
+extern bool DEBUG_SENSOR;
+
+/**
+ * PID controller debug
+ * Shows setpoint, measurement, error, and control terms
+ */
+extern bool DEBUG_PID;
+
+/**
+ * Serial plotter output
+ * Formats output for Arduino Serial Plotter visualization
+ */
+extern bool DEBUG_PLOTTING;
+
+//=============================================================================
+// CAN COMMUNICATION
+//=============================================================================
+
+/**
+ * Enable periodic CAN transmission flag
+ * When true, node regularly broadcasts its state
+ */
+extern bool periodicCANEnabled;
+
+/**
+ * CAN message monitoring flag
+ * When true, all CAN messages are printed to serial
+ */
+extern bool canMonitorEnabled;
+
+/**
+ * This node's CAN ID
+ * Unique identifier for this node on the CAN network
+ */
+extern uint8_t nodeID;
+
+//-----------------------------------------------------------------------------
+// CAN Message Types
+//-----------------------------------------------------------------------------
+
+/** Control messages (setpoints, modes) */
+#define CAN_TYPE_CONTROL 0x00
+
+/** Sensor data (illuminance, duty cycle) */
+#define CAN_TYPE_SENSOR 0x01
+
+/** Status information (power, mode) */
+#define CAN_TYPE_STATUS 0x02
+
+/** Configuration parameters */
+#define CAN_TYPE_CONFIG 0x03
+
+/** Error reports */
+#define CAN_TYPE_ERROR 0x04
+
+/** Data requests */
+#define CAN_TYPE_QUERY 0x05
+
+/** Responses to queries */
+#define CAN_TYPE_RESPONSE 0x06
+
+/** Node presence signals */
+#define CAN_TYPE_HEARTBEAT 0x07
+
+/** State change notifications */
+#define CAN_CTRL_STATE_CHANGE 0x10
+
+//-----------------------------------------------------------------------------
+// CAN Priority Levels
+//-----------------------------------------------------------------------------
+
+/** High priority messages (emergency, critical control) */
 #define CAN_PRIO_HIGH 0x00
+
+/** Normal priority messages (regular control) */
 #define CAN_PRIO_NORMAL 0x01
+
+/** Low priority messages (status updates) */
 #define CAN_PRIO_LOW 0x02
+
+/** Lowest priority messages (diagnostics) */
 #define CAN_PRIO_LOWEST 0x03
 
-// CAN node addresses
-#define CAN_ADDR_BROADCAST 0x00 // Broadcast to all nodes
+//-----------------------------------------------------------------------------
+// CAN Node Addresses
+//-----------------------------------------------------------------------------
 
-// --- Function Declarations ---
+/** Broadcast address (all nodes) */
+#define CAN_ADDR_BROADCAST 0x00
+
+//=============================================================================
+// SHARED FUNCTION DECLARATIONS
+//=============================================================================
+
+//-----------------------------------------------------------------------------
+// Sensor Functions
+//-----------------------------------------------------------------------------
+
+/**
+ * Read filtered illuminance value
+ * @return Current illuminance in lux
+ */
 float readLux();
+
+/**
+ * Get raw voltage at the LDR sensor
+ * @return Voltage in volts
+ */
 float getVoltageAtLDR();
+
+/**
+ * Calculate external illuminance contribution
+ * @return Estimated external light in lux
+ */
 float getExternalIlluminance();
+
+//-----------------------------------------------------------------------------
+// System Management Functions
+//-----------------------------------------------------------------------------
+
+/**
+ * Get current power consumption
+ * @return Power in watts
+ */
 float getPowerConsumption();
+
+/**
+ * Get system uptime
+ * @return Elapsed time in seconds
+ */
 unsigned long getElapsedTime();
-void startStream(const String &var, int index);
-void stopStream(const String &var, int index);
-String getLastMinuteBuffer(const String &var, int index);
+
+/**
+ * Change luminaire operating state
+ * @param newState Target state (OFF, UNOCCUPIED, OCCUPIED)
+ */
 void changeState(LuminaireState newState);
+
+//-----------------------------------------------------------------------------
+// Data Streaming Functions
+//-----------------------------------------------------------------------------
+
+/**
+ * Start streaming a variable to serial
+ * @param var Variable identifier (y=illuminance, u=duty, etc.)
+ * @param index Node index
+ */
+void startStream(const String &var, int index);
+
+/**
+ * Stop streaming a variable
+ * @param var Variable to stop streaming
+ * @param index Node index
+ */
+void stopStream(const String &var, int index);
+
+/**
+ * Get historical data as CSV
+ * @param var Variable type
+ * @param index Node index
+ * @return CSV string of historical values
+ */
+String getLastMinuteBuffer(const String &var, int index);
 
 #endif // GLOBALS_H

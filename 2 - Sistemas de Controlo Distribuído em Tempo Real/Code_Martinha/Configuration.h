@@ -68,8 +68,6 @@
  
  #define KP 28.0f        // Ganho proporcional
  #define KI 230.0f       // Ganho integral
- #define KD 0.01f        // Ganho derivativo
- #define FILTER_N 10.0f  // Coeficiente de filtragem derivativa
  #define DT 0.1f         // Tempo de amostragem em segundos
  
  //============================================================================

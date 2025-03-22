@@ -33,6 +33,7 @@ extern float setpointLux;      // iluminação desejada (setpoint)
 extern float dutyCycle;        // Ciclo de trabalho atual [0..1]
 extern bool feedbackControl;   // Ativa/desativa controlo por realimentação
 extern bool canMonitorEnabled; // Mostrar mensagens recebidas
+extern PIDController pid;
 
 // Buffer para comandos recebidos pela porta série
 static String input = "";
@@ -48,7 +49,10 @@ static String input = "";
 void initSerialInterface()
 {
     Serial.begin(115200);
+    Serial.println(F("=== Sistema de Controlo de Iluminação ==="));
+    Serial.println(F("Digite 'h' para ver a lista de comandos disponíveis"));
 }
+
 
 //============================================================================
 // FUNÇÕES AUXILIARES DE PARSING
@@ -505,6 +509,109 @@ static void processCommandLine(const String &cmdLine)
         Serial.println("ack");
         return;
     }
+    
+    //============================================================================
+    // COMANDO DE AJUDA
+    //============================================================================
+    
+    // "h" => mostrar ajuda
+    else if (c0 == "h")
+    {
+        Serial.println("\n=== Sistema de Controlo de Iluminação ===");
+        Serial.println("\nComandos de Controlo:");
+        Serial.println("  u <nó> <val>    - Definir duty cycle [0-1]");
+        Serial.println("  p <nó> <val>    - Definir percentagem LED [0-100]");
+        Serial.println("  w <nó> <val>    - Definir potência em watts");
+        Serial.println("  r <nó> <val>    - Definir referência de iluminação (lux)");
+        Serial.println("  f <nó> <val>    - Ativar/desativar controlo por feedback (0/1)");
+        Serial.println("  o <nó> <val>    - Definir estado de ocupação (0/1)");
+        Serial.println("  a <nó> <val>    - Ativar/desativar anti-windup (0/1)");
+        
+        Serial.println("\nComandos do Controlador PI:");
+        Serial.println("  k <val>         - Definir ambos os ganhos Kp=Ki (apenas local)");
+        Serial.println("  b <val>        - Definir factor de ponderação Beta [0-1] (apenas local)");
+        
+        Serial.println("\nComandos de Estado:");
+        Serial.println("  st <nó> <estado> - Definir estado (off/unoccupied/occupied)");
+        
+        Serial.println("\nComandos de Consulta:");
+        Serial.println("  g <var> <nó>    - Obter valor da variável");
+        Serial.println("    Variáveis: u(duty), y(lux), r(ref), o(ocupação),");
+        Serial.println("    a(anti-windup), f(feedback), V(visibilidade),");
+        Serial.println("    F(flicker), E(energia), v(tensão), d(ilum. externa)");
+        
+        Serial.println("\nComandos CAN:");
+        Serial.println("  c m <0|1>       - Ativar/desativar monitor CAN");
+        Serial.println("  c st            - Mostrar estatísticas CAN");
+        Serial.println("  c sc            - Procurar nós ativos na rede");
+        
+        Serial.println("\nComandos de Streaming:");
+        Serial.println("  s <var> <nó>    - Iniciar streaming de variável");
+        Serial.println("  S <var> <nó>    - Parar streaming de variável");
+        
+        Serial.println("\nNota: <nó>=0 envia para todos os nós (broadcast)");
+        Serial.println("ack");
+        return;
+    }
+    
+    //============================================================================
+    // COMANDOS DO CONTROLADOR PI (APENAS LOCAIS)
+    //============================================================================
+    
+    // "k <val>" => definir ganho (apenas local)
+    else if (c0 == "k")
+    {
+        if (numTokens < 2)
+        {
+            Serial.println("err");
+            return;
+        }
+    
+        float val = tokens[1].toFloat();
+    
+        if (val < 0.0f)
+        {
+            Serial.println("err: O ganho deve ser positivo");
+            return;
+        }
+    
+        // Aplicar localmente (sem CAN) - set BOTH Kp and Ki to the same value
+        pid.setGains(val, val);
+        
+        Serial.print("Ganhos definidos para Kp = Ki = ");
+        Serial.println(val, 4);
+        Serial.println("ack");
+        return;
+    }
+
+    // "b <val>" => definir fator de ponderação (apenas local)
+    else if (c0 == "b")
+    {
+        if (numTokens < 2)
+        {
+            Serial.println("err");
+            return;
+        }
+
+        float val = tokens[1].toFloat();
+
+        if (val < 0.0f || val > 1.0f)
+        {
+            Serial.println("err: O factor de ponderação deve estar entre 0 e 1");
+            return;
+        }
+
+        // Aplicar localmente (sem CAN)
+        pid.setSetpointWeight(val);
+        
+        Serial.print("Factor de ponderação definido para Beta = ");
+        Serial.println(val, 4);
+        Serial.println("ack");
+        return;
+    }
+
+    
+    
     //============================================================================
     // COMANDOS DE STREAMING
     //============================================================================
