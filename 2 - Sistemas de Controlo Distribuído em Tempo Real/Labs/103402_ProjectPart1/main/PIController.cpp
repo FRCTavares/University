@@ -109,7 +109,7 @@ float PIController::compute(float setpoint, float measurement)
     if (antiWindup)
     {
         // Apply standard integral update plus anti-windup correction
-        Iterm += Ki * e * h + 0.9 * saturation_error; // 0.1 is the anti-windup gain
+        Iterm += Ki * e * h + 0.1 * saturation_error; // 0.1 is the anti-windup gain
     }
     else
     {

@@ -6,4 +6,45 @@ Lab 2
 
 Lab 3
 - O que é o wind up não compreendi bem. E como é suposto retirar a parte derivativa do PID? O controlador que já temos está bem?
+- O que é o Step point weighting?
 - Para armazenar os dados, estes vão ser armazenados dentro do pico?
+
+---------------------------------------------------------------------------------------------
+Aula 4: CAN-BUS
+
+100 miliseconds setlling time and sampling time is 10 miliseconds
+Why 500 miliseconds for the steady state? 5 times the time constant to get 99% sure that the ldr is in the steady state.
+
+Why CAN-BUS and not Ethernet?
+CAN-BUS is 1Mb per second and in Ethernet you have 1Gb per sevcond. Every device can ask to be the master in a tiny but but that is not allowed with the ethernet.
+They are both carrier sense.
+It allows a node to say let me enter (Have priority) and it does not happen with the ethernet
+
+SLIDES ARE ESSENTIAL TO UNDERSTAND CAN-BUS
+
+Be carefull with the power given to the CAN, if wrong it won't connect to the pico.
+The pico is not Strong with the USB (It can die) while a pc is really Strong with it.
+
+
+You need to choose diferente bytes for diferente picos (Pico id)
+
+We need to stress test the can bus for the report
+
+
+Why is it importante to terminate the bus? Because of a stationary wave reflected in the ends of the cables. Because of the cables end it works almost as na antena. b
+------------------------------------------------------------------------------------------------------------------------------------------
+Aula 5:
+O CAN BUS tem como cena boa o facto de poder dar prioridades a certas mensagens.
+Quem manda quer saber que foi ouvido.
+
+Para identificadores únicos dos picos ir buscar o endereço único de cada pico e escolher como ID por exemplo um ultimo bit, pode acontecer serem iguais nesse caso mudar para o penúltimo bit ou até antepenúltimo, para serem diferentes.
+
+Para o controlador, não vale a pena feedforward se o ganho integral for rápido.
+No código dado do PID b=0, logo não tem feedforward, olhar para isso!
+
+LDRs diferentes, códigos diferentes? Para diferenciar usar os endereços para dar ganhos diferentes a cada Sistema!
+
+Objetivos:
+- Mensagem Network Wake-Up para iniciar o "escritório"
+
+

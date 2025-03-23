@@ -82,8 +82,8 @@ time_zero = time_data - time_data[0]
 time_seconds = time_data / 1000  # Convert to seconds
 
 # Filter out first 15 seconds and limit to next 30 seconds (15-45s total)
-idx = (time_zero >= 8500) & (time_zero <= 23500)  # Between 15 and 45 seconds (in milliseconds)
-time_filtered = time_zero[idx] / 1000 - 8.5 # Convert to seconds and re-zero to start at 0
+idx = (time_zero >= 1000) & (time_zero <= 100000)  # Between 15 and 45 seconds (in milliseconds)
+time_filtered = time_zero[idx] / 1000 - 1 # Convert to seconds and re-zero to start at 0
 measured_filtered = measured_data[idx]
 duty_filtered = duty_data[idx]
 reference_filtered = setpoint_data[idx]

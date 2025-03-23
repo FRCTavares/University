@@ -6,7 +6,7 @@
 #include <math.h>
 #include "LEDDriver.h"
 #include "Globals.h"
-#include "PIController.h" // Add this include
+#include "PIController.h"
 
 // External variable declarations
 extern float ledGain;
@@ -14,7 +14,7 @@ extern float baselineIlluminance;
 extern PIController pid;
 extern const float K;
 extern const float BETA;
-extern bool filterEnabled; // Add this line for sensor filtering toggle
+extern bool filterEnabled;
 
 static void printHelp();
 //-----------------------------------------------------------------------------
@@ -1140,7 +1140,7 @@ static void processCommandLine(const String &cmdLine)
       }
       Serial.println();
 
-      // NEW: Jitter row (in microseconds)
+      // Jitter row (in microseconds)
       // -------------------------------------------------------------------------
       Serial.print("Jitter_us: ");
       for (int i = 0; i < count; i++)

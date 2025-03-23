@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 # Path to your text file with the data dump
-txt_filename = "test.txt"
+txt_filename = "teste1.txt"
 
 # Path to your desired CSV output
 csv_filename = "output.csv"
@@ -31,8 +31,8 @@ measured_data      = np.array(parse_line("MeasuredLux", content))
 duty_data          = np.array(parse_line("DutyCycle", content))
 setpoint_data      = np.array(parse_line("SetpointLux", content))
 flicker_data       = np.array(parse_line("Flicker", content))
-energy_data        = np.array(parse_line("Energy", content))
-visibility_data    = np.array(parse_line("VisibilityError", content))
+energy_data        = np.array(parse_line("Energia", content))
+visibility_data    = np.array(parse_line("ErroVisibilidade", content))
 jitter_data        = np.array(parse_line("Jitter_us", content))
 external_lux_data  = np.array(parse_line("ExternalLux", content))
 

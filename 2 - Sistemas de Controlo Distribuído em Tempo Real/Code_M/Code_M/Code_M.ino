@@ -122,6 +122,8 @@ void setup()
   Serial.println("LuxMedido\tSetpoint");
 }
 
+// Add a static counter for sampling
+static int sampleCounter = 0;
 //============================================================================
 // LOOP PRINCIPAL
 //============================================================================
@@ -160,11 +162,16 @@ void loop()
     setLEDDutyCycle(dutyCycle);
   }
 
-  // Armazenamento de dados
-  logData(millis(), lux, dutyCycle);
+  // Only log data every 10th iteration
+  sampleCounter++;
+  if (sampleCounter >= 10)
+  {
+    logData(millis(), lux, dutyCycle);
+    sampleCounter = 0;
+  }
 
   // Comunicação CAN
-  canCommLoop(); // Processamento de mensagens CAN
+  canCommLoop();          // Processamento de mensagens CAN
   processRemoteStreams(); // Processa e envia streams remotos
 
   // Obtenção do timestamp atual

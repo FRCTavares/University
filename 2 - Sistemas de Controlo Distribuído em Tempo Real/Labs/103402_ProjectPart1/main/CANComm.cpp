@@ -28,7 +28,7 @@ static unsigned long lastLatencyMeasure = 0;
 static unsigned long totalLatency = 0;
 static uint32_t latencySamples = 0;
 
-extern bool filterEnabled; // Add this line for sensor filtering toggle
+extern bool filterEnabled;
 
 /**
  * Initialize the CAN communication interface
