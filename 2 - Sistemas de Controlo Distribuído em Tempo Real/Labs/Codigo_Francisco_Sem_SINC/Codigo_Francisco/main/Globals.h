@@ -273,4 +273,14 @@ void stopStream(const String &var, int index);
  */
 String getLastMinuteBuffer(const String &var, int index);
 
+#define MAX_STREAM_REQUESTS 5
+struct StreamRequest {
+  uint8_t requesterNode;
+  uint8_t variableType;
+  bool active;
+  unsigned long lastSent;
+};
+extern StreamRequest remoteStreamRequests[MAX_STREAM_REQUESTS];
+
+
 #endif // GLOBALS_H

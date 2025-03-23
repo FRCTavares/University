@@ -193,10 +193,38 @@ void initStorage()
  */
 void logData(unsigned long timestamp, float lux, float duty)
 {
+    // Adicionar variável externa
+    extern float setpointLux;
+    
+    // Variáveis estáticas para cálculo de jitter e flicker
+    static unsigned long lastSampleMicros = 0;
+    static float lastDuty = 0.0f;
+    
+    // Obter o tempo atual em microssegundos para cálculo de jitter
+    unsigned long currentMicros = micros();
+    
+    // Calcular jitter (diferença em relação ao período nominal de 10ms = 10000µs)
+    float jitterValue = 0.0f;
+    if (lastSampleMicros > 0) {
+        jitterValue = (float)((currentMicros - lastSampleMicros) - 10000.0f);
+    }
+    
+    // Calcular flicker (variação absoluta do duty cycle)
+    float flickerValue = fabs(duty - lastDuty);
+    
+    // Armazenar valores no buffer
     logBuffer[logIndex].timestamp = timestamp;
     logBuffer[logIndex].lux = lux;
     logBuffer[logIndex].duty = duty;
-
+    logBuffer[logIndex].setpoint = setpointLux; // Armazenar setpoint atual também
+    logBuffer[logIndex].flicker = flickerValue;
+    logBuffer[logIndex].jitter = jitterValue;
+    
+    // Atualizar variáveis para próxima amostra
+    lastSampleMicros = currentMicros;
+    lastDuty = duty;
+    
+    // Avançar índice do buffer circular
     logIndex++;
     if (logIndex >= LOG_SIZE)
     {
@@ -230,6 +258,68 @@ void dumpBufferToSerial()
     }
 
     Serial.println("Fim da Exportação de Dados dos Buffer\n");
+}
+
+/**
+ * Exporta amostras do buffer para a interface Serial
+ * Formato: Time, MeasuredLux, DutyCycle, SetpointLux
+ */
+void dumpSampledBufferToSerial()
+{
+    int count = bufferFull ? LOG_SIZE : logIndex;
+    if (count <= 0)
+    {
+        Serial.println("Buffer vazio.");
+        return;
+    }
+
+    int startIndex = bufferFull ? logIndex : 0;
+    int step = max(1, count / 1000); // Sample at least every 'step' entries to get ~1000 points
+    int numSamples = min(1000, count / step);
+
+    // Print timestamps
+    Serial.print("Time: ");
+    for (int i = 0; i < numSamples; i++)
+    {
+        int idx = (startIndex + i * step) % LOG_SIZE;
+        Serial.print(logBuffer[idx].timestamp);
+        if (i < numSamples - 1)
+            Serial.print(",");
+    }
+    Serial.println();
+
+    // Print measured lux values
+    Serial.print("MeasuredLux: ");
+    for (int i = 0; i < numSamples; i++)
+    {
+        int idx = (startIndex + i * step) % LOG_SIZE;
+        Serial.print(logBuffer[idx].lux, 2);
+        if (i < numSamples - 1)
+            Serial.print(",");
+    }
+    Serial.println();
+
+    // Print duty cycle values
+    Serial.print("DutyCycle: ");
+    for (int i = 0; i < numSamples; i++)
+    {
+        int idx = (startIndex + i * step) % LOG_SIZE;
+        Serial.print(logBuffer[idx].duty, 4);
+        if (i < numSamples - 1)
+            Serial.print(",");
+    }
+    Serial.println();
+
+    // Print setpoint values
+    Serial.print("SetpointLux: ");
+    for (int i = 0; i < numSamples; i++)
+    {
+        int idx = (startIndex + i * step) % LOG_SIZE;
+        Serial.print(logBuffer[idx].setpoint, 2);
+        if (i < numSamples - 1)
+            Serial.print(",");
+    }
+    Serial.println();
 }
 
 /**
@@ -267,7 +357,6 @@ int getCurrentIndex()
 {
     return logIndex;
 }
-
 
 //============================================================================
 // FUNÇÕES DE ANÁLISE E MÉTRICAS

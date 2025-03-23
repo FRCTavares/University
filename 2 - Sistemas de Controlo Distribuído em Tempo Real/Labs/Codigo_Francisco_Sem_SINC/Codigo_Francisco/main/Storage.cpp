@@ -1,4 +1,6 @@
 #include "Storage.h"
+#include "Metrics.h"
+#include "Globals.h"
 #include <Arduino.h>
 
 //=============================================================================
@@ -14,6 +16,24 @@ int logIndex = 0;
 // Flag indicating if buffer has wrapped around (contains LOG_SIZE entries)
 bool bufferFull = false;
 
+// Sample counter for downsampling
+unsigned int sampleCounter = 0;
+
+static unsigned long lastSampleMicros = 0;
+
+// Downsampling rate - only store every Nth sample
+const unsigned int DOWNSAMPLE_RATE = 10;
+
+extern float calculateFlickerValue(float d0, float d1, float d2);
+static float lastDuty = -1.0;  // -1.0 indicates that no previous value exists yet
+
+// Track previous duty cycles for flicker calculation
+static float prevDuty1 = 0.0;
+static float prevDuty2 = 0.0;
+static bool enoughSamplesForFlicker = false;
+static float cumulativeFlicker = 0.0;  // Track the running sum of flicker values
+
+
 //=============================================================================
 // INITIALIZATION FUNCTIONS
 //=============================================================================
@@ -25,73 +45,94 @@ bool bufferFull = false;
 void initStorage() {
   logIndex = 0;
   bufferFull = false;
+  sampleCounter = 0;
+  cumulativeFlicker = 0.0;  // Reset the cumulative flicker
+  lastDuty = -1.0;
 }
 
 //=============================================================================
 // DATA LOGGING FUNCTIONS
 //=============================================================================
 
-/**
- * Log a data point to the circular buffer
- * Stores timestamp, illuminance, and duty cycle values
- * 
- * @param timestamp Millisecond timestamp when data was captured
- * @param lux Measured illuminance in lux
- * @param duty LED duty cycle (0.0-1.0)
- */
-void logData(unsigned long timestamp, float lux, float duty) {
-  // Input validation (optional)
+// This function is called at every loop iteration or at some periodic rate
+void logData(unsigned long timestampMs, float lux, float duty) {
+  // Validate
   if (isnan(lux) || isnan(duty)) {
-    // Skip invalid data
-    return;
+      return;
   }
 
-  // Store data in current buffer position
-  logBuffer[logIndex].timestamp = timestamp;
-  logBuffer[logIndex].lux = lux;
-  logBuffer[logIndex].duty = duty;
-  
-  // Advance write position
+  // We only store data every DOWNSAMPLE_RATE calls
+  sampleCounter++;
+  if (sampleCounter < DOWNSAMPLE_RATE) {
+      return;
+  }
+  sampleCounter = 0;
+
+  // Compute instantaneous flicker error:
+  // If this is the first sample, we cannot compute flicker.
+  float flickerError = 0.0;
+  if (lastDuty >= 0.0) {
+    // Simply compute the absolute difference between the current and last duty cycle.
+    flickerError = fabs(duty - lastDuty);
+  }
+  // Update lastDuty for next computation
+  lastDuty = duty;
+
+  // Compute jitter:
+  unsigned long nowMicros = micros();
+  float jitterUs = 0.0f;
+  if (lastSampleMicros != 0) {
+    unsigned long deltaMicros = nowMicros - lastSampleMicros;
+    const float nominalPeriodUs = 10000.0f; // for a 10 ms period
+    jitterUs = (float)deltaMicros - nominalPeriodUs;
+  }
+  lastSampleMicros = nowMicros;
+
+  // Get external illuminance
+  float externalLux = getExternalIlluminance();
+
+  // Save the data into the log buffer:
+  logBuffer[logIndex].timestamp = timestampMs;
+  logBuffer[logIndex].lux       = lux;
+  logBuffer[logIndex].duty      = duty;
+  logBuffer[logIndex].setpoint  = refIlluminance;
+  logBuffer[logIndex].flicker   = flickerError;
+  logBuffer[logIndex].jitter    = jitterUs;
+  logBuffer[logIndex].extLux    = externalLux;  // Store external illuminance
+
+  // Advance circular buffer index
   logIndex++;
-  
-  // Wrap around if we reach the end of the buffer
   if (logIndex >= LOG_SIZE) {
     logIndex = 0;
-    bufferFull = true;  // Mark that buffer has wrapped around
+    bufferFull = true;
   }
 }
 
-/**
- * Output all logged data as CSV to the serial port
- * Formats: timestamp_ms,rawLux,duty
- */
+// Example “mdump” or “dumpBufferToSerial” function
 void dumpBufferToSerial() {
-  // Print CSV header
-  Serial.println("timestamp_ms,rawLux,duty");
-  
-  // Calculate how many entries to output and where to start
+  // Print CSV header with new jitter column
+  Serial.println("timestamp_ms,rawLux,duty,jitter_us");
+
   int count = bufferFull ? LOG_SIZE : logIndex;
   int startIndex = bufferFull ? logIndex : 0;
-  
-  // Output each entry in chronological order
+
   for (int i = 0; i < count; i++) {
-    // Calculate real index accounting for circular buffer wrapping
-    int realIndex = (startIndex + i) % LOG_SIZE;
-    
-    // Get data values
-    unsigned long t = logBuffer[realIndex].timestamp;
-    float lx = logBuffer[realIndex].lux;
-    float d = logBuffer[realIndex].duty;
-    
-    // Output as CSV line
-    Serial.print(t);
-    Serial.print(",");
-    Serial.print(lx, 2);  // 2 decimal places for lux
-    Serial.print(",");
-    Serial.println(d, 4); // 4 decimal places for duty cycle
+      int realIndex = (startIndex + i) % LOG_SIZE;
+      unsigned long t = logBuffer[realIndex].timestamp;
+      float lx        = logBuffer[realIndex].lux;
+      float d         = logBuffer[realIndex].duty;
+      float j         = logBuffer[realIndex].jitter;
+
+      // Print CSV row
+      Serial.print(t);
+      Serial.print(",");
+      Serial.print(lx, 2);
+      Serial.print(",");
+      Serial.print(d, 4);
+      Serial.print(",");
+      Serial.println(j, 4);
   }
-  
-  Serial.println("End of dump.\n");
+  Serial.println("End of mdump.\n");
 }
 
 //=============================================================================

@@ -169,53 +169,45 @@ float computeFlickerFromBuffer() {
   int startIndex = isBufferFull() ? getCurrentIndex() : 0;
   
   // Variables for flicker computation
-  float flickerSum = 0.0;  // Sum of flicker magnitudes
-  int flickerCount = 0;    // Count of flicker events
+  float flickerSum = 0.0;
+  int flickerCount = 0;
 
-  // Need three consecutive points to detect direction changes
-  bool first = true, second = false;
-  float d0, d1;  // First two points in sliding window
-
-  // Iterate through all samples in the buffer
+  // Sum up all non-zero flicker values
   for (int i = 0; i < count; i++) {
-    // Calculate the actual index in the circular buffer
     int realIndex = (startIndex + i) % LOG_SIZE;
     
-    // Get duty cycle for current sample (third point in window)
-    float d2 = logBuffer[realIndex].duty;
-    
-    if (first) {
-      // Initialize first point
-      d0 = d2;
-      first = false;
-      second = false;
-    }
-    else if (!second) {
-      // Initialize second point
-      d1 = d2;
-      second = true;
-    }
-    else {
-      // Calculate slopes between consecutive points
-      float diff1 = d1 - d0;  // Slope between first and second points
-      float diff2 = d2 - d1;  // Slope between second and third points
-      
-      // Detect direction change (sign change in slopes)
-      // This indicates an oscillation/flicker
-      if (diff1 * diff2 < 0.0) {
-        // Add the magnitude of the changes to flicker sum
-        flickerSum += (fabs(diff1) + fabs(diff2));
-        flickerCount++;
-      }
-      
-      // Slide window: shift points for next iteration
-      d0 = d1;
-      d1 = d2;
+    if (logBuffer[realIndex].flicker > 0.0) {
+      flickerSum += logBuffer[realIndex].flicker;
+      flickerCount++;
     }
   }
   
   if (flickerCount == 0) return 0.0;
-  return (flickerSum / flickerCount);  // Average flicker magnitude
+  return (flickerSum / flickerCount);  // Return average for compatibility
+}
+
+/**
+ * Calculate flicker value for the current point
+ * Based on the last three duty cycle values
+ * 
+ * @param d0 First duty cycle point
+ * @param d1 Second duty cycle point
+ * @param d2 Third duty cycle point (current)
+ * @return Flicker value or 0.0 if no direction change
+ */
+float calculateFlickerValue(float d0, float d1, float d2) {
+  // Calculate slopes between consecutive points
+  float diff1 = d1 - d0;  // Slope between first and second points
+  float diff2 = d2 - d1;  // Slope between second and third points
+  
+  // Detect direction change (sign change in slopes)
+  if (diff1 * diff2 < 0.0) {
+    // Return the magnitude of the changes
+    return (fabs(diff1) + fabs(diff2));
+  }
+  
+  // No direction change detected
+  return 0.0;
 }
 
 //=============================================================================

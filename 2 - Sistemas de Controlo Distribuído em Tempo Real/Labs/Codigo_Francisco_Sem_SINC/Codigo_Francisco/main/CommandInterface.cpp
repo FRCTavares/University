@@ -6,6 +6,14 @@
 #include <math.h>
 #include "LEDDriver.h"
 #include "Globals.h"
+#include "PIController.h"  // Add this include
+
+// External variable declarations
+extern float ledGain;
+extern float baselineIlluminance;
+extern PIController pid;
+extern const float K;
+extern const float BETA;
 
 static void printHelp();
 //-----------------------------------------------------------------------------
@@ -442,6 +450,11 @@ static void processCommandLine(const String &cmdLine)
       // Forward to specific node - control type 10 = reference illuminance
       if (sendControlCommand(targetNode, 10, val))
       {
+        Serial.print("Query request sent to node ");
+        Serial.print(targetNode);
+        Serial.print(": ");
+        Serial.println(val);
+
         Serial.println("ack");
       }
       else
@@ -897,14 +910,185 @@ static void processCommandLine(const String &cmdLine)
       Serial.println(bufferData);
       return;
     }
-
-    else
+    else if (subCommand == "bigdump")
     {
-      Serial.println("err");
+      int iDesk = tokens[2].toInt();
+      
+      // Get the log buffer and count
+      LogEntry* logBuffer = getLogBuffer();
+      int count = getLogCount();
+      if (count == 0) {
+        Serial.println("No data in buffer");
+        return;
+      }
+      
+      // Calculate starting index
+      int startIndex = isBufferFull() ? getCurrentIndex() : 0;
+      
+      // Dump time values
+      Serial.print("Time: ");
+      for (int i = 0; i < count; i++) {
+        int realIndex = (startIndex + i) % LOG_SIZE;
+        Serial.print(logBuffer[realIndex].timestamp);
+        if (i < count - 1) Serial.print(",");
+      }
+      Serial.println();
+      
+      // Dump measured lux values
+      Serial.print("MeasuredLux: ");
+      for (int i = 0; i < count; i++) {
+        int realIndex = (startIndex + i) % LOG_SIZE;
+        Serial.print(logBuffer[realIndex].lux, 2);
+        if (i < count - 1) Serial.print(",");
+      }
+      Serial.println();
+      
+      // Dump duty cycle values
+      Serial.print("DutyCycle: ");
+      for (int i = 0; i < count; i++) {
+        int realIndex = (startIndex + i) % LOG_SIZE;
+        Serial.print(logBuffer[realIndex].duty, 4);
+        if (i < count - 1) Serial.print(",");
+      }
+      Serial.println();
+      
+      Serial.print("SetpointLux: ");
+      for (int i = 0; i < count; i++) {
+        int realIndex = (startIndex + i) % LOG_SIZE;
+        Serial.print(logBuffer[realIndex].setpoint, 2);
+        if (i < count - 1) Serial.print(",");
+      }
+      Serial.println();
+
+      // Confirmation
+      Serial.println("Data dump complete");
       return;
     }
-  }
+    else if (subCommand == "mdump") {
+      int count = getLogCount();
+      if (count == 0) {
+        Serial.println("No data available for metrics");
+        return;
+      }
+    
+      // Get access to the log buffer
+      LogEntry* buffer = getLogBuffer();
+      int startIndex = isBufferFull() ? getCurrentIndex() : 0;
+    
+      // Print Time row
+      Serial.print("Time: ");
+      for (int i = 0; i < count; i++) {
+        int idx = (startIndex + i) % LOG_SIZE;
+        Serial.print(buffer[idx].timestamp);
+        if (i < count - 1) Serial.print(",");
+      }
+      Serial.println();
+    
+      // Measured Lux row
+      Serial.print("MeasuredLux: ");
+      for (int i = 0; i < count; i++) {
+        int idx = (startIndex + i) % LOG_SIZE;
+        Serial.print(buffer[idx].lux, 2);
+        if (i < count - 1) Serial.print(",");
+      }
+      Serial.println();
+    
+      // DutyCycle row
+      Serial.print("DutyCycle: ");
+      for (int i = 0; i < count; i++) {
+        int idx = (startIndex + i) % LOG_SIZE;
+        Serial.print(buffer[idx].duty, 4);
+        if (i < count - 1) Serial.print(",");
+      }
+      Serial.println();
+    
+      // Setpoint row
+      Serial.print("SetpointLux: ");
+      for (int i = 0; i < count; i++) {
+        int idx = (startIndex + i) % LOG_SIZE;
+        Serial.print(buffer[idx].setpoint, 2);
+        if (i < count - 1) Serial.print(",");
+      }
+      Serial.println();
+    
+      // Flicker row (instantaneous flicker error)
+      Serial.print("Flicker: ");
+      for (int i = 0; i < count; i++) {
+        int idx = (startIndex + i) % LOG_SIZE;
+        Serial.print(buffer[idx].flicker, 6);
+        if (i < count - 1) Serial.print(",");
+      }
+      Serial.println();
+  
+    
+      // Accumulated energy row
+      Serial.print("Energy: ");
+      float energySum = 0.0f;
+      for (int i = 0; i < count; i++) {
+        int idx = (startIndex + i) % LOG_SIZE;
+        // Calculate time step (dt) in seconds
+        float dt = 0.0f;
+        if (i > 0) {
+          int prevIdx = (startIndex + i - 1) % LOG_SIZE;
+          dt = (buffer[idx].timestamp - buffer[prevIdx].timestamp) / 1000.0f;
+        }
+        // Power = MAX_POWER_WATTS * duty
+        float power = MAX_POWER_WATTS * buffer[idx].duty;
+        energySum += power * dt;
+        Serial.print(energySum, 4);
+        if (i < count - 1) Serial.print(",");
+      }
+      Serial.println();
+    
+      // Accumulated visibility error row
+      Serial.print("VisibilityError: ");
+      float visSum = 0.0f;
+      for (int i = 0; i < count; i++) {
+        int idx = (startIndex + i) % LOG_SIZE;
+        float dt = 0.0f;
+        if (i > 0) {
+          int prevIdx = (startIndex + i - 1) % LOG_SIZE;
+          dt = (buffer[idx].timestamp - buffer[prevIdx].timestamp) / 1000.0f;
+        }
+        // Only add error when measured < setpoint
+        float err = 0.0f;
+        if (buffer[idx].lux < buffer[idx].setpoint) {
+          err = (buffer[idx].setpoint - buffer[idx].lux) * dt;
+        }
+        visSum += err;
+        Serial.print(visSum, 2);
+        if (i < count - 1) Serial.print(",");
+      }
+      Serial.println();
 
+      // NEW: Jitter row (in microseconds)
+      // -------------------------------------------------------------------------
+      Serial.print("Jitter_us: ");
+      for (int i = 0; i < count; i++) {
+        int idx = (startIndex + i) % LOG_SIZE;
+        Serial.print(buffer[idx].jitter/1000, 4); // e.g. 4 decimals
+        if (i < count - 1) Serial.print(",");
+      }
+      Serial.println();
+
+      // External Illuminance row
+      Serial.print("ExternalLux: ");
+      for (int i = 0; i < count; i++) {
+        int idx = (startIndex + i) % LOG_SIZE;
+        Serial.print(buffer[idx].extLux, 2);
+        if (i < count - 1) Serial.print(",");
+      }
+      Serial.println();
+    
+      Serial.println("Data dump complete (mdump, transposed).");
+      return;
+    }
+    else
+    {
+      Serial.println("err: Unknown metric or variable");
+      return;
+    }
+  } 
 //-----------------------------------------------------------------------------
 // CONTROLLER PARAMETER COMMANDS
 //-----------------------------------------------------------------------------
@@ -929,10 +1113,8 @@ else if (c0 == "k")
     uint8_t paramCode = 0;
     if (param.equalsIgnoreCase("beta"))
       paramCode = 15;
-    else if (param.equalsIgnoreCase("kp"))
+    else if (param.equalsIgnoreCase("k")) // Changed from "kp" to "k"
       paramCode = 16;
-    else if (param.equalsIgnoreCase("ki"))
-      paramCode = 17;
     else
     {
       Serial.println("err: unknown parameter");
@@ -961,20 +1143,10 @@ else if (c0 == "k")
     pid.setWeighting(value);
     Serial.println("ack");
   }
-  else if (param.equalsIgnoreCase("kp"))
+  else if (param.equalsIgnoreCase("k")) // Changed from "kp" to "k"
   {
-    // Get current Ki
-    float p, i;
-    pid.getTerms(p, i);
-    float currentKi = KI; // Use default if we can't get it
-    pid.setGains(value, currentKi);
-    Serial.println("ack");
-  }
-  else if (param.equalsIgnoreCase("ki"))
-  {
-    // Get current Kp
-    float currentKp = KP; // Default if we can't get it
-    pid.setGains(currentKp, value);
+    // Set both gains to the same value
+    pid.setGains(value, value);
     Serial.println("ack");
   }
   else
@@ -1288,7 +1460,6 @@ else if (c0 == "k")
     Serial.println("ack");
     return;
   }
-
   // Default response for unrecognized commands
   Serial.println("ack");
   return;
@@ -1325,8 +1496,7 @@ static void printHelp() {
 
   Serial.println("\n------- CONTROLLER PARAMETERS -------");
   Serial.println("k <i> beta <val>: Set setpoint weighting factor (0.0-1.0) for node i");
-  Serial.println("k <i> kp <val>  : Set proportional gain for node i");
-  Serial.println("k <i> ki <val>  : Set integral gain for node i");
+  Serial.println("k <i> k <val>   : Set both proportional and integral gain for node i");
   
   Serial.println("\n------- SYSTEM STATE -------");
   Serial.println("o <i> <val>  : Set occupancy (0=unoccupied, 1=occupied) for node i");
@@ -1348,6 +1518,8 @@ static void printHelp() {
   Serial.println("g <var> <i>  : Get value of variable <var> from node i");
   Serial.println("  Variables: Same as streaming, plus:");
   Serial.println("  g b <x> <i>: Get buffer history of variable x from node i");
+  Serial.println("g bigdump <i>: Get complete time series data (timestamp, lux, duty, setpoint)");
+  Serial.println("g mdump <i>  : Get comprehensive metrics (timestamp, lux, duty, setpoint, flickers, energy, visibility)");
   
   Serial.println("\n------- CAN NETWORK -------");
   Serial.println("c m <0|1>    : Disable/enable CAN message monitoring");
@@ -1358,6 +1530,13 @@ static void printHelp() {
   
   Serial.println("\n------- SYSTEM -------");
   Serial.println("h            : Display this help information");
+  
+  Serial.println("\n------- DATA FORMAT NOTES -------");
+  Serial.println("Energy      : Cumulative energy consumption in joules");
+  Serial.println("Visibility  : Cumulative visibility error when lux < setpoint");
+  Serial.println("FlickerInstant: Instantaneous flicker value");
+  Serial.println("FlickerWithFilter: Cumulative flicker with filtering");
+  Serial.println("FlickerNoFilter : Cumulative flicker without filtering");
   
   Serial.println("\nNode addressing:");
   Serial.println("  i = 0      : Broadcast to all nodes");

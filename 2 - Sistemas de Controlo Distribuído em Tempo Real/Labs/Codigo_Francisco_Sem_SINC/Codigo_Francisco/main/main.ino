@@ -63,10 +63,10 @@ const float ALPHA = 0.3;              // EMA filter coefficient (0=slow, 1=fast)
 //-----------------------------------------------------------------------------
 // PID Controller Parameters
 //-----------------------------------------------------------------------------
-const float KP = 230.0;        // Proportional gain
-const float KI = 230.0;       // Integral gain
-const float DT = 0.01;        // Sampling period (seconds)
-const float BETA = 0.5;       // Setpoint weighting factor (0.0-1.0)
+const float Kp = 20;        // Initial proportional gain (will be replaced by ledGain)
+const float Ki = 400;       // Integral gain
+const float DT = 0.01;      // Sampling period (seconds)
+const float BETA = 0.8;       // Setpoint weighting factor (0.0-1.0)
 
 //-----------------------------------------------------------------------------
 // Power Consumption Model
@@ -102,6 +102,18 @@ float calibrationOffset = 0.0;  // Lux sensor calibration offset
 float lastFilteredLux = -1.0;   // Last filtered lux value for EMA
 
 //-----------------------------------------------------------------------------
+// Flicker Comparison Variables
+//-----------------------------------------------------------------------------
+float rawLux = 0.0;                   // Last unfiltered lux value
+float flickerWithFilter = 0.0;        // Accumulated flicker with filtering
+float flickerWithoutFilter = 0.0;     // Accumulated flicker without filtering
+
+// Previous duty cycle values for flicker calculation
+float prevDutyWithFilter1 = 0.0, prevDutyWithFilter2 = 0.0;
+float prevDutyWithoutFilter1 = 0.0, prevDutyWithoutFilter2 = 0.0;
+bool flickerInitialized = false;      // Track if we've initialized flicker tracking
+
+//-----------------------------------------------------------------------------
 // External Light Tracking
 //-----------------------------------------------------------------------------
 float lastExternalLux = 0.0;    // Previous external light measurement
@@ -133,6 +145,8 @@ String streamingVar = "";           // Variable to stream
 int streamingIndex = 0;             // Node index for streaming
 unsigned long lastStreamTime = 0;   // Last stream update timestamp
 
+StreamRequest remoteStreamRequests[MAX_STREAM_REQUESTS];
+
 //-----------------------------------------------------------------------------
 // Debug Configuration
 //-----------------------------------------------------------------------------
@@ -160,7 +174,7 @@ NeighborInfo neighbors[MAX_NEIGHBORS];  // Neighbor state array
 //-----------------------------------------------------------------------------
 // Controller Object
 //-----------------------------------------------------------------------------
-PIController pid(KP, KI, 1.0, DT);  // PI controller instance with Beta=1.0
+PIController pid(Kp, Ki, BETA, DT);  // PI controller instance with Beta=1.0
 
 //=============================================================================
 // STATE MANAGEMENT SUBSYSTEM
@@ -210,6 +224,7 @@ void changeState(LuminaireState newState) {
 //=============================================================================
 // SENSOR SUBSYSTEM
 //=============================================================================
+bool filterEnabled = true;  // Enable/disable sensor filtering
 
 /**
  * Read and process illuminance with multi-stage filtering:
@@ -225,8 +240,9 @@ float readLux() {
   float sum = 0.0;
   float count = 0.0;
 
-  // 1. Take multiple samples to reduce noise
+  // Always take at least one sample to update rawLux
   for (int i = 0; i < NUM_SAMPLES; i++) {
+    // Read the ADC value from the analog pin
     int adcValue = analogRead(LDR_PIN);
     float voltage = (adcValue / MY_ADC_RESOLUTION) * VCC;
 
@@ -250,6 +266,14 @@ float readLux() {
 
   if (count == 0)
     return 0.0; // No valid readings
+
+  // Store the raw lux (average of all samples without further filtering)
+  rawLux = sum / count;
+
+  // If filtering is disabled, return the raw value immediately
+  if (!filterEnabled) {
+    return rawLux;
+  }
 
   // 2. Calculate mean and standard deviation
   float mean = sum / count;
@@ -556,7 +580,7 @@ void testLED() {
   // Set LED to off after test
   setLEDDutyCycle(0.0);
   Serial.println("LED test complete.");
-}
+}  
 
 /**
  * Calibrate illuminance model by measuring LED contribution
@@ -800,6 +824,42 @@ void handleStreaming() {
   }
 }
 
+
+void handleRemoteStreamRequests() {
+  unsigned long now = millis();
+  
+  // Check if it's time to send data (every 500ms)
+  for(int i=0; i<MAX_STREAM_REQUESTS; i++) {
+    if(!remoteStreamRequests[i].active) continue;
+    
+    if(now - remoteStreamRequests[i].lastSent >= 500) {
+      float value = 0.0; // Add this declaration
+      
+      switch(remoteStreamRequests[i].variableType) {
+        case 0: // y = illuminance 
+          value = readLux();
+          break;
+        case 1: // u = duty cycle
+          value = dutyCycle;
+          break;
+        case 2: // p = power
+          value = getPowerConsumption();
+          break;
+        // Add other variable types as needed
+        default:
+          value = 0.0;
+      }
+      
+      // Send the value to the requesting node
+      sendSensorReading(remoteStreamRequests[i].requesterNode, 
+                        remoteStreamRequests[i].variableType, 
+                        value);
+      
+      remoteStreamRequests[i].lastSent = now;
+    }
+  }
+}
+
 /**
  * Get historical data buffer as CSV string
  * 
@@ -884,10 +944,63 @@ void setup() {
   setpointLux = SETPOINT_UNOCCUPIED;
   refIlluminance = setpointLux;
 
+  for(int i=0; i<MAX_STREAM_REQUESTS; i++) {
+    remoteStreamRequests[i].active = false;
+  }
+
   // Print header for Serial Plotter (if using)
   if (DEBUG_PLOTTING) {
     Serial.println("MeasuredLux\tSetpoint");
   }
+}
+
+/**
+ * Update flicker metrics for both filtered and unfiltered data
+ * Tracks direction changes in duty cycle as indicator of oscillations
+ * 
+ * @param filteredLux Current filtered lux reading
+ * @param rawLux Current unfiltered lux reading
+ * @param duty Current duty cycle
+ */
+void updateFlickerMetrics(float filteredLux, float rawLux, float duty) {
+  // Skip if data is invalid
+  if (filteredLux <= 0 || rawLux <= 0 || duty < 0) {
+    return;
+  }
+  
+  // Initialize values on first call
+  if (!flickerInitialized) {
+    prevDutyWithFilter1 = prevDutyWithFilter2 = duty;
+    prevDutyWithoutFilter1 = prevDutyWithoutFilter2 = duty;
+    flickerInitialized = true;
+    return;
+  }
+
+  // Calculate flicker with filtered lux
+  float diffFiltered1 = prevDutyWithFilter1 - prevDutyWithFilter2;
+  float diffFiltered2 = duty - prevDutyWithFilter1;
+  
+  // Calculate flicker with unfiltered lux
+  float diffUnfiltered1 = prevDutyWithoutFilter1 - prevDutyWithoutFilter2;
+  float diffUnfiltered2 = duty - prevDutyWithoutFilter1;
+  
+  // Detect direction changes (sign changes) in duty - indicator of oscillation
+  if (diffFiltered1 * diffFiltered2 < 0) {
+    // Accumulate flicker magnitude (sum of absolute changes)
+    flickerWithFilter += fabs(diffFiltered1) + fabs(diffFiltered2);
+  }
+  
+  if (diffUnfiltered1 * diffUnfiltered2 < 0) {
+    // Accumulate flicker magnitude for unfiltered case
+    flickerWithoutFilter += fabs(diffUnfiltered1) + fabs(diffUnfiltered2);
+  }
+  
+  // Update previous values for next iteration
+  prevDutyWithFilter2 = prevDutyWithFilter1;
+  prevDutyWithFilter1 = duty;
+  
+  prevDutyWithoutFilter2 = prevDutyWithoutFilter1;
+  prevDutyWithoutFilter1 = duty;
 }
 
 /**
@@ -900,9 +1013,14 @@ void loop() {
 
   // (B) Handle any active streaming
   handleStreaming();
+  // Handle streaming requests from other nodes
+  handleRemoteStreamRequests();
 
   // (C) Read sensor data
   float lux = readLux();
+  
+  // Update flicker metrics
+  updateFlickerMetrics(lux, rawLux, dutyCycle);
 
   // (D) Adapt to external light conditions
   adaptToExternalLight();
@@ -926,6 +1044,10 @@ void loop() {
     // Direct duty cycle control in manual mode
     setLEDDutyCycle(dutyCycle);
   }
+
+  // After calculating a new duty cycle, update the unfiltered tracking variables
+  prevDutyWithoutFilter2 = prevDutyWithoutFilter1;
+  prevDutyWithoutFilter1 = dutyCycle;
 
   // (G) Log the current sample in the circular buffer
   logData(millis(), lux, dutyCycle);

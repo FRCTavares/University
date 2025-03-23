@@ -126,6 +126,14 @@ public:
      */
     void getTerms(float& p, float& i) const;
 
+    /**
+     * Enable or disable feedforward control
+     * 
+     * @param enable True to enable feedforward, false to disable
+     * @param ffGain Feedforward gain to be used when enabled
+     */
+    void enableFeedforward(bool enable, float ffGain);
+
 private:
     //=========================================================================
     // CONTROLLER PARAMETERS
@@ -150,6 +158,11 @@ private:
     
     float internalTarget; // Target value used for coordination
     bool useInternalTarget; // Flag to use internal or external target
+
+    // Add these new variables
+    float Kff;          // Feedforward gain
+    float prevSetpoint; // Previous setpoint for detecting changes
+    bool useFeedforward; // Enable/disable feedforward
 };
 
 #endif // PICONTROLLER_H

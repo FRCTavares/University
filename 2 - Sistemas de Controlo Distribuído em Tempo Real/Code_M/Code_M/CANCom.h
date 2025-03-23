@@ -22,6 +22,18 @@
   * @param msg Mensagem CAN recebida para processamento
   */
  typedef void (*CANMessageCallback)(const can_frame &msg);
+
+
+#define MAX_STREAM_REQUESTS 5  // Número máximo de streams remotos simultâneos
+
+
+struct RemoteStreamRequest {
+  bool active;                // Se esta solicitação está ativa
+  uint8_t requesterNode;      // ID do nó que solicitou o stream
+  int variableType;           // Tipo de variável solicitada
+  unsigned long lastSent;     // Timestamp da última transmissão
+};
+
  
 
  //============================================================================
@@ -130,6 +142,9 @@
   */
  bool sendHeartbeat();
  
+
+ void processRemoteStreams();
+
  //============================================================================
  // REGISTO DE CALLBACKS
  //============================================================================

@@ -100,6 +100,7 @@ float computeIlluminanceStabilityFromBuffer();
  */
 float computeFlickerFromBuffer();
 
+
 //=============================================================================
 // COMBINED QUALITY METRICS
 //=============================================================================

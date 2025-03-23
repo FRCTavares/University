@@ -44,6 +44,7 @@ static unsigned long lastLatencyMeasure = 0; // Timestamp para medir latência
 static unsigned long totalLatency = 0;       // Soma de todas as latências (para média)
 static uint32_t latencySamples = 0;          // Número de amostras de latência
 static uint32_t msgSent = 0;                 // Contador de mensagens enviadas
+static RemoteStreamRequest remoteStreamRequests[MAX_STREAM_REQUESTS];
 
 //============================================================================
 // INICIALIZAÇÃO E CONFIGURAÇÃO
@@ -65,6 +66,7 @@ void initCANComm()
 
     // Definição do modo de operação normal
     can0.setNormalMode();
+    
 
     Serial.println("CANComm: CAN inicializado em modo normal");
 
@@ -72,6 +74,12 @@ void initCANComm()
     pico_unique_board_id_t board_id;
     pico_get_unique_board_id(&board_id);
     nodeID = board_id.id[7] & 0x3F; // Utilizar os últimos 6 bits para ID (1-63)
+
+    // Inicializar todas as solicitações de stream como inativas
+    for(int i=0; i<MAX_STREAM_REQUESTS; i++) {
+        remoteStreamRequests[i].active = false;
+    }
+    
 
     // Evitar ID 0 (reservado para broadcast)
     if (nodeID == 0)
@@ -315,6 +323,48 @@ bool sendHeartbeat()
     }
 }
 
+void processRemoteStreams() {
+    unsigned long currentTime = millis();
+    
+    for(int i=0; i<MAX_STREAM_REQUESTS; i++) {
+        if(remoteStreamRequests[i].active && 
+           (currentTime - remoteStreamRequests[i].lastSent >= STREAM_INTERVAL)) {
+            
+            remoteStreamRequests[i].lastSent = currentTime;
+            
+            float value = 0.0f;
+            uint8_t sensorType = 0;
+            
+            switch(remoteStreamRequests[i].variableType) {
+                case 0: // y - iluminação
+                    value = readLux();
+                    sensorType = 0;
+                    break;
+                case 1: // u - duty cycle
+                    value = dutyCycle;
+                    sensorType = 1;
+                    break;
+                case 2: // p - potência
+                    value = getPowerConsumption();
+                    sensorType = 2;
+                    break;
+                // Adicione outros tipos conforme necessário
+                default:
+                    continue; // Pular tipos desconhecidos
+            }
+            
+            // Enviar a leitura do sensor para o nó solicitante
+            sendSensorReading(remoteStreamRequests[i].requesterNode, sensorType, value);
+            
+            if (canMonitorEnabled && remoteStreamRequests[i].variableType == 0) {
+                Serial.print("CAN: Enviando stream lux=");
+                Serial.print(value);
+                Serial.print(" para nó ");
+                Serial.println(remoteStreamRequests[i].requesterNode);
+            }
+        }
+    }
+}
 //============================================================================
 // PROCESSAMENTO DE MENSAGENS RECEBIDAS
 //============================================================================
@@ -359,7 +409,18 @@ void processIncomingMessage(const can_frame &msg)
         uint8_t sensorType = msg.data[1];
         float value = bytesToFloat(&msg.data[2]);
         uint16_t timestamp = ((uint16_t)msg.data[7] << 8) | msg.data[6];
-
+    
+        // Verificar se a mensagem é de um nó que está configurado para streaming
+        bool isStreamMessage = false;
+        for (int i = 0; i < MAX_STREAM_REQUESTS; i++) {
+            if (remoteStreamRequests[i].active && 
+                remoteStreamRequests[i].requesterNode == destAddr && 
+                remoteStreamRequests[i].variableType == sensorType) {
+                isStreamMessage = true;
+                break;
+            }
+        }
+    
         // Log se monitorização ativa
         if (canMonitorEnabled)
         {
@@ -373,6 +434,49 @@ void processIncomingMessage(const can_frame &msg)
             Serial.print(timestamp);
             Serial.println(")");
         }
+    
+        // Formatar resposta de streams para o formato esperado pela interface
+        // Sempre formatar as mensagens de sensor recebidas, independente do modo debug
+        String varName;
+        switch (sensorType) {
+            case 0: varName = "y"; break; // iluminância
+            case 1: varName = "u"; break; // duty cycle
+            case 2: varName = "p"; break; // potência
+            case 3: varName = "o"; break; // ocupação
+            case 4: varName = "a"; break; // anti-windup
+            case 5: varName = "f"; break; // feedback
+            case 6: varName = "r"; break; // referência
+            case 7: varName = "v"; break; // tensão
+            case 8: varName = "d"; break; // iluminância externa
+            case 9: varName = "t"; break; // tempo
+            case 10: varName = "V"; break; // erro de visibilidade
+            case 11: varName = "F"; break; // flicker
+            case 12: varName = "E"; break; // energia
+            default: varName = "?"; break;
+        }
+    
+        // Saída formatada no formato de streaming: "s y 44 5.12 12345"
+        Serial.print("s ");
+        Serial.print(varName);
+        Serial.print(" ");
+        Serial.print(sourceNode);
+        Serial.print(" ");
+        
+        // Formatar o valor com a precisão adequada
+        if (sensorType == 1 || sensorType == 11 || sensorType == 12) // u, F, E
+            Serial.print(value, 4);
+        else if (sensorType == 0 || sensorType == 2 || sensorType == 8 || sensorType == 10) // y, p, d, V
+            Serial.print(value, 2);
+        else if (sensorType == 7) // v
+            Serial.print(value, 3);
+        else if (sensorType == 3 || sensorType == 4 || sensorType == 5 || sensorType == 9) // o, a, f, t
+            Serial.print((int)value);
+        else
+            Serial.print(value);
+        
+        Serial.print(" ");
+        Serial.println(millis()); // Timestamp local
+    
         break;
     }
 
@@ -533,15 +637,11 @@ void processIncomingMessage(const can_frame &msg)
         // -----------------------------------------------
         // Comandos de gestão de streams de dados
         // -----------------------------------------------
-        else if (controlType == 11 || controlType == 12)
-        { // Gestão de streams de dados
-            // Início (11) ou paragem (12) de stream
-
-            // Extração do código da variável a partir do valor float
+        else if (controlType == 11 || controlType == 12) { // Gestão de streams de dados
             int varCode = (int)value;
             String var = "y"; // Variável padrão (iluminação)
-
-            // Mapeamento de códigos para variáveis
+            
+            // Mapeamento igual ao existente...
             if (varCode == 1)
                 var = "u"; // Sinal de controlo
             else if (varCode == 2)
@@ -566,12 +666,58 @@ void processIncomingMessage(const can_frame &msg)
                 var = "F"; // Flicker
             else if (varCode == 12)
                 var = "E"; // Energia
-
-            // Iniciar ou parar stream conforme o tipo de comando
-            if (controlType == 11)
-                startStream(var, sourceNode);
-            else
-                stopStream(var, sourceNode);
+            if (controlType == 11) { // Iniciar stream
+                // Encontrar slot vazio para esta solicitação
+                int emptySlot = -1;
+                for(int i=0; i<MAX_STREAM_REQUESTS; i++) {
+                    if(!remoteStreamRequests[i].active) {
+                        emptySlot = i;
+                        break;
+                    }
+                }
+                
+                if(emptySlot >= 0) {
+                    remoteStreamRequests[emptySlot].requesterNode = sourceNode;
+                    remoteStreamRequests[emptySlot].variableType = varCode;
+                    remoteStreamRequests[emptySlot].active = true;
+                    remoteStreamRequests[emptySlot].lastSent = 0;
+                    
+                    // Responder com ACK
+                    can_frame response;
+                    response.can_id = buildCANId(CAN_TYPE_RESPONSE, sourceNode, CAN_PRIO_NORMAL);
+                    response.can_dlc = 8;
+                    response.data[0] = nodeID;
+                    response.data[1] = 3; // Tipo 3 = resposta a iniciar stream
+                    floatToBytes(1.0f, &response.data[2]); // 1.0 indica sucesso
+                    response.data[6] = 0;
+                    response.data[7] = 0;
+                    sendCANMessage(response);
+                    
+                    if (canMonitorEnabled) {
+                        Serial.print("CAN: A iniciar stream de ");
+                        Serial.print(var);
+                        Serial.print(" para o nó ");
+                        Serial.println(sourceNode);
+                    }
+                }
+            }
+            else if (controlType == 12) { // Parar stream
+                // Encontrar e desativar a solicitação correspondente
+                for(int i=0; i<MAX_STREAM_REQUESTS; i++) {
+                    if(remoteStreamRequests[i].active && 
+                        remoteStreamRequests[i].requesterNode == sourceNode &&
+                        remoteStreamRequests[i].variableType == varCode) {
+                        remoteStreamRequests[i].active = false;
+                        
+                        if (canMonitorEnabled) {
+                            Serial.print("CAN: A parar stream de ");
+                            Serial.print(var);
+                            Serial.print(" para o nó ");
+                            Serial.println(sourceNode);
+                        }
+                    }
+                }
+            }
         }
         else if (controlType == 13)
         { // Estado do LED

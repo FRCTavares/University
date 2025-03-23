@@ -53,7 +53,6 @@ void initSerialInterface()
     Serial.println(F("Digite 'h' para ver a lista de comandos disponíveis"));
 }
 
-
 //============================================================================
 // FUNÇÕES AUXILIARES DE PARSING
 //============================================================================
@@ -61,7 +60,7 @@ void initSerialInterface()
 /**
  * Divide uma linha de comando em tokens separados por espaço
  * Utilizado para interpretar comandos com múltiplos parâmetros
- * 
+ *
  * @param cmd String de comando a ser analisada
  * @param tokens Array onde os tokens encontrados serão armazenados
  * @param maxTokens Número máximo de tokens a serem extraídos
@@ -89,7 +88,7 @@ static void parseTokens(const String &cmd, String tokens[], int maxTokens, int &
 
 /**
  * Determina se um comando deve ser processado localmente ou encaminhado via CAN
- * 
+ *
  * @param targetNode ID do nó alvo do comando
  * @return true se o comando deve ser encaminhado, false se deve ser processado localmente
  */
@@ -111,7 +110,7 @@ static bool shouldForwardCommand(uint8_t targetNode)
 /**
  * Processa uma linha de comando recebida pela interface série
  * Analisa e executa comandos de controlo, medição e comunicação CAN
- * 
+ *
  * @param cmdLine Linha de comando a ser processada
  */
 static void processCommandLine(const String &cmdLine)
@@ -130,7 +129,6 @@ static void processCommandLine(const String &cmdLine)
         return;
 
     String c0 = tokens[0];
-
 
     // ------------------- COMANDOS DE CONTROLO -------------------
 
@@ -242,7 +240,7 @@ static void processCommandLine(const String &cmdLine)
         Serial.println("ack");
         return;
     }
-    
+
     else if (c0 == "w")
     {
         if (numTokens < 3)
@@ -295,7 +293,7 @@ static void processCommandLine(const String &cmdLine)
         Serial.println("ack");
         return;
     }
-    
+
     else if (c0 == "o")
     {
         if (numTokens < 3)
@@ -509,11 +507,11 @@ static void processCommandLine(const String &cmdLine)
         Serial.println("ack");
         return;
     }
-    
+
     //============================================================================
     // COMANDO DE AJUDA
     //============================================================================
-    
+
     // "h" => mostrar ajuda
     else if (c0 == "h")
     {
@@ -526,38 +524,38 @@ static void processCommandLine(const String &cmdLine)
         Serial.println("  f <nó> <val>    - Ativar/desativar controlo por feedback (0/1)");
         Serial.println("  o <nó> <val>    - Definir estado de ocupação (0/1)");
         Serial.println("  a <nó> <val>    - Ativar/desativar anti-windup (0/1)");
-        
+
         Serial.println("\nComandos do Controlador PI:");
         Serial.println("  k <val>         - Definir ambos os ganhos Kp=Ki (apenas local)");
         Serial.println("  b <val>        - Definir factor de ponderação Beta [0-1] (apenas local)");
-        
+
         Serial.println("\nComandos de Estado:");
         Serial.println("  st <nó> <estado> - Definir estado (off/unoccupied/occupied)");
-        
+
         Serial.println("\nComandos de Consulta:");
         Serial.println("  g <var> <nó>    - Obter valor da variável");
         Serial.println("    Variáveis: u(duty), y(lux), r(ref), o(ocupação),");
         Serial.println("    a(anti-windup), f(feedback), V(visibilidade),");
         Serial.println("    F(flicker), E(energia), v(tensão), d(ilum. externa)");
-        
+
         Serial.println("\nComandos CAN:");
         Serial.println("  c m <0|1>       - Ativar/desativar monitor CAN");
         Serial.println("  c st            - Mostrar estatísticas CAN");
         Serial.println("  c sc            - Procurar nós ativos na rede");
-        
+
         Serial.println("\nComandos de Streaming:");
         Serial.println("  s <var> <nó>    - Iniciar streaming de variável");
         Serial.println("  S <var> <nó>    - Parar streaming de variável");
-        
+
         Serial.println("\nNota: <nó>=0 envia para todos os nós (broadcast)");
         Serial.println("ack");
         return;
     }
-    
+
     //============================================================================
     // COMANDOS DO CONTROLADOR PI (APENAS LOCAIS)
     //============================================================================
-    
+
     // "k <val>" => definir ganho (apenas local)
     else if (c0 == "k")
     {
@@ -566,18 +564,18 @@ static void processCommandLine(const String &cmdLine)
             Serial.println("err");
             return;
         }
-    
+
         float val = tokens[1].toFloat();
-    
+
         if (val < 0.0f)
         {
             Serial.println("err: O ganho deve ser positivo");
             return;
         }
-    
+
         // Aplicar localmente (sem CAN) - set BOTH Kp and Ki to the same value
         pid.setGains(val, val);
-        
+
         Serial.print("Ganhos definidos para Kp = Ki = ");
         Serial.println(val, 4);
         Serial.println("ack");
@@ -603,19 +601,17 @@ static void processCommandLine(const String &cmdLine)
 
         // Aplicar localmente (sem CAN)
         pid.setSetpointWeight(val);
-        
+
         Serial.print("Factor de ponderação definido para Beta = ");
         Serial.println(val, 4);
         Serial.println("ack");
         return;
     }
 
-    
-    
     //============================================================================
     // COMANDOS DE STREAMING
     //============================================================================
-    
+
     // "s <x> <i>" => iniciar fluxo da variável em tempo real <x> para a secretária <i>
     else if (c0 == "s")
     {
@@ -865,7 +861,6 @@ static void processCommandLine(const String &cmdLine)
             return;
         }
 
-
         // Processar localmente
         // Comandos de métricas
         // "g V <i>" => "V <i> <val>" (Métrica de erro de visibilidade)
@@ -1016,6 +1011,112 @@ static void processCommandLine(const String &cmdLine)
             Serial.println(bufferData);
             return;
         }
+        else if (subCommand == "mdump") {
+            int count = getLogCount();
+            if (count == 0) {
+                Serial.println("No data available for metrics");
+                return;
+            }
+            
+            // Get access to the log buffer
+            LogEntry* buffer = getLogBuffer();
+            int startIndex = isBufferFull() ? getCurrentIndex() : 0;
+            
+            // Print Time row
+            Serial.print("Time: ");
+            for (int i = 0; i < count; i++) {
+                int idx = (startIndex + i) % LOG_SIZE;
+                Serial.print(buffer[idx].timestamp);
+                if (i < count - 1) Serial.print(",");
+            }
+            Serial.println();
+            
+            // Measured Lux row
+            Serial.print("MeasuredLux: ");
+            for (int i = 0; i < count; i++) {
+                int idx = (startIndex + i) % LOG_SIZE;
+                Serial.print(buffer[idx].lux, 2);
+                if (i < count - 1) Serial.print(",");
+            }
+            Serial.println();
+            
+            // DutyCycle row
+            Serial.print("DutyCycle: ");
+            for (int i = 0; i < count; i++) {
+                int idx = (startIndex + i) % LOG_SIZE;
+                Serial.print(buffer[idx].duty, 4);
+                if (i < count - 1) Serial.print(",");
+            }
+            Serial.println();
+            
+            // Setpoint row
+            Serial.print("SetpointLux: ");
+            for (int i = 0; i < count; i++) {
+                int idx = (startIndex + i) % LOG_SIZE;
+                Serial.print(buffer[idx].setpoint, 2);
+                if (i < count - 1) Serial.print(",");
+            }
+            Serial.println();
+
+            // Flicker row
+            Serial.print("Flicker: ");
+            for (int i = 0; i < count; i++) {
+                int idx = (startIndex + i) % LOG_SIZE;
+                Serial.print(buffer[idx].flicker, 6);
+                if (i < count - 1) Serial.print(",");
+            }
+            Serial.println();
+
+            // Linha de energia acumulada
+            Serial.print("Energia: ");
+            float energySum = 0.0f;
+            for (int i = 0; i < count; i++) {
+                int idx = (startIndex + i) % LOG_SIZE;
+                // Calcular intervalo de tempo (dt) em segundos
+                float dt = 0.0f;
+                if (i > 0) {
+                    int prevIdx = (startIndex + i - 1) % LOG_SIZE;
+                    dt = (buffer[idx].timestamp - buffer[prevIdx].timestamp) / 1000.0f;
+                }
+                // Potência = MAX_POWER_WATTS * duty
+                float power = MAX_POWER_WATTS * buffer[idx].duty;
+                energySum += power * dt;
+                Serial.print(energySum, 4);
+                if (i < count - 1) Serial.print(",");
+            }
+            Serial.println();
+
+            // Linha de erro de visibilidade acumulado
+            Serial.print("ErroVisibilidade: ");
+            float visSum = 0.0f;
+            for (int i = 0; i < count; i++) {
+                int idx = (startIndex + i) % LOG_SIZE;
+                float dt = 0.0f;
+                if (i > 0) {
+                    int prevIdx = (startIndex + i - 1) % LOG_SIZE;
+                    dt = (buffer[idx].timestamp - buffer[prevIdx].timestamp) / 1000.0f;
+                }
+                // Adicionar erro apenas quando medição < setpoint
+                float err = 0.0f;
+                if (buffer[idx].lux < buffer[idx].setpoint) {
+                    err = (buffer[idx].setpoint - buffer[idx].lux) * dt;
+                }
+                visSum += err;
+                Serial.print(visSum, 2);
+                if (i < count - 1) Serial.print(",");
+            }
+            Serial.println();
+
+            // Linha de jitter (em microssegundos)
+            Serial.print("Jitter_us: ");
+            for (int i = 0; i < count; i++) {
+                int idx = (startIndex + i) % LOG_SIZE;
+                Serial.print(buffer[idx].jitter, 4); // ex: 4 casas decimais
+                if (i < count - 1) Serial.print(",");
+            }
+            Serial.println();
+
+        }
 
         else
         {
@@ -1023,11 +1124,11 @@ static void processCommandLine(const String &cmdLine)
             return;
         }
     }
-    
+
     //============================================================================
     // COMANDOS CAN
     //============================================================================
-    
+
     // Comandos CAN tratados se c0 == "c"
     // "c sd <destNode> <msgType> <value>" => Enviar uma mensagem CAN
     else if (c0 == "c" && tokens[1] == "sd")
@@ -1282,11 +1383,11 @@ static void processCommandLine(const String &cmdLine)
         Serial.println("ack");
         return;
     }
-   
+
     //============================================================================
     // COMANDOS DE ESTADO
     //============================================================================
-    
+
     // "state <i> <state>" => definir estado do LED (off/unoccupied/occupied)
     else if (c0 == "st")
     {
@@ -1357,6 +1458,15 @@ static void processCommandLine(const String &cmdLine)
             changeState(STATE_UNOCCUPIED);
         else if (stateStr == "occupied")
             changeState(STATE_OCCUPIED);
+        Serial.println("ack");
+        return;
+    }
+    // Add to the processCommand function where other commands are handled
+
+    else if (c0 == "history")
+    {
+        // Print sampled history of measurements in the requested format
+        dumpSampledBufferToSerial();
         Serial.println("ack");
         return;
     }

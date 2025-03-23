@@ -12,45 +12,39 @@
 // BIBLIOTECAS
 //============================================================================
 
-// --- Hardware e Sistema ---
-#include <Arduino.h>
-#include <pico/unique_id.h>
-#include <SPI.h>
-
-// --- Comunicação ---
-#include <mcp2515.h>
-
-// --- Componentes do Sistema ---
-#include "PIDController.h"
 #include "Configuration.h"
-#include "CANCom.h"
-#include "StateManager.h"
-#include "SensorReader.h"
+#include "PIDController.h"
 #include "LEDController.h"
+#include "SensorReader.h"
 #include "DataLogger.h"
+#include "CANCom.h"
 #include "SerialInterface.h"
+#include "StateManager.h"
 
 //============================================================================
 // VARIÁVEIS GLOBAIS
 //============================================================================
 
-// --- Sistema de Controlo de Iluminação ---
-float setpointLux = 10.0;    // Nível de iluminação alvo, em lux
-float dutyCycle = 0.0;       // Duty Cycle do LED [0.0 a 1.0]
-float refIlluminance = 15.0; // Referência base de iluminação
-bool occupancy = false;      // Estado de ocupação da mesa
-bool antiWindup = false;     // Proteção contra saturação do integrador
-bool feedbackControl = true; // Modo de controlo (true=malha fechada, false=manual)
+// Define KP here
+float KP = KP_BASE; // Initial value based on the defined constant
+
+// Other global variables
+float setpointLux = SETPOINT_OFF;
+float dutyCycle = 0.0;
+float refIlluminance = 0.0;
+bool occupancy = false;
+bool antiWindup = true;
+bool feedbackControl = true;
+uint8_t nodeID = 1; // Default node ID
+bool periodicCANEnabled = PERIODIC_CAN_ENABLED;
+bool canMonitorEnabled = CAN_MONITOR_ENABLED;
 
 // --- Temporização ---
 unsigned long lastTransmit = 0; // Timestamp da última transmissão CAN
 
 // --- Comunicação CAN-BUS ---
-bool periodicCANEnabled = PERIODIC_CAN_ENABLED; // Ativa mensagens periódicas
-bool canMonitorEnabled = CAN_MONITOR_ENABLED;   // Ativa monitor de mensagens recebidas
-uint8_t nodeID = 0;                             // ID deste nó na rede CAN
-unsigned long lastHeartbeat = 0;                // Timestamp do último heartbeat
-unsigned long heartbeatInterval = 5000;         // Intervalo entre heartbeats (ms)
+unsigned long lastHeartbeat = 0;        // Timestamp do último heartbeat
+unsigned long heartbeatInterval = 5000; // Intervalo entre heartbeats (ms)
 
 // --- Controlador PID ---
 PIDController pid(KP, KI, 1.0, 1.0); // Using default Beta=1.0 and Gamma=1.0
@@ -95,8 +89,34 @@ void setup()
   initCANComm(); // Inicializa controlador CAN
 
   // Configuração inicial de operação
-  setpointLux = 15.0;           // Setpoint inicial
+  setpointLux = 5.0;            // Setpoint inicial
   refIlluminance = setpointLux; // Sincroniza referência com setpoint
+
+  // Initialize KP with base value
+  KP = KP_BASE;
+
+  // Perform comprehensive calibration of the sensor and LED gain
+  float calibratedGain = calibrateSystem(1.0); // Use a reference value of 1.0 lux
+
+  // Sanity check the calibrated gain
+  if (calibratedGain > 0.1 && calibratedGain < MAX_ILLUMINANCE)
+  {
+    // Calculate KP based on the LED gain from calibration
+    // This normalizes the controller to the specific box characteristics
+    KP = KP_BASE * (100.0f / calibratedGain);
+    Serial.print("Calibrated KP: ");
+    Serial.println(KP);
+  }
+  else
+  {
+    // Use default value if calibration seems unreliable
+    KP = KP_BASE;
+    Serial.println("Using default KP value");
+  }
+
+  // Update the PID controller with the calibrated gain
+  pid.setGains(KP, KI);
+  pid.setSetpointWeight(BETA); // Apply setpoint weighting from configuration
 
   // Cabeçalho para Serial Plotter
   Serial.println("LuxMedido\tSetpoint");
@@ -145,6 +165,7 @@ void loop()
 
   // Comunicação CAN
   canCommLoop(); // Processamento de mensagens CAN
+  processRemoteStreams(); // Processa e envia streams remotos
 
   // Obtenção do timestamp atual
   unsigned long now = millis();

@@ -20,9 +20,13 @@
  * Each entry stores a timestamp and associated sensor/control values
  */
 struct LogEntry {
-  unsigned long timestamp; // Milliseconds since startup (from millis())
-  float lux;              // Measured illuminance in lux
-  float duty;             // LED duty cycle [0.0-1.0]
+  unsigned long timestamp;  // Time when entry was recorded (ms)
+  float lux;               // Measured illuminance value (lux)
+  float duty;              // LED duty cycle (0.0-1.0)
+  float setpoint;          // Reference illuminance target
+  float flicker;           // Individual flicker value at this point
+  float jitter; // Jitter in µs (difference from nominal period)
+  float extLux;            // External illuminance 
 };
 
 //=============================================================================

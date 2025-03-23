@@ -324,9 +324,28 @@ bool sendHeartbeat()
  */
 void processIncomingMessage(const can_frame &msg)
 {
-  // Extract message components from CAN ID
+  // Parse CAN ID
   uint8_t msgType, destAddr, priority;
   parseCANId(msg.can_id, msgType, destAddr, priority);
+  
+  // Extract sender node ID from first byte
+  uint8_t sourceNodeID = msg.data[0];
+  
+  // Always print messages from other nodes (not just when monitoring is enabled)
+  if (sourceNodeID != nodeID) {
+    if (msgType == CAN_TYPE_SENSOR) {
+      uint8_t sensorType = msg.data[1];
+      float sensorValue = bytesToFloat(&msg.data[2]);
+      
+      // Print regardless of monitor state when it's from another node
+      Serial.print("Node ");
+      Serial.print(sourceNodeID);
+      Serial.print(" sent sensor type ");
+      Serial.print(sensorType);
+      Serial.print(" = ");
+      Serial.println(sensorValue, 2);
+    }
+  }
 
   // Debug output if monitoring is enabled
   if (canMonitorEnabled)
@@ -505,44 +524,35 @@ void processIncomingMessage(const can_frame &msg)
         }
       }
       // Stream control commands
-      else if (controlType == 11 || controlType == 12) { 
-        // Stream start (11) or stop (12)
-        // Extract variable type from value code
-        int varCode = (int)value;
-        String var = "y"; // Default
+      else if (controlType == 11) { // Start streaming
+        float varCode = value;
+        // Find an empty slot to store this streaming request
+        int emptySlot = -1;
+        for(int i=0; i<MAX_STREAM_REQUESTS; i++) {
+          if(!remoteStreamRequests[i].active) {
+            emptySlot = i;
+            break;
+          }
+        }
         
-        // Map variable codes to variable names
-        if (varCode == 1)
-          var = "u";
-        else if (varCode == 2)
-          var = "p";
-        else if (varCode == 3)
-          var = "o";
-        else if (varCode == 4)
-          var = "a";
-        else if (varCode == 5)
-          var = "f";
-        else if (varCode == 6)
-          var = "r";
-        else if (varCode == 7)
-          var = "v";
-        else if (varCode == 8)
-          var = "d";
-        else if (varCode == 9)
-          var = "t";
-        else if (varCode == 10)
-          var = "V";
-        else if (varCode == 11)
-          var = "F";
-        else if (varCode == 12)
-          var = "E";
-
-        // Call appropriate stream function
-        if (controlType == 11)
-          startStream(var, sourceNode);
-        else
-          stopStream(var, sourceNode);
+        if(emptySlot >= 0) {
+          remoteStreamRequests[emptySlot].requesterNode = sourceNode;
+          remoteStreamRequests[emptySlot].variableType = (int)varCode;
+          remoteStreamRequests[emptySlot].active = true;
+          remoteStreamRequests[emptySlot].lastSent = 0;
+        }
       }
+      else if (controlType == 12) { // Stop streaming
+        float varCode = value;
+        // Find and deactivate the matching stream request
+        for(int i=0; i<MAX_STREAM_REQUESTS; i++) {
+          if(remoteStreamRequests[i].active && 
+             remoteStreamRequests[i].requesterNode == sourceNode &&
+             remoteStreamRequests[i].variableType == (int)varCode) {
+             remoteStreamRequests[i].active = false;
+          }
+        }
+      }      
       // Luminaire state control
       else if (controlType == 13) { 
         int stateVal = (int)value;

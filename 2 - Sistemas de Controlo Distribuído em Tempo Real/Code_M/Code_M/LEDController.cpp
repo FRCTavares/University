@@ -31,50 +31,12 @@ static int pwmMax = PWM_MAX; // Valor máximo de PWM definido em Configuration.h
 static int pwmMin = PWM_MIN; // Valor mínimo de PWM definido em Configuration.h
 
 // --- Adaptação à Luz Externa ---
-float lastExternalLux = 0.0;     // Última medição de luz externa estimada
-float externalLuxAverage = 0.0;  // Média móvel da luz externa
+float lastExternalLux = 0.0;    // Última medição de luz externa estimada
+float externalLuxAverage = 0.0; // Média móvel da luz externa
 
 //============================================================================
 // FUNÇÕES DE ADAPTAÇÃO AMBIENTAL
 //============================================================================
-
-/**
- * Estima a iluminação externa subtraindo a contribuição do LED
- * da medição total do sensor
- * @return iluminação externa estimada em lux
- */
-float getExternalIlluminance()
-{
-    float measuredLux = readLux();
-
-    // Modelo não-linear mais preciso da contribuição do LED
-    float ledContribution;
-    if (dutyCycle < 0.1)
-    {
-        ledContribution = dutyCycle * 15.0; // Linear em duty cycles baixos
-    }
-    else
-    {
-        ledContribution = dutyCycle * dutyCycle * 35.0; // Não-linear em duty cycles mais altos
-    }
-
-    // Calcular estimativa atual de lux externo
-    float currentExternalLux = max(0.0f, measuredLux - ledContribution);
-
-    // Aplicar média de movimento lento à iluminação externa
-    if (lastExternalLux == 0.0)
-    {
-        externalLuxAverage = currentExternalLux;
-    }
-    else
-    {
-        externalLuxAverage = EXT_LUX_ALPHA * currentExternalLux +
-                             (1.0 - EXT_LUX_ALPHA) * externalLuxAverage;
-    }
-
-    lastExternalLux = currentExternalLux;
-    return externalLuxAverage;
-}
 
 /**
  * Adapta o controlo do LED às mudanças na iluminação externa
