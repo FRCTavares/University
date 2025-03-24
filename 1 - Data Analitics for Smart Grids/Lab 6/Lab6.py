@@ -29,7 +29,7 @@ noiseFactor=0.00
 # Dados de consumo
 # ============================================================================================================================================
 def data():
-    #Consumption dataset
+    # Conjunto de dados de consumo
     s=  [[0.0450,    0.0150,    0.0470,    0.0330],
         [0.0250,    0.0150,    0.2480,    0.0330],
         [0.0970,    0.0250,    0.3940,    0.0330],
@@ -45,24 +45,24 @@ def data():
         [0.0460,    0.0260,    0.0170,    0.0480]]
     s = np.array(s)
 
-    #topology
+    # Topologia
     topo=[[1, 2],[2,3],[3,4]]
     nBUS=np.max(topo)
 
-    #Impedance
+    # Impedância
     z=np.multiply([complex(0.1,0.05),complex(0.15,0.07),complex(0.2,0.1)],netFactor)
 
-    vr=1 #Reference voltage
+    vr=1 # Tensão de referência
     el=1
-    ni=20 #Iterations for the Power Flow
+    ni=20 # Número de iterações para o Power Flow
 
     return s, topo, nBUS, z, vr, el, ni
 
 # ============================================================================================================================================
-# Função para calculo do Power Flow
+# Função para cálculo do Power Flow
 # ============================================================================================================================================
-def pf3ph(t,z,si,vr,el,ni,al):
-    #Matrices creation
+def pf3ph(t, z, si, vr, el, ni, al, s, nBUS):
+    # Criação de matrizes
     t=np.array(t)
     p=t[:,0]
     f=t[:,1]
@@ -72,150 +72,294 @@ def pf3ph(t,z,si,vr,el,ni,al):
     vp[0,0:w]=vr
     
     for h in range (2,nBUS):
-        vp[h-1,:]=vp[h-2,:]*al  #Create a three phase system of voltages
-                                #Voltages will be the same in all BUS
+        vp[h-1,:]=vp[h-2,:]*al  # Criar um sistema trifásico de tensões
+                                # As tensões serão iguais em todos os BUS
 
-    va=vp-vn                                                      #Auxiliar voltage
-    ia=np.conj(np.divide(np.multiply(si,np.abs(va)**el),va))      #Auxiliar current 
+    va=vp-vn                                                     # Tensão auxiliar
+    ia=np.conj(np.divide(np.multiply(si,np.abs(va)**el),va))     # Corrente auxiliar 
     
-    for it in range(ni):                                          #Iterations of Power Flow
+    for it in range(ni):                                         # Iterações do Power Flow
         va=vp-vn
-        ip=np.conj(np.divide(np.multiply(si,np.abs(va)**el),va))  #Phase current 
-        inn=-np.sum(ip,0)                                         #Neutral current 
-        for k in range(w-1,0,-1):                                 #Backward Cycle
+        ip=np.conj(np.divide(np.multiply(si,np.abs(va)**el),va)) # Corrente de fase 
+        inn=-np.sum(ip,0)                                        # Corrente de neutro 
+        for k in range(w-1,0,-1):                                # Ciclo backward
             n=f[k-1]
             m=p[k-1]
-            ip[:,m-1]=ip[:,m-1]+ip[:,n-1]                         #Phase Current
-            inn=-np.sum(ip,0)                                     #Neutral Current
+            ip[:,m-1]=ip[:,m-1]+ip[:,n-1]                        # Corrente de fase
+            inn=-np.sum(ip,0)                                    # Corrente de neutro
 
-        eps= np.linalg.norm(np.max(np.abs(ia-ip),0))              #Error, comparing the new currents and the old ones (previous iteration)
+        eps= np.linalg.norm(np.max(np.abs(ia-ip),0))             # Erro, comparando as novas correntes com as antigas (iteração anterior)
 
         if eps>1e-4:
             ia=ip
             mvp=0
             mvn=0
             eps=np.inf
-        else:                       #If the error is lower than the limit, we can return the results 
-            mvp=(vp-vn)             #Phase Voltages to return
-            mvn=vn[0,:]             #Neutral Voltage to return
+        else:                      # Se o erro for menor que o limite, podemos retornar os resultados 
+            mvp=(vp-vn)            # Tensões de fase a retornar
+            mvn=vn[0,:]            # Tensão de neutro a retornar
             #return mvp, mvn, eps, ip, inn;
             return mvp;
-        for k in range (w-1):                     #Forward Cycle
+        for k in range (w-1):                    # Ciclo forward
             n=f[k]                                
             m=p[k]
-            vn[:,n-1]=vn[:,m-1]-z[k]*inn[n-1]     #Neutral Voltage 
-            vp[:,n-1]=vp[:,m-1]-z[k]*ip[:,n-1]    #Phase Voltage
-        ia=ip             #Save the current of previous iteration
+            vn[:,n-1]=vn[:,m-1]-z[k]*inn[n-1]    # Tensão de neutro 
+            vp[:,n-1]=vp[:,m-1]-z[k]*ip[:,n-1]   # Tensão de fase
+        ia=ip             # Guardar a corrente da iteração anterior
     
-    return mvp
+    return vp-vn  # Retornar tensão se o número máximo de iterações for atingido
 
 # ============================================================================================================================================
-# Criação das matrizes
+# Função para criar e obter as medições
 # ============================================================================================================================================
-def create_matrices():
-    #Creation of Matrices
-    al=np.exp(np.multiply(np.multiply(complex(0,-1),2/3),np.pi)) #Phase Angle
-    Y=np.zeros((3*m), dtype=complex)
-    X=np.zeros((3*m,m), dtype=complex)
-    v=np.zeros((m,3))
-    dv_abs=np.zeros((m,3))
-
-
-    for i in range(m):
-        si=[[0, 0, s[i,2], 0],[0, 0, s[i,1], 0],[0, s[i,0],  0, s[i,3]]] #Connection of consumers by
-                                                                        #node and by phase
-                                                                        #Consumer 1 (s[i,0]) is 
-                                                                        #connected to Bus 2 in Phase 3
-        mvp=pf3ph(topo,z,si,vr,el,ni,al)
-        noise=1+noiseFactor*np.random.randn(3)
-        mvp[:,3]=np.multiply(mvp[:,3],noise)                       #Add noise to the voltages
-        Y[3*(i):3*(i)+3]=mvp[:,3]                                  #Save the voltages in matrix Y
-        dv_abs[i,:]=vr-np.abs(mvp[:,3])                            #Volage variations (only to plot)
-
-    Volt=np.reshape(Y,(m,3))   
-
-    print ('The voltages measured in the PMUs are:\n',Volt)
-
-    return Y, X, v, dv_abs
-
-# ============================================================================================================================================
-# Função para cálculo de fase
-# ============================================================================================================================================
-def phase_id():
-    # Get data and matrices
+def get_measurements():
+    # Obter dados
     s, topo, nBUS, z, vr, el, ni = data()
-    Y, X, v, dv_abs = create_matrices()
     
-    # Get phase angle (al should be defined here since it's used in this function)
+    # Ângulo de fase
     al = np.exp(np.multiply(np.multiply(complex(0,-1),2/3),np.pi))
     
-    # The value of Z is the multiplication between D and W 
-    # Convert to numpy array for proper matrix operations
+    # Criação de matrizes
+    Y = np.zeros((3*m), dtype=complex)
+    X = np.zeros((3*m,m), dtype=complex)
+    v = np.zeros((m,3))
+    dv_abs = np.zeros((m,3))
+    
+    # Arrays para visualização
+    voltages = np.zeros((m, 3))
+    loads = s[:m, :]  # Primeiras m linhas e todas as colunas de s
+
+    for i in range(m):
+        si = [[0, 0, s[i,2], 0],[0, 0, s[i,1], 0],[0, s[i,0], 0, s[i,3]]] # Ligação dos consumidores por
+                                                                          # nó e por fase
+                                                                          # Consumidor 1 (s[i,0]) está 
+                                                                          # ligado ao Bus 2 na Fase 3
+        mvp = pf3ph(topo, z, si, vr, el, ni, al, s, nBUS)
+        noise = 1 + noiseFactor * np.random.randn(3)
+        mvp[:,3] = np.multiply(mvp[:,3], noise)                       # Adicionar ruído às tensões
+        Y[3*(i):3*(i)+3] = mvp[:,3]                                  # Guardar as tensões na matriz Y
+        dv_abs[i,:] = vr - np.abs(mvp[:,3])                            # Variações de tensão (apenas para plotar)
+        
+        # Armazenar valores para visualização
+        voltages[i, :] = np.abs(mvp[:,3])  # Magnitudes das tensões
+
+    Volt = np.reshape(Y, (m,3))   
+
+    print('As tensões medidas nos PMUs são:\n', Volt)
+
+    return Y, X, v, dv_abs, al, voltages, loads
+
+# ============================================================================================================================================
+# Função para criar a matriz X e o vetor y para o problema de mínimos quadrados
+# ============================================================================================================================================
+def build_regression_matrices(Y, al, s):
+    """
+    Constrói a matriz X (3M x 3N) e o vetor y (3M x 1) para o problema de mínimos quadrados
+    
+    Parâmetros:
+    Y - vetor de tensões medidas (3M)
+    al - ângulo de fase
+    s - matriz de consumo (M x N)
+    
+    Retorna:
+    X - matriz de regressão (3M x 3N)
+    y - vetor de diferenças de tensão (3M x 1)
+    """
+    # Número de amostras de tempo e número de clientes
+    M = m  # m é o parâmetro global (12)
+    N = s.shape[1]  # N é o número de colunas em s (4)
+    
+    # Matriz Z (matriz de impedância/deslocamento)
     Z = np.array([[2, al, al**2],
                   [1, 2*al, al**2],
                   [1, al, 2*al**2]])
     
-    # Calculate Z inverse for solving the system of equations
-    Z_inv = np.linalg.inv(Z)
-
-    # Create matrices for voltage deviations
-    vz = np.zeros(3*m, dtype=complex)
-    vz_abs = np.zeros(3*m, dtype=complex)
-
-    # Compute voltage deviations for each time period m   
-    for i in range(m):
-        # PMU info: complex voltage measurements
-        vz[3*i:3*i+3] = np.multiply(vr, [1, al, al**2]) - Y[3*i:3*i+3]
+    # Inicialização da matriz X com dimensão 3M x 3N
+    X = np.zeros((3*M, 3*N), dtype=complex)
+    
+    # Inicialização do vetor y com dimensão 3M, dtype=complex)
+    y = np.zeros(3*M, dtype=complex)
+    
+    # Tensão de referência
+    vr = 1
+    
+    # Construção da matriz X e do vetor y
+    for i in range(M):
+        # Para cada amostra de tempo i
         
-        # RTU info: magnitude-only measurements
-        vz_abs[3*i:3*i+3] = np.multiply(vr-np.abs(Y[3*i:3*i+3]), [1, al, al**2])
-
-    # Initialize beta matrices
-    Bpmu = np.zeros((m, 3), dtype=complex)
-    Brtu = np.zeros((m, 3), dtype=complex)
-
-    # Compute betas for each measurement time
-    for i in range(m):
-        # Extract voltage deviations for time i
-        vz_i = vz[3*i:3*i+3]
-        vz_abs_i = vz_abs[3*i:3*i+3]
+        # Vetor y: diferença entre tensão de referência e tensões medidas
+        # y_m = [V_ref,a, V_ref,b, V_ref,c]^T - [V_m,a, V_m,b, V_m,c]^T
+        y[3*i:3*i+3] = np.multiply(vr, [1, al, al**2]) - Y[3*i:3*i+3]
         
-        # Solve the system Z * beta = v for both PMU and RTU data
-        Bpmu[i,:] = np.matmul(Z_inv, vz_i)
-        Brtu[i,:] = np.matmul(Z_inv, vz_abs_i)
+        # Para cada cliente j
+        for j in range(N):
+            # Bloco X_ij = Z * s_ij
+            # Onde Z é a matriz de impedância/deslocamento e s_ij é o consumo do cliente j no tempo i
+            X[3*i:3*i+3, 3*j:3*j+3] = Z * s[i, j]
+    
+    print("Matriz X construída com dimensão:", X.shape)
+    print("Vetor y construído com dimensão:", y.shape)
+    
+    return X, y
 
-    # Calculate magnitudes for easier interpretation
-    BBpmu = np.abs(Bpmu)
-    BBrtu = np.abs(Brtu)
+# ============================================================================================================================================
+# Função para resolução do sistema de mínimos quadrados e identificação de fase
+# ============================================================================================================================================
+def solve_and_identify(X, y, n_clients):
+    """
+    Resolve o sistema de mínimos quadrados β = X†y e identifica as fases dos clientes
+    
+    Parâmetros:
+    X - matriz de regressão (3M x 3N)
+    y - vetor de diferenças de tensão (3M x 1)
+    n_clients - número de clientes
+    
+    Retorna:
+    beta_matrix - matriz de coeficientes (N x 3)
+    phases - fases identificadas para cada cliente (N)
+    """
+    # Resolução do sistema via pseudo-inversa: β = X†y
+    X_pinv = np.linalg.pinv(X)
+    beta = np.matmul(X_pinv, y)
+    
+    # Reestruturação do vetor β em uma matriz N x 3
+    beta_matrix = np.zeros((n_clients, 3), dtype=complex)
+    for i in range(n_clients):
+        beta_matrix[i, :] = beta[3*i:3*i+3]
+    
+    # Cálculo das magnitudes dos coeficientes para visualização
+    beta_abs = np.abs(beta_matrix)
+    beta_real = np.real(beta_matrix)
+    
+    # Identificação das fases: argmax da parte real
+    phases = np.argmax(beta_real, axis=1) + 1
+    
+    # Impressão dos resultados
+    print("\nCoeficientes beta (complexos) para cada cliente:")
+    print(beta_matrix)
+    
+    print("\nParte real dos coeficientes beta:")
+    print(beta_real)
+    
+    print("\nMagnitudes dos coeficientes beta:")
+    print(beta_abs)
+    
+    print("\nFases identificadas para cada cliente:")
+    for i in range(n_clients):
+        phase_name = ["A", "B", "C"][phases[i]-1]
+        print(f"Cliente {i+1}: Fase {phases[i]} (Fase {phase_name})")
+    
+    return beta_matrix, phases
 
-    # Print results
-    print('Betas (complex) considering information from PMUs\n', Bpmu, '\n')
-    print('Betas (complex) considering information from RTUs\n', Brtu, '\n')
+# ============================================================================================================================================
+# Função para cálculo de fase usando mínimos quadrados
+# ============================================================================================================================================
+def phase_id_least_squares():
+    """
+    Identificação de fase usando o método dos mínimos quadrados
+    
+    Retorna:
+    beta_matrix - matriz de coeficientes (N x 3)
+    beta_abs - magnitudes dos coeficientes (N x 3)
+    phases - fases identificadas para cada cliente (N)
+    voltages - tensões medidas (M x 3)
+    loads - cargas dos clientes (M x N)
+    """
+    # Obter dados
+    s, topo, nBUS, z, vr, el, ni = data()
+    
+    # Obter medições
+    Y, _, v, dv_abs, al, voltages, loads = get_measurements()
+    
+    # Número de clientes
+    n_clients = loads.shape[1]
+    
+    # Construir a matriz X e o vetor y
+    X, y = build_regression_matrices(Y, al, loads)
+    
+    # Resolver o sistema e identificar as fases
+    beta_matrix, phases = solve_and_identify(X, y, n_clients)
+    
+    # Calcular magnitudes para fins de visualização
+    beta_abs = np.abs(beta_matrix)
+    
+    return beta_matrix, beta_abs, phases, voltages, loads
 
-    print('Betas considering information from PMUs\n', BBpmu, '\n')
-    print('Betas considering information from RTUs\n', BBrtu, '\n')
+# ============================================================================================================================================
+# Função para plotar os resultados
+# ============================================================================================================================================
+def plot_results(voltages, loads):
+    """
+    Gera dois gráficos em subplots verticais com estilo de step plot:
+    1. Variação das tensões terminais por fase
+    2. Leituras dos consumidores
+    
+    Parâmetros:
+    voltages - array de dimensão (M, 3) com valores de tensão para cada fase
+    loads - array de dimensão (M, 4) com valores de potência para cada consumidor
+    """
+    # Criar figura com dois subplots verticais
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 10), sharex=True)
+    
+    # Configurar eixo X comum
+    x = range(len(voltages))
+    
+    # Plot 1: Variação das tensões terminais por fase (estilo step plot)
+    ax1.step(x, 1 - voltages[:, 0], where='mid', linewidth=2, color='blue', label='Fase A')
+    ax1.step(x, 1 - voltages[:, 1], where='mid', linewidth=2, color='orange', label='Fase B')
+    ax1.step(x, 1 - voltages[:, 2], where='mid', linewidth=2, color='green', label='Fase C')
+    
+    ax1.set_title('Variação das tensões terminais por fase', fontsize=14)
+    ax1.set_ylabel('Tensão [pu]', fontsize=12)
+    ax1.set_xlim(-0.5, len(voltages)-0.5)
+    ax1.set_xticks(x)
+    ax1.set_xticklabels([f"{i}" for i in x])
+    ax1.grid(True, alpha=0.3)
+    ax1.legend(fontsize=10, loc='best')
+    
+    # Plot 2: Leituras dos consumidores (estilo step plot)
+    ax2.step(x, loads[:, 0], where='mid', linewidth=2, color='blue', label='Carga 1')
+    ax2.step(x, loads[:, 1], where='mid', linewidth=2, color='orange', label='Carga 2')
+    ax2.step(x, loads[:, 2], where='mid', linewidth=2, color='green', label='Carga 3')
+    ax2.step(x, loads[:, 3], where='mid', linewidth=2, color='red', label='Carga 4')
+    
+    ax2.set_title('Leituras dos consumidores', fontsize=14)
+    ax2.set_xlabel('Marca temporal [15min]', fontsize=12)
+    ax2.set_ylabel('Potência [pu]', fontsize=12)
+    ax2.set_xlim(-0.5, len(voltages)-0.5)
+    ax2.set_xticks(x)
+    ax2.set_xticklabels([f"{i*15}" for i in x])  # Marca temporal [15min]
+    ax2.grid(True, alpha=0.3)
+    ax2.legend(fontsize=10, loc='best')
+    
+    # Ajustar layout e mostrar gráfico
+    plt.tight_layout()
+    plt.show()
 
-    return Bpmu, Brtu, BBpmu, BBrtu
-
+    # Criar diretório para guardar os gráficos
+    if not os.path.exists('plots'):
+        os.makedirs('plots')
+    
+    # Guardar gráficos em formato PNG
+    fig.savefig('plots/phase_id_results.png')
 
 # ============================================================================================================================================
 # Função Principal
 # ============================================================================================================================================
 def show_menu():
-    # Pretende exebir o menu principal?
-    print("Preciona ENTER para exibir o menu principal.")
+    # Pretende exibir o menu principal?
+    print("Prima ENTER para exibir o menu principal.")
     input()
 
-    """Exibe o menu principal e retorna a opção selecionada pelo usuário."""
-    os.system('cls' if os.name == 'nt' else 'clear')  # Limpa a tela
+    """Exibe o menu principal e retorna a opção selecionada pelo utilizador."""
+    os.system('cls' if os.name == 'nt' else 'clear')  # Limpa o ecrã
     print("=" * 80)
     print("                 LABORATÓRIO 6 - ID de Fase                 ")
     print("=" * 80)
-    print("\nEscolha uma opção (essencial que seja por ordem):")
+    print("\nEscolha uma opção:")
     print("0 - Sair")
-    print("1 - ")
-    print("2 - ")
-    print("3 - ")
+    print("1 - Identificação de fase (método dos mínimos quadrados)")
+    print("2 - Extra")
     print("=" * 80)
 
     try:
@@ -231,24 +375,42 @@ def show_menu():
         return -1, False
     
 def main():
-
-
-    rss_1 = 0
-    beta = np.zeros(2)
+    # Variáveis para armazenar resultados entre opções do menu
+    Y = None
+    
+    # Método dos mínimos quadrados
+    beta_matrix = None
+    beta_abs = None
+    ls_phases = None
+    
+    # Dados para visualização
+    voltages = None
+    loads = None
 
     while True:
         option, show_plots = show_menu()
         if option == 0:
             break
 
-        elif option == 1:    
+        elif option == 1:
+            # Calcular tensões medidas pelos PMUs
+            Y, _, _, _, al, voltages, loads = get_measurements()
+            print("\nAs tensões foram calculadas com sucesso!")
+            
+            # Calcular betas e identificar fases (método dos mínimos quadrados)
+            beta_matrix, beta_abs, ls_phases, voltages, loads = phase_id_least_squares()
+            print("\nOs betas e fases (método dos mínimos quadrados) foram calculados com sucesso!")
 
+            # Gerar gráficos
+            plot_results(voltages, loads)
+            print("\nOs gráficos foram gerados com sucesso!")
+            
         elif option == 2:
-
-        elif option == 3:
+            print("\nEsta opção ainda não foi implementada.")
 
         else:
             print("Opção inválida. Tente novamente.")
+            input("\nPrima ENTER para continuar...")
 
 if __name__ == "__main__":
     main()
