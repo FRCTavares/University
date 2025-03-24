@@ -64,8 +64,8 @@ def create_led_duty_cycle(time_data):
 # 4) Prepare data for plotting (filter out first 15s to 45s)
 time_zero = time_data - time_data[0]
 # Filter data between 15-45 seconds (15000-45000 milliseconds)
-idx = (time_zero >= 1000) & (time_zero <= 95000)
-time_filtered        = (time_zero[idx] / 1000) - 1  # Re-zero to start at 0
+idx = (time_zero >= 3000) & (time_zero <= 50000)
+time_filtered        = (time_zero[idx] / 1000) - 3  # Re-zero to start at 0
 measured_filtered    = measured_data[idx]
 duty_filtered        = duty_data[idx]
 setpoint_filtered    = setpoint_data[idx]
@@ -85,7 +85,7 @@ p2 = ax1.plot(time_filtered, measured_filtered, '#2ca02c', linewidth=1.7, label=
 ax1.set_xlabel('Time [s]')
 ax1.set_ylabel('Illuminance [lx]')
 ax1.grid(True)
-ax1.set_ylim(0, 30)  # Adjusted based on your data
+ax1.set_ylim(0, 60)  # Adjusted based on your data
 
 ax2 = ax1.twinx()
 p3 = ax2.plot(time_filtered, duty_filtered, '#ff7f0e', linewidth=1.7, label='LED 1 Duty Cycle')        # Orange
@@ -100,7 +100,7 @@ plt.title("Reference, Measured & External Lux with LED Duty Cycles")
 plt.tight_layout()
 plt.show()
 
-
+'''
 # Plot 2: Visibility Error and Energy
 plt.figure(figsize=(20, 6), num="Visibility & Energy")
 ax1 = plt.gca()
@@ -141,3 +141,4 @@ plt.title(f"System Jitter (Avg: {avg_jitter:.2f} ms)")
 plt.legend()
 plt.tight_layout()
 plt.show()
+'''
