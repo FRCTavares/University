@@ -1,9 +1,9 @@
 #include "CommandInterface.h"
 #include "CANComm.h"
-#include "Controller.h"
 #include <Arduino.h>
 #include <math.h>
-
+#include "Globals.h"
+#include "PIController.h"
 
 // External variable declarations
 extern float ledGain;
@@ -11,187 +11,9 @@ extern float baselineIlluminance;
 extern PIController pid;
 extern const float K;
 extern const float BETA;
-extern bool filterEnabled; // Add this line for sensor filtering toggle
+extern bool filterEnabled;
 
 static void printHelp();
-
-
-//=============================================================================
-// DATA STREAMING SUBSYSTEM
-//=============================================================================
-
-/**
- * Start streaming a variable to serial port
- *
- * @param var Variable to stream (y=illuminance, u=duty, etc.)
- * @param index Node index to stream
- */
-void startStream(const String &var, int index)
-{
-  streamingEnabled = true;
-  streamingVar = var;
-  streamingIndex = index;
-  Serial.println("ack");
-}
-
-/**
- * Stop streaming a variable
- *
- * @param var Variable to stop streaming
- * @param index Node index
- */
-void stopStream(const String &var, int index)
-{
-  streamingEnabled = false;
-  streamingVar = ""; // Clear the variable
-  Serial.print("Stopped streaming ");
-  Serial.print(var);
-  Serial.print(" for node ");
-  Serial.println(index);
-}
-
-/**
- * Process streaming in main loop
- * Sends requested variable at regular intervals
- */
-void handleStreaming()
-{
-  if (!streamingEnabled || (millis() - lastStreamTime < 500))
-  {
-    return; // Not streaming or not time to stream yet
-  }
-
-  unsigned long currentTime = millis();
-  lastStreamTime = currentTime;
-  String var = streamingVar;
-  int index = streamingIndex;
-
-  if (var.equalsIgnoreCase("y"))
-  {
-    float lux = readLux();
-    Serial.print("s "); // Add "s" prefix
-    Serial.print(var);
-    Serial.print(" ");
-    Serial.print(index);
-    Serial.print(" ");
-    Serial.print(lux, 2);
-    Serial.print(" ");
-    Serial.println(currentTime); // Add timestamp
-  }
-  else if (var.equalsIgnoreCase("u"))
-  {
-    Serial.print("s "); // Add "s" prefix
-    Serial.print(var);
-    Serial.print(" ");
-    Serial.print(index);
-    Serial.print(" ");
-    Serial.print(dutyCycle, 4);
-    Serial.print(" ");
-    Serial.println(currentTime); // Add timestamp
-  }
-  else if (var.equalsIgnoreCase("p"))
-  {
-    float power = getPowerConsumption();
-    Serial.print("s "); // Add "s" prefix
-    Serial.print(var);
-    Serial.print(" ");
-    Serial.print(index);
-    Serial.print(" ");
-    Serial.print(power, 2);
-    Serial.print(" ");
-    Serial.println(currentTime); // Add timestamp
-  }
-}
-
-void handleRemoteStreamRequests()
-{
-  unsigned long now = millis();
-
-  // Check if it's time to send data (every 500ms)
-  for (int i = 0; i < MAX_STREAM_REQUESTS; i++)
-  {
-    if (!remoteStreamRequests[i].active)
-      continue;
-
-    if (now - remoteStreamRequests[i].lastSent >= 500)
-    {
-      float value = 0.0; // Add this declaration
-
-      switch (remoteStreamRequests[i].variableType)
-      {
-      case 0: // y = illuminance
-        value = readLux();
-        break;
-      case 1: // u = duty cycle
-        value = dutyCycle;
-        break;
-      case 2: // p = power
-        value = getPowerConsumption();
-        break;
-      // Add other variable types as needed
-      default:
-        value = 0.0;
-      }
-
-      // Send the value to the requesting node
-      sendSensorReading(remoteStreamRequests[i].requesterNode,
-                        remoteStreamRequests[i].variableType,
-                        value);
-
-      remoteStreamRequests[i].lastSent = now;
-    }
-  }
-}
-
-/**
- * Get historical data buffer as CSV string
- *
- * @param var Variable type (y=illuminance, u=duty cycle)
- * @param index Node index
- * @return CSV string of historical values
- */
-String getLastMinuteBuffer(const String &var, int index)
-{
-  String result = "";
-  int count = getLogCount();
-  if (count == 0)
-    return result;
-
-  LogEntry *logBuffer = getLogBuffer();
-  int startIndex = isBufferFull() ? getCurrentIndex() : 0;
-
-  // Maximum number of samples to return (to avoid overflowing serial buffer)
-  const int MAX_SAMPLES = 60;
-  int sampleCount = min(count, MAX_SAMPLES);
-
-  // Calculate step to get evenly distributed samples
-  int step = count > MAX_SAMPLES ? count / MAX_SAMPLES : 1;
-
-  for (int i = 0; i < count; i += step)
-  {
-    int realIndex = (startIndex + i) % LOG_SIZE;
-
-    if (var.equalsIgnoreCase("y"))
-    {
-      // For illuminance values
-      result += String(logBuffer[realIndex].lux, 1);
-    }
-    else if (var.equalsIgnoreCase("u"))
-    {
-      // For duty cycle values
-      result += String(logBuffer[realIndex].duty, 3);
-    }
-
-    if (i + step < count)
-    {
-      result += ",";
-    }
-  }
-
-  return result;
-}
-
-
 //-----------------------------------------------------------------------------
 // COMMAND PARSING HELPERS
 //-----------------------------------------------------------------------------
@@ -1315,7 +1137,7 @@ static void processCommandLine(const String &cmdLine)
       }
       Serial.println();
 
-      // NEW: Jitter row (in microseconds)
+      // Jitter row (in microseconds)
       // -------------------------------------------------------------------------
       Serial.print("Jitter_us: ");
       for (int i = 0; i < count; i++)

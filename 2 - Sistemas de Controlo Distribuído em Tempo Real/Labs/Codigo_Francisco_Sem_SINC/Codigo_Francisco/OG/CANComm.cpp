@@ -1,9 +1,7 @@
 #include "CANComm.h"
-#include "Controller.h"
-#include <Arduino.h>
-#include <math.h>
 #include <SPI.h>
-
+#include "Globals.h"
+#include "PIController.h"
 
 //-----------------------------------------------------------------------------
 // CONFIGURATION AND INITIALIZATION
@@ -15,7 +13,7 @@ const int CAN_MOSI_PIN = 19;
 const int CAN_MISO_PIN = 16;
 const int CAN_SCK_PIN = 18;
 
-// MCP2515 CAN controller instance with 10MHz clockk
+// MCP2515 CAN controller instance with 10MHz clock
 MCP2515 can0(spi0, CAN_CS_PIN, CAN_MOSI_PIN, CAN_MISO_PIN, CAN_SCK_PIN, 10000000);
 
 // Callback for custom message handling
@@ -29,7 +27,7 @@ static unsigned long lastLatencyMeasure = 0;
 static unsigned long totalLatency = 0;
 static uint32_t latencySamples = 0;
 
-extern bool filterEnabled; // Add this line for sensor filtering toggle
+extern bool filterEnabled;
 
 /**
  * Initialize the CAN communication interface
