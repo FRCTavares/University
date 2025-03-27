@@ -15,6 +15,10 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import os
+import torch
+import torch.nn as nn
+from torch.utils.data import Dataset, DataLoader
+from sklearn.preprocessing import StandardScaler
 
 # ============================================================================================================================================
 # Parâmetros Globais
@@ -234,6 +238,7 @@ def solve_and_identify(X, y, n_clients):
     # Identificação das fases: argmax da parte real
     phases = np.argmax(beta_real, axis=1) + 1
     
+    
     # Impressão dos resultados
     print("\nCoeficientes beta (complexos) para cada cliente:")
     print(beta_matrix)
@@ -284,6 +289,98 @@ def phase_id_least_squares():
     beta_abs = np.abs(beta_matrix)
     
     return beta_matrix, beta_abs, phases, voltages, loads
+
+# ============================================================================================================================================
+# DESAFIO EXTRA 2 - Função para implementar diferentes valores de ruído no método dos mínimos quadrados
+# ============================================================================================================================================
+def compare_noise_impact_on_ls(seeds=[0, 1, 2, 3, 4]):
+    """
+    Avalia a robustez do modelo LS a diferentes níveis de ruído.
+    Mede a percentagem de acertos comparando com o caso sem ruído.
+    """
+    print("\n--- Robustez do modelo LS a ruído ---")
+    noise_values = [0.0, 0.01, 0.03, 0.05, 0.1, 0.15, 0.2]
+    al_ref = np.exp(np.multiply(np.multiply(complex(0, -1), 2 / 3), np.pi))
+
+    reference_phases = None  # Fases com ruído 0 (referência)
+    ls_means = []
+    ls_stds = []
+
+    for noise in noise_values:
+        globals()['noiseFactor'] = noise
+        print(f"\n>> Noise = {noise}")
+
+        accs = []
+
+        for seed in seeds:
+            torch.manual_seed(seed)
+            np.random.seed(seed)
+
+            _, _, ls_phases, voltages, loads = phase_id_least_squares()
+
+            if noise == 0.0 and reference_phases is None:
+                reference_phases = ls_phases  # Save baseline
+                accs.append(100.0)
+                continue
+
+            correct = [int(ls_phases[i]) == int(reference_phases[i]) for i in range(4)]
+            acc = 100 * sum(correct) / 4
+            accs.append(acc)
+
+        ls_mean = np.mean(accs)
+        ls_std = np.std(accs)
+
+        ls_means.append(ls_mean)
+        ls_stds.append(ls_std)
+
+        print(f"LS Accuracy vs no-noise: {ls_mean:.2f}% ± {ls_std:.2f}%")
+
+    print("\n=== RESUMO FINAL ===")
+    for i, noise in enumerate(noise_values):
+        print(f"Noise: {noise:.2f} | LS Accuracy: {ls_means[i]:.2f}% ± {ls_stds[i]:.2f}%")
+
+    return noise_values, ls_means, ls_stds
+
+
+def plot_noise_vs_accuracy_combined(noise_values, ls_acc, nn_acc, ls_std=None, nn_std=None):
+    plt.figure(figsize=(10, 6))
+
+    # Plot LS
+    plt.errorbar(noise_values, ls_acc, yerr=ls_std, fmt='o-', label='Least Squares (LS)', capsize=4)
+
+    # Plot NN
+    plt.errorbar(noise_values, nn_acc, yerr=nn_std, fmt='s--', label='Neural Network (NN)', capsize=4)
+
+    plt.title("Robustez dos métodos vs Nível de Ruído")
+    plt.xlabel("Fator de Ruído")
+    plt.ylabel("Precisão (%)")
+    plt.ylim(0, 105)
+    plt.grid(True, alpha=0.3)
+    plt.legend()
+    plt.tight_layout()
+    
+    # Guardar e mostrar
+    if not os.path.exists("plots"):
+        os.makedirs("plots")
+    plt.savefig("plots/noise_vs_combined_accuracy.png")
+    plt.show()
+
+    return noise_values, ls_acc, nn_acc, ls_std, nn_std
+
+
+def plot_noise_vs_accuracy(noise_values, ls_acc, _, ls_std=None):
+    plt.figure(figsize=(10, 6))
+    plt.errorbar(noise_values, ls_acc, yerr=ls_std, fmt='o-', label='Least Squares (LS)', capsize=4)
+
+    plt.title("Robustez do LS vs Nível de Ruído")
+    plt.xlabel("Fator de Ruído")
+    plt.ylabel("Precisão (%)")
+    plt.ylim(0, 105)
+    plt.grid(True, alpha=0.3)
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig("plots/noise_vs_ls_accuracy.png")
+    plt.show()
 
 # ============================================================================================================================================
 # Função para plotar os resultados
@@ -344,23 +441,45 @@ def plot_results(voltages, loads):
     fig.savefig('plots/phase_id_results.png')
 
 # ============================================================================================================================================
+# Função para comparação das implementações
+# ============================================================================================================================================
+def phase_id_least_squares_with_data(voltages, loads, al):
+    """Version of phase_id_least_squares that accepts pre-generated data"""
+    # Get other necessary data
+    s, topo, nBUS, z, vr, el, ni = data()
+    
+    # Reconstruct Y from voltages
+    Y = np.zeros((3*m), dtype=complex)
+    for i in range(m):
+        # Convert real voltages back to complex with phase angles
+        Y[3*i] = voltages[i, 0]  # Phase A (magnitude only)
+        Y[3*i+1] = voltages[i, 1] * al  # Phase B with 120° phase shift
+        Y[3*i+2] = voltages[i, 2] * al**2  # Phase C with 240° phase shift
+    
+    # Number of clients
+    n_clients = loads.shape[1]
+    
+    # Build regression matrices and solve
+    X, y = build_regression_matrices(Y, al, loads)
+    beta_matrix, phases = solve_and_identify(X, y, n_clients)
+    beta_abs = np.abs(beta_matrix)
+    
+    return beta_matrix, beta_abs, phases
+   
+# ============================================================================================================================================
 # Função Principal
 # ============================================================================================================================================
 def show_menu():
-    # Pretende exibir o menu principal?
-    print("Prima ENTER para exibir o menu principal.")
-    input()
-
     """Exibe o menu principal e retorna a opção selecionada pelo utilizador."""
     os.system('cls' if os.name == 'nt' else 'clear')  # Limpa o ecrã
     print("=" * 80)
-    print("                 LABORATÓRIO 6 - ID de Fase                 ")
+    print("                         LABORATÓRIO 6 - ID de Fase                 ")
     print("=" * 80)
     print("\nEscolha uma opção:")
     print("0 - Sair")
-    print("1 - Identificação de fase (método dos mínimos quadrados)")
-    print("2 - Extra")
-    print("=" * 80)
+    print("1 - Método dos Mínimos Quadrados")
+    print("2 - Mudar onde o indicador esta na rede LV po lo mais a meio SPOILER: vai ser pior porque não tem tanta informação")
+    print("3 - Precuisão do modelo para diferentes valores de ruído")
 
     try:
         option_input = input("\nOpção: ").strip()
@@ -406,7 +525,15 @@ def main():
             print("\nOs gráficos foram gerados com sucesso!")
             
         elif option == 2:
-            print("\nEsta opção ainda não foi implementada.")
+
+            print("\nA Mudar onde o indicador esta na rede LV po lo mais a meio SPOILER: vai ser pior porque não tem tanta informação")
+
+
+        elif option == 3:
+            # Comparar robustez ao ruído
+            noise_values, ls_means, ls_stds = compare_noise_impact_on_ls()
+            plot_noise_vs_accuracy(noise_values, ls_means, None, ls_stds)
+            print("\nGráfico gerado com sucesso!")
 
         else:
             print("Opção inválida. Tente novamente.")
@@ -414,3 +541,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+# Outra opção é em vez de só ter um medidor k, ter dois na rede LV!
+# Outra ainda é aumentar a potência num cliente e ver se isso melhora a precisão ou não!
