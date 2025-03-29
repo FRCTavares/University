@@ -27,8 +27,6 @@ static unsigned long lastLatencyMeasure = 0;
 static unsigned long totalLatency = 0;
 static uint32_t latencySamples = 0;
 
-extern bool filterEnabled;
-
 /**
  * Initialize the CAN communication interface
  * - Sets up SPI
@@ -72,12 +70,12 @@ void initCANComm()
  *
  * @param msgType Message type (3 bits, 0-7)
  * @param destAddr Destination address (6 bits, 0-63)
- * @param priority Message priority (2 bits, 0-3)
  * @return Combined CAN ID
  */
-uint32_t buildCANId(uint8_t msgType, uint8_t destAddr, uint8_t priority)
+uint32_t buildCANId(uint8_t msgType, uint8_t destAddr)
 {
-  return ((uint32_t)msgType << 8) | ((uint32_t)destAddr << 2) | priority;
+  // Format: [ msgType(3 bits) | destAddr(6 bits) | fixed bits(2) ]
+  return ((uint32_t)msgType << 8) | ((uint32_t)destAddr << 2);
 }
 
 /**
@@ -86,13 +84,12 @@ uint32_t buildCANId(uint8_t msgType, uint8_t destAddr, uint8_t priority)
  * @param canId CAN ID to parse
  * @param msgType Output parameter for message type
  * @param destAddr Output parameter for destination address
- * @param priority Output parameter for message priority
  */
-void parseCANId(uint32_t canId, uint8_t &msgType, uint8_t &destAddr, uint8_t &priority)
+void parseCANId(uint32_t canId, uint8_t &msgType, uint8_t &destAddr)
 {
+  // Extract message type (3 bits) and destination address (6 bits)
   msgType = (canId >> 8) & 0x07;
   destAddr = (canId >> 2) & 0x3F;
-  priority = canId & 0x03;
 }
 
 /**
@@ -136,7 +133,7 @@ bool sendSensorReading(uint8_t destAddr, uint8_t sensorType, float value)
   can_frame frame;
 
   // Configure message ID with normal priority
-  frame.can_id = buildCANId(CAN_TYPE_SENSOR, destAddr, CAN_PRIO_NORMAL);
+  frame.can_id = buildCANId(CAN_TYPE_SENSOR, destAddr);
   frame.can_dlc = 8;
 
   // Payload format:
@@ -182,7 +179,7 @@ bool sendControlCommand(uint8_t destAddr, uint8_t controlType, float value)
   can_frame frame;
 
   // Configure message ID with high priority
-  frame.can_id = buildCANId(CAN_TYPE_CONTROL, destAddr, CAN_PRIO_HIGH);
+  frame.can_id = buildCANId(CAN_TYPE_CONTROL, destAddr);
   frame.can_dlc = 8;
 
   // Payload format:
@@ -228,7 +225,7 @@ bool sendQueryResponse(uint8_t destNode, float value)
   can_frame frame;
 
   // Configure message ID with normal priority
-  frame.can_id = buildCANId(CAN_TYPE_RESPONSE, destNode, CAN_PRIO_NORMAL);
+  frame.can_id = buildCANId(CAN_TYPE_RESPONSE, destNode);
   frame.can_dlc = 8;
 
   // Payload format:
@@ -275,22 +272,24 @@ bool sendHeartbeat()
   can_frame frame;
 
   // Configure message ID for broadcast with low priority
-  frame.can_id = buildCANId(CAN_TYPE_HEARTBEAT, CAN_ADDR_BROADCAST, CAN_PRIO_LOW);
+  frame.can_id = buildCANId(CAN_TYPE_HEARTBEAT, CAN_ADDR_BROADCAST);
   frame.can_dlc = 6;
 
   // Payload format:
   // [0] = Source node ID
-  // [1] = Status flags (bit0=feedback, bit1=occupancy)
+  // [1] = Status flags (bit0=feedback, bit1=luminaireState)
   // [2-5] = Node uptime in seconds (32-bit)
   frame.data[0] = nodeID;
 
   // Create status flags byte from control settings
   uint8_t statusFlags = 0;
-  if (feedbackControl)
+  critical_section_enter(&commStateLock);
+  if (controlState.feedbackControl)
     statusFlags |= 0x01;
-  if (occupancy)
-    statusFlags |= 0x02;
-  frame.data[1] = statusFlags;
+
+  // Encode luminaire state in bits 1-2 (uses 2 bits for the 3 possible states)
+  statusFlags |= (static_cast<uint8_t>(controlState.luminaireState) << 1);
+  critical_section_exit(&commStateLock);
 
   // Include node uptime in seconds
   uint32_t uptime = getElapsedTime();
@@ -325,9 +324,9 @@ bool sendHeartbeat()
  */
 void processIncomingMessage(const can_frame &msg)
 {
-  // Parse CAN ID
-  uint8_t msgType, destAddr, priority;
-  parseCANId(msg.can_id, msgType, destAddr, priority);
+  // Parse CAN ID into message type and destination address
+  uint8_t msgType, destAddr;
+  parseCANId(msg.can_id, msgType, destAddr);
 
   // Extract sender node ID from first byte
   uint8_t sourceNodeID = msg.data[0];
@@ -448,13 +447,15 @@ void processIncomingMessage(const can_frame &msg)
     // Basic setpoint control
     if (controlType == 0)
     {
-      setpointLux = value;
+      critical_section_enter(&commStateLock);
+      controlState.setpointLux = value;
+      critical_section_exit(&commStateLock);
     }
     // Echo request - respond with same value
     else if (controlType == 2)
     {
       can_frame response;
-      response.can_id = buildCANId(CAN_TYPE_RESPONSE, sourceNode, CAN_PRIO_HIGH);
+      response.can_id = buildCANId(CAN_TYPE_RESPONSE, sourceNode);
       response.can_dlc = 8;
       response.data[0] = nodeID;
       response.data[1] = 0;                   // Response type 0 = echo
@@ -467,7 +468,7 @@ void processIncomingMessage(const can_frame &msg)
     else if (controlType == 3)
     {
       can_frame response;
-      response.can_id = buildCANId(CAN_TYPE_RESPONSE, sourceNode, CAN_PRIO_NORMAL);
+      response.can_id = buildCANId(CAN_TYPE_RESPONSE, sourceNode);
       response.can_dlc = 8;
       response.data[0] = nodeID;
       response.data[1] = 1; // Response type 1 = discovery
@@ -506,36 +507,47 @@ void processIncomingMessage(const can_frame &msg)
     }
     // System state control commands
     else if (controlType == 7)
-    { // Set occupancy
-      occupancy = (value != 0.0f);
+    { // Set luminaireState
+      critical_section_enter(&commStateLock);
+      int stateVal = (int)value;
+      if (stateVal >= 0 && stateVal <= 2)
+      {
+        controlState.luminaireState = static_cast<LuminaireState>(stateVal);
+      }
+      critical_section_exit(&commStateLock);
       if (canMonitorEnabled)
       {
-        Serial.print("CAN: Setting occupancy to ");
-        Serial.println(occupancy ? "true" : "false");
+        Serial.print("CAN: Setting luminaireState to ");
+        Serial.println(controlState.luminaireState ? "true" : "false");
       }
     }
     else if (controlType == 8)
     { // Set anti-windup
-      antiWindup = (value != 0.0f);
+      critical_section_enter(&commStateLock);
+      controlState.antiWindup = (value != 0.0f);
+      critical_section_exit(&commStateLock);
       if (canMonitorEnabled)
       {
         Serial.print("CAN: Setting anti-windup to ");
-        Serial.println(antiWindup ? "true" : "false");
+        Serial.println(controlState.antiWindup ? "true" : "false");
       }
     }
     else if (controlType == 9)
     { // Set feedback control
-      feedbackControl = (value != 0.0f);
+      critical_section_enter(&commStateLock);
+      controlState.feedbackControl = (value != 0.0f);
+      critical_section_exit(&commStateLock);
       if (canMonitorEnabled)
       {
         Serial.print("CAN: Setting feedback control to ");
-        Serial.println(feedbackControl ? "true" : "false");
+        Serial.println(controlState.feedbackControl ? "true" : "false");
       }
     }
     else if (controlType == 10)
     { // Reference illuminance
-      refIlluminance = value;
-      setpointLux = value;
+      critical_section_enter(&commStateLock);
+      controlState.setpointLux = value;
+      critical_section_exit(&commStateLock);
 
       if (canMonitorEnabled)
       {
@@ -593,11 +605,13 @@ void processIncomingMessage(const can_frame &msg)
     }
     else if (controlType == 14)
     { // Set filter enable/disable
-      filterEnabled = (value != 0.0f);
+      critical_section_enter(&commStateLock);
+      sensorState.filterEnabled = (value != 0.0f);
+      critical_section_exit(&commStateLock);
       if (canMonitorEnabled)
       {
         Serial.print("CAN: Setting sensor filtering to ");
-        Serial.println(filterEnabled ? "enabled" : "disabled");
+        Serial.println(sensorState.filterEnabled ? "enabled" : "disabled");
       }
     }
     // Query commands (types 20-32)
@@ -620,17 +634,25 @@ void processIncomingMessage(const can_frame &msg)
       case 23: // Duty cycle
         responseValue = dutyCycle;
         break;
-      case 24: // Occupancy state
-        responseValue = occupancy ? 1.0f : 0.0f;
+      case 24: // luminaireState state
+        critical_section_enter(&commStateLock);
+        responseValue = static_cast<float>(controlState.luminaireState);
+        critical_section_exit(&commStateLock);
         break;
       case 25: // Anti-windup state
-        responseValue = antiWindup ? 1.0f : 0.0f;
+        critical_section_enter(&commStateLock);
+        responseValue = controlState.antiWindup ? 1.0f : 0.0f;
+        critical_section_exit(&commStateLock);
         break;
       case 26: // Feedback control state
-        responseValue = feedbackControl ? 1.0f : 0.0f;
+        critical_section_enter(&commStateLock);
+        responseValue = controlState.feedbackControl ? 1.0f : 0.0f;
+        critical_section_enter(&commStateLock);
         break;
       case 27: // Reference illuminance
-        responseValue = refIlluminance;
+        critical_section_enter(&commStateLock);
+        responseValue = controlState.setpointLux;
+        critical_section_exit(&commStateLock);
         break;
       case 28: // Current illuminance
         Serial.println("Query for current illuminance");

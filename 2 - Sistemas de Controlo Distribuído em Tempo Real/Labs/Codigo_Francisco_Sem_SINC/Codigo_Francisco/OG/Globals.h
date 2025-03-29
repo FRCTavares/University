@@ -3,7 +3,7 @@
 
 /**
  * Globals.h - Shared Definitions and Global Variables
- * 
+ *
  * This header centralizes all global variables, constants, and shared function
  * declarations used across the distributed lighting control system. It enables
  * modules to access common state information without circular dependencies.
@@ -37,95 +37,102 @@ extern const float MAX_POWER_WATTS;
  */
 enum LuminaireState
 {
-    STATE_OFF = 0,        // Complete shutdown, no illumination
-    STATE_UNOCCUPIED = 1, // Low ambient lighting when area is unoccupied
-    STATE_OCCUPIED = 2    // Full task lighting when workspace is in use
+  STATE_OFF = 0,        // Complete shutdown, no illumination
+  STATE_UNOCCUPIED = 1, // Low ambient lighting when area is unoccupied
+  STATE_OCCUPIED = 2    // Full task lighting when workspace is in use
 };
 
 //=============================================================================
-// CONTROL SYSTEM STATE
+// DEVICE CONFIGURATION STRUCTURE
 //=============================================================================
 
 /**
- * Current target illuminance level in lux
- * This is the desired light level the system attempts to maintain
+ * DeviceConfig holds configuration parameters for the device.
+ * Replaces the globals:
+ *   - ledGain
+ *   - calibrationOffset
  */
-extern float setpointLux;
+struct DeviceConfig
+{
+  float ledGain;           // LED gain value
+  float calibrationOffset; // Calibration offset for sensor
+};
+
+extern DeviceConfig deviceConfig;
+
+//=============================================================================
+// SENSOR STATE STRUCTURE
+//=============================================================================
+
+/**
+ * SensorState holds the current sensor readings.
+ * Replaces the globals:
+ *   - rawLux
+ *   - baselineIlluminance
+ *   - filterEnabled
+ */
+struct SensorState
+{
+  float rawLux;              // Raw illuminance value from sensor
+  float baselineIlluminance; // Baseline illuminance measurement
+  bool filterEnabled;        // Flag to indicate if filtering is enabled
+};
+
+extern SensorState sensorState;
+
+//=============================================================================
+// CONTROL SYSTEM STATE STRUCTURE
+//=============================================================================
+
+/**
+ * ControlState holds control parameters for lighting.
+ * Replaces the globals:
+ *   - setpointLux
+ *   - feedbackControl
+ *   - antiWindup
+ *   - luminaireState
+ */
+struct ControlState
+{
+  float setpointLux;             // Target illuminance level in lux
+  bool feedbackControl;          // Flag for automatic feedback control
+  bool antiWindup;               // PID controller anti-windup flag
+  LuminaireState luminaireState; // Current luminaire operating state
+};
+
+extern ControlState controlState;
+
+//=============================================================================
+// COMMUNICATION STATE STRUCTURE
+//=============================================================================
+
+/**
+ * CommState holds state parameters for communication.
+ * Replaces the globals:
+ *   - streamingEnabled
+ *   - streamingVar
+ *   - streamingIndex
+ *   - lastStreamTime
+ */
+struct CommState
+{
+  bool streamingEnabled;        // Enable periodic streaming
+  String streamingVar;          // Identifier of variable being streamed
+  int streamingIndex;           // Index of the node for streaming
+  unsigned long lastStreamTime; // Last time a stream was sent
+};
+
+extern CommState commState;
+
+//=============================================================================
+// OTHER GLOBAL VARIABLES (unchanged)
+//=============================================================================
 
 /**
  * Current LED brightness as duty cycle [0.0-1.0]
  * Represents the proportion of time the LED is on during PWM cycle
  */
 extern float dutyCycle;
-
-/**
- * Reference illuminance for quality metrics
- * Used to evaluate lighting quality relative to desired level
- */
-extern float refIlluminance;
-
-/**
- * Workspace occupancy state flag
- * true = occupied, false = unoccupied
- */
-extern bool occupancy;
-
-/**
- * PID controller anti-windup flag
- * Enables/disables integral windup protection
- */
-extern bool antiWindup;
-
-/**
- * Feedback control mode flag
- * true = automatic control using illuminance feedback
- * false = manual control using direct duty cycle setting
- */
-extern bool feedbackControl;
-
-/**
- * Current luminaire operating state
- * Determines overall behavior mode of the lighting node
- */
-extern LuminaireState luminaireState;
-
-//=============================================================================
-// DEBUG FLAGS
-//=============================================================================
-
-/**
- * Master debug switch
- * Enables/disables all debug output
- */
-extern bool DEBUG_MODE;
-
-/**
- * LED driver debug messages
- * Shows detailed information about LED control operations
- */
-extern bool DEBUG_LED;
-
-/**
- * Sensor readings debug
- * Shows raw and processed sensor values
- */
-extern bool DEBUG_SENSOR;
-
-/**
- * PID controller debug
- * Shows setpoint, measurement, error, and control terms
- */
-extern bool DEBUG_PID;
-
-/**
- * Serial plotter output
- * Formats output for Arduino Serial Plotter visualization
- */
-extern bool DEBUG_PLOTTING;
-
-//=============================================================================
-// CAN COMMUNICATION
-//=============================================================================
 
 /**
  * Enable periodic CAN transmission flag
@@ -176,111 +183,11 @@ extern uint8_t nodeID;
 /** State change notifications */
 #define CAN_CTRL_STATE_CHANGE 0x10
 
-//-----------------------------------------------------------------------------
-// CAN Priority Levels
-//-----------------------------------------------------------------------------
-
-/** High priority messages (emergency, critical control) */
-#define CAN_PRIO_HIGH 0x00
-
-/** Normal priority messages (regular control) */
-#define CAN_PRIO_NORMAL 0x01
-
-/** Low priority messages (status updates) */
-#define CAN_PRIO_LOW 0x02
-
-/** Lowest priority messages (diagnostics) */
-#define CAN_PRIO_LOWEST 0x03
-
-//-----------------------------------------------------------------------------
-// CAN Node Addresses
-//-----------------------------------------------------------------------------
-
-/** Broadcast address (all nodes) */
-#define CAN_ADDR_BROADCAST 0x00
-
-//=============================================================================
-// SHARED FUNCTION DECLARATIONS
-//=============================================================================
-
-//-----------------------------------------------------------------------------
-// Sensor Functions
-//-----------------------------------------------------------------------------
-
+// Add this near the other function declarations:
 /**
- * Read filtered illuminance value
- * @return Current illuminance in lux
- */
-float readLux();
-
-/**
- * Get raw voltage at the LDR sensor
- * @return Voltage in volts
- */
-float getVoltageAtLDR();
-
-/**
- * Calculate external illuminance contribution
- * @return Estimated external light in lux
+ * Get estimated external illuminance (without LED contribution)
+ * @return Estimated external illuminance in lux
  */
 float getExternalIlluminance();
-
-//-----------------------------------------------------------------------------
-// System Management Functions
-//-----------------------------------------------------------------------------
-
-/**
- * Get current power consumption
- * @return Power in watts
- */
-float getPowerConsumption();
-
-/**
- * Get system uptime
- * @return Elapsed time in seconds
- */
-unsigned long getElapsedTime();
-
-/**
- * Change luminaire operating state
- * @param newState Target state (OFF, UNOCCUPIED, OCCUPIED)
- */
-void changeState(LuminaireState newState);
-
-//-----------------------------------------------------------------------------
-// Data Streaming Functions
-//-----------------------------------------------------------------------------
-
-/**
- * Start streaming a variable to serial
- * @param var Variable identifier (y=illuminance, u=duty, etc.)
- * @param index Node index
- */
-void startStream(const String &var, int index);
-
-/**
- * Stop streaming a variable
- * @param var Variable to stop streaming
- * @param index Node index
- */
-void stopStream(const String &var, int index);
-
-/**
- * Get historical data as CSV
- * @param var Variable type
- * @param index Node index
- * @return CSV string of historical values
- */
-String getLastMinuteBuffer(const String &var, int index);
-
-#define MAX_STREAM_REQUESTS 5
-struct StreamRequest {
-  uint8_t requesterNode;
-  uint8_t variableType;
-  bool active;
-  unsigned long lastSent;
-};
-extern StreamRequest remoteStreamRequests[MAX_STREAM_REQUESTS];
-
 
 #endif // GLOBALS_H

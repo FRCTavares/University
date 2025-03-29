@@ -8,7 +8,7 @@
 //=============================================================================
 /**
  * Command Interface Module
- * 
+ *
  * Provides a serial command interface for controlling the lighting system.
  * Handles command parsing, execution, and response handling for functions like:
  * - LED control (brightness, power, etc.)
@@ -35,28 +35,27 @@ void processSerialCommands();
 
 /**
  * Start streaming a variable to serial port
- * 
+ *
  * @param var Variable to stream (y=illuminance, u=duty, etc.)
  * @param index Node index to stream
  */
-void startStream(const String &var, int index);
+void startStream(const char *var, int index);
 
 /**
  * Stop streaming a variable
- * 
+ *
  * @param var Variable to stop streaming
  * @param index Node index
  */
-void stopStream(const String &var, int index);
+void stopStream(const char *var, int index);
 
 /**
  * Get historical data buffer as CSV string
- * 
+ *
  * @param var Variable type (y=illuminance, u=duty cycle)
  * @param index Node index
  * @return CSV string of historical values
  */
-String getLastMinuteBuffer(const String &var, int index);
-
+void getLastMinuteBuffer(const char *var, int index, char *buffer, size_t bufferSize);
 
 #endif // COMMANDINTERFACE_H

@@ -5,45 +5,195 @@
 #include "Globals.h"
 #include "PIController.h"
 
-// External variable declarations
-extern float ledGain;
-extern float baselineIlluminance;
-extern PIController pid;
-extern const float K;
-extern const float BETA;
-extern bool filterEnabled;
-
 static void printHelp();
+
+// Maximum command line length
+#define CMD_MAX_LENGTH 64
+// Maximum number of tokens in a command
+#define MAX_TOKENS 6
+// Maximum length of a single token
+#define TOKEN_MAX_LENGTH 16
+// Maximum number of pending queries that can be tracked
+#define MAX_PENDING_QUERIES 10
+
+// Structure to track pending query requests
+struct PendingQuery
+{
+  bool active;               // Is this query slot active?
+  uint8_t targetNode;        // Node we're querying
+  uint8_t queryType;         // Type of query we sent
+  char originalCommand[16];  // Original command (like "y", "u", "V", etc.)
+  char displayIndex[8];      // Index to display in response
+  unsigned long timeoutTime; // When this query expires
+};
+
+// Array of pending queries
+static PendingQuery pendingQueries[MAX_PENDING_QUERIES];
+
+// Initialize the pending queries array
+static void initPendingQueries()
+{
+  for (int i = 0; i < MAX_PENDING_QUERIES; i++)
+  {
+    pendingQueries[i].active = false;
+  }
+}
+
+static bool addPendingQuery(uint8_t targetNode, uint8_t queryType, const char *cmd, const char *index)
+{
+  // Find an empty slot
+  for (int i = 0; i < MAX_PENDING_QUERIES; i++)
+  {
+    if (!pendingQueries[i].active)
+    {
+      pendingQueries[i].active = true;
+      pendingQueries[i].targetNode = targetNode;
+      pendingQueries[i].queryType = queryType;
+      strncpy(pendingQueries[i].originalCommand, cmd, sizeof(pendingQueries[i].originalCommand) - 1);
+      pendingQueries[i].originalCommand[sizeof(pendingQueries[i].originalCommand) - 1] = '\0';
+      strncpy(pendingQueries[i].displayIndex, index, sizeof(pendingQueries[i].displayIndex) - 1);
+      pendingQueries[i].displayIndex[sizeof(pendingQueries[i].displayIndex) - 1] = '\0';
+      pendingQueries[i].timeoutTime = millis() + 500; // 500ms timeout
+      return true;
+    }
+  }
+  return false; // No slots available
+}
+
+static void processPendingQueries()
+{
+  // Check each active query
+  for (int i = 0; i < MAX_PENDING_QUERIES; i++)
+  {
+    if (pendingQueries[i].active)
+    {
+      // Check for timeout
+      if (millis() > pendingQueries[i].timeoutTime)
+      {
+        Serial.print("err: No response from node ");
+        Serial.println(pendingQueries[i].targetNode);
+        pendingQueries[i].active = false;
+        continue;
+      }
+
+      // Check for a response
+      can_frame frame;
+      if (readCANMessage(&frame) == MCP2515::ERROR_OK)
+      {
+        // Parse message details
+        uint8_t msgType, destAddr;
+        parseCANId(frame.can_id, msgType, destAddr);
+        uint8_t senderNodeID = frame.data[0];
+
+        // Check if this is a response for our query
+        if (msgType == CAN_TYPE_RESPONSE &&
+            senderNodeID == pendingQueries[i].targetNode &&
+            (destAddr == nodeID || destAddr == CAN_ADDR_BROADCAST))
+        {
+
+          // Extract the float value
+          float value = bytesToFloat(&frame.data[2]);
+
+          // Format the command and send response
+          if (isupper(pendingQueries[i].originalCommand[0]))
+          {
+            // Handle upper case commands (V, F, E)
+            Serial.print(pendingQueries[i].originalCommand);
+          }
+          else
+          {
+            // Handle lower case commands
+            Serial.print(pendingQueries[i].originalCommand);
+          }
+
+          Serial.print(" ");
+          Serial.print(pendingQueries[i].displayIndex);
+          Serial.print(" ");
+
+          // Format the value based on command type
+          const char *cmd = pendingQueries[i].originalCommand;
+          if (strcmp(cmd, "u") == 0 || strcmp(cmd, "F") == 0 || strcmp(cmd, "E") == 0)
+          {
+            Serial.println(value, 4); // 4 decimal places
+          }
+          else if (strcmp(cmd, "V") == 0 || strcmp(cmd, "y") == 0 ||
+                   strcmp(cmd, "p") == 0 || strcmp(cmd, "d") == 0)
+          {
+            Serial.println(value, 2); // 2 decimal places
+          }
+          else if (strcmp(cmd, "v") == 0)
+          {
+            Serial.println(value, 3); // 3 decimal places
+          }
+          else if (strcmp(cmd, "o") == 0 || strcmp(cmd, "a") == 0 ||
+                   strcmp(cmd, "f") == 0 || strcmp(cmd, "t") == 0)
+          {
+            Serial.println((int)value); // Integer values
+          }
+          else
+          {
+            Serial.println(value); // Default format
+          }
+
+          // Mark this query as handled
+          pendingQueries[i].active = false;
+        }
+      }
+    }
+  }
+}
 //-----------------------------------------------------------------------------
 // COMMAND PARSING HELPERS
 //-----------------------------------------------------------------------------
 
 /**
- * Split a command line into space-separated tokens
+ * Split a command line into space-separated tokens using char arrays
  *
  * @param cmd The command string to parse
- * @param tokens Output array to store the parsed tokens
+ * @param tokens Array of char arrays to store tokens
  * @param maxTokens Maximum number of tokens to extract
- * @param numFound Output parameter for number of tokens found
+ * @return Number of tokens found
  */
-static void parseTokens(const String &cmd, String tokens[], int maxTokens, int &numFound)
+static int parseTokensChar(const char *cmd, char tokens[][TOKEN_MAX_LENGTH], int maxTokens)
 {
-  numFound = 0;
-  int startIdx = 0;
-  while (numFound < maxTokens)
+  int numTokens = 0;
+  int cmdLen = strlen(cmd);
+  int tokenStart = 0;
+  int tokenPos = 0;
+
+  // Skip leading spaces
+  while (tokenStart < cmdLen && cmd[tokenStart] == ' ')
   {
-    int spaceIdx = cmd.indexOf(' ', startIdx);
-    if (spaceIdx == -1)
-    {
-      if (startIdx < (int)cmd.length())
-      {
-        tokens[numFound++] = cmd.substring(startIdx);
-      }
-      break;
-    }
-    tokens[numFound++] = cmd.substring(startIdx, spaceIdx);
-    startIdx = spaceIdx + 1;
+    tokenStart++;
   }
+
+  for (int i = tokenStart; i <= cmdLen && numTokens < maxTokens; i++)
+  {
+    // Check for token delimiter (space or end of string)
+    if (i == cmdLen || cmd[i] == ' ')
+    {
+      if (tokenPos > 0)
+      { // We have a complete token
+        // Copy token and add null terminator
+        tokens[numTokens][tokenPos] = '\0';
+        numTokens++;
+        tokenPos = 0;
+
+        // Skip consecutive spaces
+        while (i < cmdLen && cmd[i + 1] == ' ')
+        {
+          i++;
+        }
+      }
+    }
+    else if (tokenPos < TOKEN_MAX_LENGTH - 1)
+    {
+      // Add character to current token
+      tokens[numTokens][tokenPos++] = cmd[i];
+    }
+  }
+
+  return numTokens;
 }
 
 /**
@@ -66,6 +216,31 @@ static bool shouldForwardCommand(uint8_t targetNode)
 //-----------------------------------------------------------------------------
 // COMMAND PROCESSING
 //-----------------------------------------------------------------------------
+/**
+ * Case-insensitive string comparison
+ *
+ * @param str1 First string to compare
+ * @param str2 Second string to compare
+ * @return 0 if equal, non-zero otherwise (like strcmp)
+ */
+static int strcmpIgnoreCase(const char *str1, const char *str2)
+{
+  while (*str1 && *str2)
+  {
+    char c1 = *str1 >= 'A' && *str1 <= 'Z' ? *str1 + 32 : *str1;
+    char c2 = *str2 >= 'A' && *str2 <= 'Z' ? *str2 + 32 : *str2;
+
+    if (c1 != c2)
+    {
+      return c1 - c2;
+    }
+
+    str1++;
+    str2++;
+  }
+
+  return *str1 - *str2;
+}
 
 /**
  * Process a single command line from Serial
@@ -73,29 +248,56 @@ static bool shouldForwardCommand(uint8_t targetNode)
  *
  * @param cmdLine The command string to process
  */
-static void processCommandLine(const String &cmdLine)
+static void processCommandLine(const char *cmdLine)
 {
-  String trimmed = cmdLine;
-  trimmed.trim();
-  if (trimmed.length() == 0)
+  // Buffer to store trimmed command
+  char trimmedCmd[CMD_MAX_LENGTH];
+  int cmdLen = strlen(cmdLine);
+
+  // Trim leading spaces
+  int startPos = 0;
+  while (startPos < cmdLen && cmdLine[startPos] == ' ')
+  {
+    startPos++;
+  }
+
+  // Trim trailing spaces
+  int endPos = cmdLen - 1;
+  while (endPos >= 0 && cmdLine[endPos] == ' ')
+  {
+    endPos--;
+  }
+
+  // Copy trimmed command
+  if (endPos >= startPos)
+  {
+    int trimmedLen = endPos - startPos + 1;
+    if (trimmedLen >= CMD_MAX_LENGTH)
+      trimmedLen = CMD_MAX_LENGTH - 1;
+    strncpy(trimmedCmd, cmdLine + startPos, trimmedLen);
+    trimmedCmd[trimmedLen] = '\0';
+  }
+  else
+  {
+    // Empty command after trimming
     return;
+  }
 
   // Tokenize the command line
-  const int MAX_TOKENS = 6;
-  String tokens[MAX_TOKENS];
-  int numTokens = 0;
-  parseTokens(trimmed, tokens, MAX_TOKENS, numTokens);
-  if (numTokens == 0)
-    return;
+  char tokens[MAX_TOKENS][TOKEN_MAX_LENGTH];
+  int numTokens = parseTokensChar(trimmedCmd, tokens, MAX_TOKENS);
 
-  String c0 = tokens[0];
+  if (numTokens == 0)
+  {
+    return;
+  }
 
   //-----------------------------------------------------------------------------
   // LED CONTROL COMMANDS
   //-----------------------------------------------------------------------------
 
   // "u <i> <val>" => set duty cycle (0.0-1.0)
-  if (c0 == "u")
+  if (strcmp(tokens[0], "u") == 0)
   {
     if (numTokens < 3)
     {
@@ -103,8 +305,8 @@ static void processCommandLine(const String &cmdLine)
       return;
     }
 
-    uint8_t targetNode = tokens[1].toInt();
-    float val = tokens[2].toFloat();
+    uint8_t targetNode = atoi(tokens[1]);
+    float val = strtof(tokens[2], NULL);
 
     if (val < 0.0f || val > 1.0f)
     {
@@ -150,7 +352,7 @@ static void processCommandLine(const String &cmdLine)
   }
 
   // "p <i> <percentage>" => set LED by percentage (0-100%)
-  else if (c0 == "p")
+  else if (strcmp(tokens[0], "p") == 0)
   {
     if (numTokens < 3)
     {
@@ -158,8 +360,8 @@ static void processCommandLine(const String &cmdLine)
       return;
     }
 
-    uint8_t targetNode = tokens[1].toInt();
-    float val = tokens[2].toFloat();
+    uint8_t targetNode = atoi(tokens[1]);
+    float val = strtof(tokens[2], NULL);
 
     if (val < 0.0f || val > 100.0f)
     {
@@ -188,7 +390,7 @@ static void processCommandLine(const String &cmdLine)
       if (sendControlCommand(CAN_ADDR_BROADCAST, 5, val))
       {
         // Also apply locally since broadcast includes this node
-        setLEDDutyCycle(val);
+        setLEDPercentage(val); // FIXED: Use percentage function instead of duty cycle
         Serial.println("ack");
       }
       else
@@ -205,7 +407,7 @@ static void processCommandLine(const String &cmdLine)
   }
 
   // "w <i> <watts>" => set LED by power in watts
-  else if (c0 == "w")
+  else if (strcmp(tokens[0], "w") == 0)
   {
     if (numTokens < 3)
     {
@@ -213,8 +415,8 @@ static void processCommandLine(const String &cmdLine)
       return;
     }
 
-    uint8_t targetNode = tokens[1].toInt();
-    float val = tokens[2].toFloat();
+    uint8_t targetNode = atoi(tokens[1]);
+    float val = strtof(tokens[2], NULL);
 
     if (val < 0.0f || val > MAX_POWER_WATTS)
     {
@@ -262,8 +464,9 @@ static void processCommandLine(const String &cmdLine)
   // SYSTEM STATE CONTROL COMMANDS
   //-----------------------------------------------------------------------------
 
-  // "o <i> <val>" => set occupancy state (0=unoccupied, 1=occupied)
-  else if (c0 == "o")
+  // "o <i> <val>" => set occupancy state (0=off, 1=unoccupied, 2=occupied)
+
+  else if (strcmp(tokens[0], "o") == 0)
   {
     if (numTokens < 3)
     {
@@ -271,10 +474,10 @@ static void processCommandLine(const String &cmdLine)
       return;
     }
 
-    uint8_t targetNode = tokens[1].toInt();
-    int val = tokens[2].toInt();
+    uint8_t targetNode = atoi(tokens[1]);
+    float val = strtof(tokens[2], NULL);
 
-    if (val != 0 && val != 1)
+    if (val < 0 || val > 2) // Allow values 0, 1, and 2
     {
       Serial.println("err");
       return;
@@ -301,7 +504,9 @@ static void processCommandLine(const String &cmdLine)
       if (sendControlCommand(CAN_ADDR_BROADCAST, 7, val))
       {
         // Also apply locally since broadcast includes this node
-        occupancy = (val == 1);
+        critical_section_enter(&commStateLock);
+        controlState.luminaireState = static_cast<LuminaireState>(val); // Direct casting
+        critical_section_exit(&commStateLock);
         Serial.println("ack");
       }
       else
@@ -311,13 +516,16 @@ static void processCommandLine(const String &cmdLine)
       return;
     }
 
-    occupancy = (val == 1);
+    // Apply locally
+    critical_section_enter(&commStateLock);
+    controlState.luminaireState = static_cast<LuminaireState>(val); // Direct casting
+    critical_section_exit(&commStateLock);
     Serial.println("ack");
     return;
   }
 
   // "a <i> <val>" => set anti-windup on/off (0=off, 1=on)
-  else if (c0 == "a")
+  else if (strcmp(tokens[0], "a") == 0)
   {
     if (numTokens < 3)
     {
@@ -325,8 +533,8 @@ static void processCommandLine(const String &cmdLine)
       return;
     }
 
-    uint8_t targetNode = tokens[1].toInt();
-    int val = tokens[2].toInt();
+    uint8_t targetNode = atoi(tokens[1]);
+    int val = atoi(tokens[2]); // Changed from strtof to atoi
 
     if (val != 0 && val != 1)
     {
@@ -355,7 +563,9 @@ static void processCommandLine(const String &cmdLine)
       if (sendControlCommand(CAN_ADDR_BROADCAST, 8, val))
       {
         // Also apply locally since broadcast includes this node
-        antiWindup = (val == 1);
+        critical_section_enter(&commStateLock);
+        controlState.antiWindup = (val == 1);
+        critical_section_exit(&commStateLock);
         Serial.println("ack");
       }
       else
@@ -364,13 +574,14 @@ static void processCommandLine(const String &cmdLine)
       }
       return;
     }
-
-    antiWindup = (val == 1);
+    critical_section_enter(&commStateLock);
+    controlState.antiWindup = (val == 1);
+    critical_section_exit(&commStateLock);
     Serial.println("ack");
     return;
   }
   // "fi <i> <val>" => set filter enable/disable (0=off, 1=on)
-  else if (c0 == "fi")
+  else if (strcmp(tokens[0], "fi") == 0)
   {
     if (numTokens < 3)
     {
@@ -378,8 +589,8 @@ static void processCommandLine(const String &cmdLine)
       return;
     }
 
-    uint8_t targetNode = tokens[1].toInt();
-    int val = tokens[2].toInt();
+    uint8_t targetNode = atoi(tokens[1]);
+    int val = atoi(tokens[2]); // Changed from strtof to atoi
 
     if (val != 0 && val != 1)
     {
@@ -408,7 +619,9 @@ static void processCommandLine(const String &cmdLine)
       if (sendControlCommand(CAN_ADDR_BROADCAST, 14, val))
       {
         // Also apply locally since broadcast includes this node
-        filterEnabled = (val == 1);
+        critical_section_enter(&commStateLock);
+        sensorState.filterEnabled = (val == 1);
+        critical_section_exit(&commStateLock);
         Serial.println("ack");
       }
       else
@@ -418,13 +631,15 @@ static void processCommandLine(const String &cmdLine)
       return;
     }
 
-    filterEnabled = (val == 1);
+    critical_section_enter(&commStateLock);
+    sensorState.filterEnabled = (val == 1);
+    critical_section_exit(&commStateLock);
     Serial.println("ack");
     return;
   }
 
   // "f <i> <val>" => set feedback control on/off (0=off, 1=on)
-  else if (c0 == "f")
+  else if (strcmp(tokens[0], "f") == 0)
   {
     if (numTokens < 3)
     {
@@ -432,8 +647,8 @@ static void processCommandLine(const String &cmdLine)
       return;
     }
 
-    uint8_t targetNode = tokens[1].toInt();
-    int val = tokens[2].toInt();
+    uint8_t targetNode = atoi(tokens[1]);
+    int val = atoi(tokens[2]); // Changed from strtof to atoi
 
     if (val != 0 && val != 1)
     {
@@ -462,7 +677,9 @@ static void processCommandLine(const String &cmdLine)
       if (sendControlCommand(CAN_ADDR_BROADCAST, 9, val))
       {
         // Also apply locally since broadcast includes this node
-        feedbackControl = (val == 1);
+        critical_section_enter(&commStateLock);
+        controlState.feedbackControl = (val == 1);
+        critical_section_exit(&commStateLock);
         Serial.println("ack");
       }
       else
@@ -471,14 +688,15 @@ static void processCommandLine(const String &cmdLine)
       }
       return;
     }
-
-    feedbackControl = (val == 1);
+    critical_section_enter(&commStateLock);
+    controlState.feedbackControl = (val == 1);
+    critical_section_exit(&commStateLock);
     Serial.println("ack");
     return;
   }
 
   // "r <i> <val>" => set illuminance reference (lux)
-  else if (c0 == "r")
+  else if (strcmp(tokens[0], "r") == 0)
   {
     if (numTokens < 3)
     {
@@ -486,8 +704,8 @@ static void processCommandLine(const String &cmdLine)
       return;
     }
 
-    uint8_t targetNode = tokens[1].toInt();
-    float val = tokens[2].toFloat();
+    uint8_t targetNode = atoi(tokens[1]);
+    float val = strtof(tokens[2], NULL);
 
     if (val < 0.0f || val > MAX_ILLUMINANCE)
     {
@@ -521,8 +739,9 @@ static void processCommandLine(const String &cmdLine)
       if (sendControlCommand(CAN_ADDR_BROADCAST, 10, val))
       {
         // Also apply locally since broadcast includes this node
-        refIlluminance = val;
-        setpointLux = val;
+        critical_section_enter(&commStateLock);
+        controlState.setpointLux = val;
+        critical_section_exit(&commStateLock);
         Serial.println("ack");
       }
       else
@@ -531,14 +750,14 @@ static void processCommandLine(const String &cmdLine)
       }
       return;
     }
-
-    refIlluminance = val;
-    setpointLux = val;
+    critical_section_enter(&commStateLock);
+    controlState.setpointLux = val;
+    critical_section_exit(&commStateLock);
     Serial.println("ack");
     return;
   }
   // "h" => Print help information
-  else if (c0 == "h")
+  else if (strcmp(tokens[0], "h") == 0)
   {
     printHelp();
     return;
@@ -549,7 +768,7 @@ static void processCommandLine(const String &cmdLine)
   //-----------------------------------------------------------------------------
 
   // "s <x> <i>" => start stream of real-time variable <x> for desk <i>
-  else if (c0 == "s")
+  else if (strcmp(tokens[0], "s") == 0)
   {
     if (numTokens < 3)
     {
@@ -557,42 +776,42 @@ static void processCommandLine(const String &cmdLine)
       return;
     }
 
-    String var = tokens[1];
-    uint8_t targetNode = tokens[2].toInt();
+    char var[TOKEN_MAX_LENGTH];
+    strcpy(var, tokens[1]); // Variable name is in tokens[1]
+
+    uint8_t targetNode = atoi(tokens[2]); // Target node is in tokens[2]
 
     // Check if we need to forward this command
     if (shouldForwardCommand(targetNode))
     {
-      // Stream start = control type 11
-      // Encode the variable type in the value field
+      // Map variable names to numeric codes for CAN transmission
       float varCode = 0; // Default for 'y' (lux)
 
-      // Map variable names to numeric codes for CAN transmission
-      if (var.equalsIgnoreCase("u"))
+      if (strcmpIgnoreCase(var, "u") == 0)
         varCode = 1; // Duty cycle
-      else if (var.equalsIgnoreCase("p"))
+      else if (strcmpIgnoreCase(var, "p") == 0)
         varCode = 2; // Power percentage
-      else if (var.equalsIgnoreCase("o"))
+      else if (strcmpIgnoreCase(var, "o") == 0)
         varCode = 3; // Occupancy
-      else if (var.equalsIgnoreCase("a"))
+      else if (strcmpIgnoreCase(var, "a") == 0)
         varCode = 4; // Anti-windup
-      else if (var.equalsIgnoreCase("f"))
+      else if (strcmpIgnoreCase(var, "f") == 0)
         varCode = 5; // Feedback control
-      else if (var.equalsIgnoreCase("r"))
+      else if (strcmpIgnoreCase(var, "r") == 0)
         varCode = 6; // Reference illuminance
-      else if (var.equalsIgnoreCase("y"))
+      else if (strcmpIgnoreCase(var, "y") == 0)
         varCode = 0; // Illuminance (lux)
-      else if (var.equalsIgnoreCase("v"))
+      else if (strcmpIgnoreCase(var, "v") == 0)
         varCode = 7; // LDR voltage
-      else if (var.equalsIgnoreCase("d"))
+      else if (strcmpIgnoreCase(var, "d") == 0)
         varCode = 8; // External illuminance
-      else if (var.equalsIgnoreCase("t"))
+      else if (strcmpIgnoreCase(var, "t") == 0)
         varCode = 9; // Elapsed time
-      else if (var.equalsIgnoreCase("V"))
+      else if (strcmpIgnoreCase(var, "V") == 0)
         varCode = 10; // Visibility error
-      else if (var.equalsIgnoreCase("F"))
+      else if (strcmpIgnoreCase(var, "F") == 0)
         varCode = 11; // Flicker
-      else if (var.equalsIgnoreCase("E"))
+      else if (strcmpIgnoreCase(var, "E") == 0)
         varCode = 12; // Energy
 
       if (sendControlCommand(targetNode, 11, varCode))
@@ -607,11 +826,12 @@ static void processCommandLine(const String &cmdLine)
     }
     // Handle locally
     startStream(var, targetNode);
+    Serial.println("ack");
     return;
   }
 
   // "S <x> <i>" => stop stream of variable <x> for desk <i>
-  else if (c0 == "S")
+  else if (strcmp(tokens[0], "S") == 0)
   {
     if (numTokens < 3)
     {
@@ -619,42 +839,42 @@ static void processCommandLine(const String &cmdLine)
       return;
     }
 
-    String var = tokens[1];
-    uint8_t targetNode = tokens[2].toInt();
+    char var[TOKEN_MAX_LENGTH];
+    strcpy(var, tokens[1]); // Variable name is in tokens[1]
+
+    uint8_t targetNode = atoi(tokens[2]); // Target node is in tokens[2]
 
     // Check if we need to forward this command
     if (shouldForwardCommand(targetNode))
     {
-      // Stream stop = control type 12
-      // Encode the variable type in the value field
+      // Map variable names to numeric codes for CAN transmission
       float varCode = 0; // Default for 'y' (lux)
 
-      // Map variable names to numeric codes for CAN transmission
-      if (var.equalsIgnoreCase("u"))
+      if (strcmpIgnoreCase(var, "u") == 0)
         varCode = 1; // Duty cycle
-      else if (var.equalsIgnoreCase("p"))
+      else if (strcmpIgnoreCase(var, "p") == 0)
         varCode = 2; // Power percentage
-      else if (var.equalsIgnoreCase("o"))
+      else if (strcmpIgnoreCase(var, "o") == 0)
         varCode = 3; // Occupancy
-      else if (var.equalsIgnoreCase("a"))
+      else if (strcmpIgnoreCase(var, "a") == 0)
         varCode = 4; // Anti-windup
-      else if (var.equalsIgnoreCase("f"))
+      else if (strcmpIgnoreCase(var, "f") == 0)
         varCode = 5; // Feedback control
-      else if (var.equalsIgnoreCase("r"))
+      else if (strcmpIgnoreCase(var, "r") == 0)
         varCode = 6; // Reference illuminance
-      else if (var.equalsIgnoreCase("y"))
+      else if (strcmpIgnoreCase(var, "y") == 0)
         varCode = 0; // Illuminance (lux)
-      else if (var.equalsIgnoreCase("v"))
+      else if (strcmpIgnoreCase(var, "v") == 0)
         varCode = 7; // LDR voltage
-      else if (var.equalsIgnoreCase("d"))
+      else if (strcmpIgnoreCase(var, "d") == 0)
         varCode = 8; // External illuminance
-      else if (var.equalsIgnoreCase("t"))
+      else if (strcmpIgnoreCase(var, "t") == 0)
         varCode = 9; // Elapsed time
-      else if (var.equalsIgnoreCase("V"))
+      else if (strcmpIgnoreCase(var, "V") == 0)
         varCode = 10; // Visibility error
-      else if (var.equalsIgnoreCase("F"))
+      else if (strcmpIgnoreCase(var, "F") == 0)
         varCode = 11; // Flicker
-      else if (var.equalsIgnoreCase("E"))
+      else if (strcmpIgnoreCase(var, "E") == 0)
         varCode = 12; // Energy
 
       if (sendControlCommand(targetNode, 12, varCode))
@@ -679,19 +899,22 @@ static void processCommandLine(const String &cmdLine)
   //-----------------------------------------------------------------------------
 
   // "g <var> <i>" => Get value of variable <var> from node <i>
-  else if (c0 == "g")
+  else if (strcmp(tokens[0], "g") == 0)
   {
     if (numTokens < 3)
     {
       Serial.println("err");
       return;
     }
-    String subCommand = tokens[1];
-    String originalCase = tokens[1];
-    subCommand.toLowerCase();
 
-    uint8_t targetNode = tokens[2].toInt();
-    String idx = tokens[2];
+    char subCommand[TOKEN_MAX_LENGTH];
+    char originalCase[TOKEN_MAX_LENGTH];
+    char idx[TOKEN_MAX_LENGTH];
+    strcpy(subCommand, tokens[1]);
+    strcpy(originalCase, tokens[1]);
+    strcpy(idx, tokens[2]);
+
+    uint8_t targetNode = atoi(tokens[2]);
 
     // Check if we need to forward this command
     if (shouldForwardCommand(targetNode))
@@ -700,31 +923,31 @@ static void processCommandLine(const String &cmdLine)
       uint8_t queryType = 20; // Default query type
 
       // Map variable types to query codes
-      if (originalCase == "V")
+      if (strcmp(originalCase, "V") == 0)
         queryType = 20; // Visibility error
-      else if (originalCase == "F")
+      else if (strcmp(originalCase, "F") == 0)
         queryType = 21; // Flicker
-      else if (originalCase == "E")
+      else if (strcmp(originalCase, "E") == 0)
         queryType = 22; // Energy
-      else if (subCommand == "u")
+      else if (strcmp(subCommand, "u") == 0)
         queryType = 23; // Duty cycle
-      else if (subCommand == "o")
+      else if (strcmp(subCommand, "o") == 0)
         queryType = 24; // Occupancy
-      else if (subCommand == "a")
+      else if (strcmp(subCommand, "a") == 0)
         queryType = 25; // Anti-windup
-      else if (subCommand == "f")
+      else if (strcmp(subCommand, "f") == 0)
         queryType = 26; // Feedback control
-      else if (subCommand == "r")
+      else if (strcmp(subCommand, "r") == 0)
         queryType = 27; // Reference illuminance
-      else if (subCommand == "y")
+      else if (strcmp(subCommand, "y") == 0)
         queryType = 28; // Current illuminance
-      else if (subCommand == "p")
+      else if (strcmp(subCommand, "p") == 0)
         queryType = 29; // Power consumption
-      else if (subCommand == "t")
+      else if (strcmp(subCommand, "t") == 0)
         queryType = 30; // Elapsed time
-      else if (subCommand == "v")
+      else if (strcmp(subCommand, "v") == 0)
         queryType = 31; // LDR voltage
-      else if (subCommand == "d")
+      else if (strcmp(subCommand, "d") == 0)
         queryType = 32; // External illuminance
       else
       {
@@ -735,70 +958,42 @@ static void processCommandLine(const String &cmdLine)
       // Send the query to the remote node
       if (sendControlCommand(targetNode, queryType, 0.0f))
       {
-        Serial.println("Query sent to node " + String(targetNode));
+        Serial.print("Query sent to node ");
+        Serial.println(targetNode);
 
         // Wait for response with timeout
         unsigned long timeout = millis() + 500; // 500ms timeout
         bool responseReceived = false;
 
-        while (millis() < timeout && !responseReceived)
+        if (sendControlCommand(targetNode, queryType, 0.0f))
         {
-          can_frame frame;
-          if (readCANMessage(&frame) == MCP2515::ERROR_OK)
+          Serial.print("Query sent to node ");
+          Serial.println(targetNode);
+
+          // Instead of waiting in a blocking loop, store the query details
+          if (!addPendingQuery(targetNode, queryType, originalCase[0] == 'V' || originalCase[0] == 'F' || originalCase[0] == 'E' ? originalCase : subCommand, idx))
           {
-            // Parse message and check if it's a response from our target
-            uint8_t msgType, destAddr, priority;
-            parseCANId(frame.can_id, msgType, destAddr, priority);
-
-            uint8_t senderNodeID = frame.data[0];
-
-            if (msgType == CAN_TYPE_RESPONSE && senderNodeID == targetNode &&
-                (destAddr == nodeID || destAddr == CAN_ADDR_BROADCAST))
-            {
-              // Extract the response value and display
-              float value = bytesToFloat(&frame.data[2]);
-
-              // Format the response based on the original query type
-              if (originalCase == "V" || originalCase == "F" || originalCase == "E")
-              {
-                Serial.print(originalCase);
-              }
-              else
-              {
-                Serial.print(subCommand);
-              }
-              Serial.print(" ");
-              Serial.print(idx);
-              Serial.print(" ");
-
-              // Format the value with appropriate precision
-              if (subCommand == "u" || originalCase == "F" || originalCase == "E")
-                Serial.println(value, 4); // 4 decimal places
-              else if (originalCase == "V" || subCommand == "y" ||
-                       subCommand == "p" || subCommand == "d")
-                Serial.println(value, 2); // 2 decimal places
-              else if (subCommand == "v")
-                Serial.println(value, 3); // 3 decimal places
-              else if (subCommand == "o" || subCommand == "a" ||
-                       subCommand == "f" || subCommand == "t")
-                Serial.println((int)value); // Integer values
-              else
-                Serial.println(value); // Default format
-
-              responseReceived = true;
-            }
+            Serial.println("err: Too many pending queries");
           }
-          delay(5); // Small delay to prevent hammering the CAN bus
+          return;
+        }
+        else
+        {
+          Serial.print("err: Failed to send query to node ");
+          Serial.println(targetNode);
+          return;
         }
 
         if (!responseReceived)
         {
-          Serial.println("err: No response from node " + String(targetNode));
+          Serial.print("err: No response from node ");
+          Serial.println(targetNode);
         }
       }
       else
       {
-        Serial.println("err: Failed to send query to node " + String(targetNode));
+        Serial.print("err: Failed to send query to node ");
+        Serial.println(targetNode);
       }
       return;
     }
@@ -807,7 +1002,7 @@ static void processCommandLine(const String &cmdLine)
 
     // Quality metrics
     // "g V <i>" => "V <i> <val>" (Visibility error metric)
-    if (originalCase == "V")
+    if (strcmp(originalCase, "V") == 0)
     {
       float V = computeVisibilityErrorFromBuffer();
       Serial.print("V ");
@@ -817,7 +1012,7 @@ static void processCommandLine(const String &cmdLine)
       return;
     }
     // "g F <i>" => "F <i> <val>" (Flicker metric)
-    else if (originalCase == "F")
+    else if (strcmp(originalCase, "F") == 0)
     {
       float F = computeFlickerFromBuffer();
       Serial.print("F ");
@@ -827,7 +1022,7 @@ static void processCommandLine(const String &cmdLine)
       return;
     }
     // "g E <i>" => "E <i> <val>" (Energy metric)
-    else if (originalCase == "E")
+    else if (strcmp(originalCase, "E") == 0)
     {
       float E = computeEnergyFromBuffer();
       Serial.print("E ");
@@ -839,7 +1034,7 @@ static void processCommandLine(const String &cmdLine)
 
     // Control system variables
     // "g u <i>" => "u <i> <val>" (duty cycle)
-    if (subCommand == "u")
+    if (strcmp(subCommand, "u") == 0)
     {
       Serial.print("u ");
       Serial.print(idx);
@@ -848,9 +1043,11 @@ static void processCommandLine(const String &cmdLine)
       return;
     }
     // "g o <i>" => "o <i> <val>" (occupancy)
-    else if (subCommand == "o")
+    else if (strcmp(subCommand, "o") == 0)
     {
-      int occVal = occupancy ? 1 : 0;
+      critical_section_enter(&commStateLock);
+      int occVal = static_cast<int>(controlState.luminaireState);
+      critical_section_exit(&commStateLock);
       Serial.print("o ");
       Serial.print(idx);
       Serial.print(" ");
@@ -858,9 +1055,11 @@ static void processCommandLine(const String &cmdLine)
       return;
     }
     // "g a <i>" => "a <i> <val>" (anti-windup)
-    else if (subCommand == "a")
+    else if (strcmp(subCommand, "a") == 0)
     {
-      int awVal = antiWindup ? 1 : 0;
+      critical_section_enter(&commStateLock);
+      int awVal = controlState.antiWindup ? 1 : 0;
+      critical_section_exit(&commStateLock);
       Serial.print("a ");
       Serial.print(idx);
       Serial.print(" ");
@@ -868,9 +1067,11 @@ static void processCommandLine(const String &cmdLine)
       return;
     }
     // "g f <i>" => "f <i> <val>" (feedback control)
-    else if (subCommand == "f")
+    else if (strcmp(subCommand, "f") == 0)
     {
-      int fbVal = feedbackControl ? 1 : 0;
+      critical_section_enter(&commStateLock);
+      int fbVal = controlState.feedbackControl ? 1 : 0;
+      critical_section_exit(&commStateLock);
       Serial.print("f ");
       Serial.print(idx);
       Serial.print(" ");
@@ -878,16 +1079,18 @@ static void processCommandLine(const String &cmdLine)
       return;
     }
     // "g r <i>" => "r <i> <val>" (reference illuminance)
-    else if (subCommand == "r")
+    else if (strcmp(subCommand, "r") == 0)
     {
       Serial.print("r ");
       Serial.print(idx);
       Serial.print(" ");
-      Serial.println(refIlluminance, 4);
+      critical_section_enter(&commStateLock);
+      Serial.println(controlState.setpointLux, 4);
+      critical_section_exit(&commStateLock);
       return;
     }
     // "g y <i>" => "y <i> <val>" (current illuminance)
-    else if (subCommand == "y")
+    else if (strcmp(subCommand, "y") == 0)
     {
       float lux = readLux();
       Serial.print("y ");
@@ -899,7 +1102,7 @@ static void processCommandLine(const String &cmdLine)
 
     // Sensor measurements
     // "g v <i>" => measure voltage level at LDR => "v <i> <val>"
-    else if (subCommand == "v")
+    else if (strcmp(subCommand, "v") == 0)
     {
       float vLdr = getVoltageAtLDR();
       Serial.print("v ");
@@ -909,7 +1112,7 @@ static void processCommandLine(const String &cmdLine)
       return;
     }
     // "g d <i>" => external illuminance => "d <i> <val>"
-    else if (subCommand == "d")
+    else if (strcmp(subCommand, "d") == 0)
     {
       float dVal = getExternalIlluminance();
       Serial.print("d ");
@@ -919,7 +1122,7 @@ static void processCommandLine(const String &cmdLine)
       return;
     }
     // "g p <i>" => instantaneous power => "p <i> <val>"
-    else if (subCommand == "p")
+    else if (strcmp(subCommand, "p") == 0)
     {
       float pVal = getPowerConsumption();
       Serial.print("p ");
@@ -929,7 +1132,7 @@ static void processCommandLine(const String &cmdLine)
       return;
     }
     // "g t <i>" => elapsed time => "t <i> <val>"
-    else if (subCommand == "t")
+    else if (strcmp(subCommand, "t") == 0)
     {
       unsigned long sec = getElapsedTime();
       Serial.print("t ");
@@ -941,16 +1144,18 @@ static void processCommandLine(const String &cmdLine)
 
     // Historical data buffer
     // "g b <x> <i>" => "b <x> <i> <val1>,<val2>..."
-    else if (subCommand == "b")
+    else if (strcmp(subCommand, "b") == 0)
     {
       if (numTokens < 4)
       {
         Serial.println("err");
         return;
       }
-      String xVar = tokens[2];
-      int iDesk = tokens[3].toInt();
-      String bufferData = getLastMinuteBuffer(xVar, iDesk);
+      char xVar[TOKEN_MAX_LENGTH];
+      strcpy(xVar, tokens[2]);
+      int iDesk = atoi(tokens[3]);
+      char bufferData[1024]; // Adjust size as needed
+      getLastMinuteBuffer(xVar, iDesk, bufferData, sizeof(bufferData));
       Serial.print("b ");
       Serial.print(xVar);
       Serial.print(" ");
@@ -959,9 +1164,9 @@ static void processCommandLine(const String &cmdLine)
       Serial.println(bufferData);
       return;
     }
-    else if (subCommand == "bigdump")
+    else if (strcmp(subCommand, "bigdump") == 0)
     {
-      int iDesk = tokens[2].toInt();
+      int iDesk = atoi(tokens[2]);
 
       // Get the log buffer and count
       LogEntry *logBuffer = getLogBuffer();
@@ -1022,7 +1227,7 @@ static void processCommandLine(const String &cmdLine)
       Serial.println("Data dump complete");
       return;
     }
-    else if (subCommand == "mdump")
+    else if (strcmp(subCommand, "mdump") == 0)
     {
       int count = getLogCount();
       if (count == 0)
@@ -1174,7 +1379,7 @@ static void processCommandLine(const String &cmdLine)
   //-----------------------------------------------------------------------------
 
   // "k <i> <param> <value>" => set controller parameter
-  else if (c0 == "k")
+  else if (strcmp(tokens[0], "k") == 0)
   {
     if (numTokens < 4)
     {
@@ -1182,18 +1387,19 @@ static void processCommandLine(const String &cmdLine)
       return;
     }
 
-    uint8_t targetNode = tokens[1].toInt();
-    String param = tokens[2];
-    float value = tokens[3].toFloat();
+    uint8_t targetNode = atoi(tokens[1]);
+    char param[TOKEN_MAX_LENGTH];
+    strcpy(param, tokens[2]);
+    float value = strtof(tokens[3], NULL);
 
     // Check if we need to forward this command
     if (shouldForwardCommand(targetNode))
     {
       // Map parameter to control code for CAN
       uint8_t paramCode = 0;
-      if (param.equalsIgnoreCase("beta"))
+      if (strcmp(tokens[2], "b") == 0) // Correct token index
         paramCode = 15;
-      else if (param.equalsIgnoreCase("k")) // Changed from "kp" to "k"
+      else if (strcmp(tokens[2], "k") == 0) // Correct token index
         paramCode = 16;
       else
       {
@@ -1213,7 +1419,7 @@ static void processCommandLine(const String &cmdLine)
     }
 
     // Handle locally
-    if (param.equalsIgnoreCase("beta"))
+    if (strcmp(tokens[2], "b") == 0)
     {
       if (value < 0.0 || value > 1.0)
       {
@@ -1223,7 +1429,7 @@ static void processCommandLine(const String &cmdLine)
       pid.setWeighting(value);
       Serial.println("ack");
     }
-    else if (param.equalsIgnoreCase("k")) // Changed from "kp" to "k"
+    else if (strcmp(tokens[2], "k") == 0) // Changed from "kp" to "k"
     {
       // Set both gains to the same value
       pid.setGains(value, value);
@@ -1241,10 +1447,10 @@ static void processCommandLine(const String &cmdLine)
   //-----------------------------------------------------------------------------
 
   // "c <subcommand> [params]" => CAN-related commands
-  else if (c0 == "c")
+  else if (strcmp(tokens[0], "c") == 0)
   {
     // "c m <0|1>" => Enable/disable CAN message monitoring
-    if (tokens[1] == "m")
+    if (strcmp(tokens[1], "m") == 0)
     {
       if (numTokens < 3)
       {
@@ -1252,7 +1458,7 @@ static void processCommandLine(const String &cmdLine)
         return;
       }
 
-      canMonitorEnabled = (tokens[2].toInt() == 1);
+      canMonitorEnabled = (atoi(tokens[2]) == 1);
 
       Serial.print("CAN monitoring ");
       Serial.println(canMonitorEnabled ? "enabled" : "disabled");
@@ -1261,7 +1467,7 @@ static void processCommandLine(const String &cmdLine)
     }
 
     // "c st" => Display CAN communication statistics
-    else if (tokens[1] == "st")
+    else if (strcmp(tokens[1], "st") == 0)
     {
       uint32_t sent, received, errors;
       float avgLatency;
@@ -1284,7 +1490,7 @@ static void processCommandLine(const String &cmdLine)
     }
 
     // "c r" => Reset CAN statistics counters
-    else if (tokens[1] == "r")
+    else if (strcmp(tokens[1], "r") == 0)
     {
       resetCANStats();
       Serial.println("CAN statistics reset");
@@ -1293,7 +1499,7 @@ static void processCommandLine(const String &cmdLine)
     }
 
     // "c sc" => Scan for active nodes on the CAN network
-    else if (tokens[1] == "sc")
+    else if (strcmp(tokens[1], "sc") == 0)
     {
       Serial.println("Scanning for active CAN nodes...");
 
@@ -1372,7 +1578,7 @@ static void processCommandLine(const String &cmdLine)
     }
 
     // "c l <destNode> <count>" => Measure round-trip latency
-    else if (tokens[1] == "l")
+    else if (strcmp(tokens[1], "l") == 0)
     {
       if (numTokens < 4)
       {
@@ -1380,8 +1586,8 @@ static void processCommandLine(const String &cmdLine)
         return;
       }
 
-      uint8_t destNode = tokens[2].toInt();
-      int count = tokens[3].toInt();
+      uint8_t destNode = atoi(tokens[2]);
+      int count = atoi(tokens[3]);
 
       Serial.print("Measuring round-trip latency to node ");
       Serial.print(destNode);
@@ -1468,25 +1674,25 @@ static void processCommandLine(const String &cmdLine)
   //-----------------------------------------------------------------------------
 
   // "st <i> <state>" => set luminaire state (off/unoccupied/occupied)
-  else if (c0 == "st")
+  else if (strcmp(tokens[0], "st") == 0)
   {
     if (numTokens < 3)
     {
       Serial.println("err");
       return;
     }
-
-    uint8_t targetNode = tokens[1].toInt();
-    String stateStr = tokens[2];
-    stateStr.toLowerCase();
+    char stateStr[TOKEN_MAX_LENGTH];
+    strcpy(stateStr, tokens[2]);
+    uint8_t targetNode = atoi(tokens[1]);
+    float val = strtof(tokens[2], NULL);
 
     // Convert state string to value for CAN transmission
     int stateVal = 0;
-    if (stateStr == "off")
+    if (strcmp(stateStr, "off") == 0)
       stateVal = 0;
-    else if (stateStr == "unoccupied")
+    else if (strcmp(stateStr, "unoccupied") == 0)
       stateVal = 1;
-    else if (stateStr == "occupied")
+    else if (strcmp(stateStr, "occupied") == 0)
       stateVal = 2;
     else
     {
@@ -1515,11 +1721,11 @@ static void processCommandLine(const String &cmdLine)
       if (sendControlCommand(CAN_ADDR_BROADCAST, 13, stateVal))
       {
         // Also apply locally since broadcast includes this node
-        if (stateStr == "off")
+        if (strcmp(stateStr, "off") == 0)
           changeState(STATE_OFF);
-        else if (stateStr == "unoccupied")
+        else if (strcmp(stateStr, "unoccupied") == 0)
           changeState(STATE_UNOCCUPIED);
-        else if (stateStr == "occupied")
+        else if (strcmp(stateStr, "occupied") == 0)
           changeState(STATE_OCCUPIED);
         Serial.println("ack");
       }
@@ -1531,11 +1737,11 @@ static void processCommandLine(const String &cmdLine)
     }
 
     // Apply locally
-    if (stateStr == "off")
+    if (strcmp(stateStr, "off") == 0)
       changeState(STATE_OFF);
-    else if (stateStr == "unoccupied")
+    else if (strcmp(stateStr, "unoccupied") == 0)
       changeState(STATE_UNOCCUPIED);
-    else if (stateStr == "occupied")
+    else if (strcmp(stateStr, "occupied") == 0)
       changeState(STATE_OCCUPIED);
     Serial.println("ack");
     return;
@@ -1551,13 +1757,30 @@ static void processCommandLine(const String &cmdLine)
  */
 void processSerialCommands()
 {
-  if (Serial.available() > 0)
+  static char inputBuffer[CMD_MAX_LENGTH];
+  static int bufferPos = 0;
+
+  // Process any pending queries first
+  processPendingQueries();
+
+  while (Serial.available() > 0)
   {
-    String input = Serial.readStringUntil('\n');
-    input.trim();
-    if (input.length() > 0)
+    char c = Serial.read();
+
+    // Process complete line when newline is received
+    if (c == '\n' || c == '\r')
     {
-      processCommandLine(input);
+      if (bufferPos > 0)
+      {
+        inputBuffer[bufferPos] = '\0';
+        processCommandLine(inputBuffer);
+        bufferPos = 0;
+      }
+    }
+    // Add character to buffer if space available
+    else if (bufferPos < CMD_MAX_LENGTH - 1)
+    {
+      inputBuffer[bufferPos++] = c;
     }
   }
 }

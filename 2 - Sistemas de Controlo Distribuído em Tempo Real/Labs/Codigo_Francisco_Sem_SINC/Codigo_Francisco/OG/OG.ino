@@ -10,10 +10,6 @@
  * - Serial command interface for configuration and monitoring
  * - Data logging and streaming capabilities
  */
-
-//=============================================================================
-// INCLUDES AND DEPENDENCIES
-//=============================================================================
 #include <Arduino.h>
 #include <math.h>
 #include "PIController.h"
@@ -21,6 +17,81 @@
 #include "CANComm.h"
 #include "pico/multicore.h"
 #include "Globals.h"
+
+// Device-specific configuration (differs between Picos)
+struct DeviceConfig
+{
+  uint8_t nodeId;          // Unique ID for this device
+  float ledGain;           // Calibrated LED contribution gain
+  float calibrationOffset; // LDR sensor calibration offset
+  // PID tuning parameters
+  float pidKp;
+  float pidKi;
+  float pidBeta;
+};
+
+// Sensor subsystem state
+struct SensorState
+{
+  float rawLux;              // Unfiltered illuminance
+  float filteredLux;         // Filtered illuminance
+  float lastFilteredLux;     // Previous filtered reading for EMA
+  float baselineIlluminance; // Background illuminance with LED off
+  float externalLuxAverage;  // Estimated external light contribution
+  bool filterEnabled;        // Enable/disable filtering
+};
+
+// Control system state
+struct ControlState
+{
+  float setpointLux;             // Target illuminance
+  float dutyCycle;               // Current LED duty cycle [0-1]
+  LuminaireState luminaireState; // Current operating state
+  bool feedbackControl;          // Feedback vs manual control
+  bool antiWindup;               // Anti-windup for PID
+};
+
+// Communication state (accessed by both cores)
+struct CommState
+{
+  bool streamingEnabled;
+  char *streamingVar;
+  int streamingIndex;
+  unsigned long lastStreamTime;
+  // Remote streaming requests
+  StreamRequest remoteStreamRequests[MAX_STREAM_REQUESTS];
+  // Atomic flag to indicate new CAN messages
+  atomic_flag hasNewMessages;
+};
+
+#define MSG_SEND_SENSOR 1
+#define MSG_SEND_CONTROL 2
+#define MSG_UPDATE_STATE 3
+
+critical_section_t commStateLock;
+DeviceConfig deviceConfig;
+SensorState sensorState;
+ControlState controlState;
+CommState commState;
+
+void updateSharedData(float value)
+{
+  critical_section_enter(&commStateLock);
+  // Update shared data here
+  critical_section_exit(&commStateLock);
+}
+
+struct CoreMessage
+{
+  uint8_t msgType;  // Message type identifier
+  uint8_t dataType; // Type of data being sent
+  float value;      // Value to send
+  uint8_t nodeId;   // Target or source node ID
+};
+
+queue_t core0to1queue;
+
+queue_t core1to0queue;
 
 //=============================================================================
 // HARDWARE CONFIGURATION
@@ -74,34 +145,14 @@ const float MAX_POWER_WATTS = 1.0; // Maximum power consumption at 100% duty
 // GLOBAL SYSTEM STATE
 //=============================================================================
 
-//-----------------------------------------------------------------------------
-// Control System State
-//-----------------------------------------------------------------------------
-float setpointLux = 10.0;    // Target illuminance (lux)
-float dutyCycle = 0.0;       // Current LED duty cycle [0.0-1.0]
-float refIlluminance = 15.0; // Reference illuminance for metrics
-bool occupancy = false;      // Room occupancy state
-bool antiWindup = true;      // Anti-windup feature for PID
-bool feedbackControl = true; // Feedback control mode (vs. manual)
-
 // Illuminance setpoints for different states
 const float SETPOINT_OFF = 0.0;        // Off state target (lux)
 const float SETPOINT_UNOCCUPIED = 5.0; // Unoccupied state target (lux)
 const float SETPOINT_OCCUPIED = 15.0;  // Occupied state target (lux)
 
-// Current luminaire operating state
-LuminaireState luminaireState = STATE_UNOCCUPIED;
-
-//-----------------------------------------------------------------------------
-// Sensor State
-//-----------------------------------------------------------------------------
-float calibrationOffset = 0.0; // Lux sensor calibration offset
-float lastFilteredLux = -1.0;  // Last filtered lux value for EMA
-
 //-----------------------------------------------------------------------------
 // Flicker Comparison Variables
 //-----------------------------------------------------------------------------
-float rawLux = 0.0;               // Last unfiltered lux value
 float flickerWithFilter = 0.0;    // Accumulated flicker with filtering
 float flickerWithoutFilter = 0.0; // Accumulated flicker without filtering
 
@@ -113,9 +164,8 @@ bool flickerInitialized = false; // Track if we've initialized flicker tracking
 //-----------------------------------------------------------------------------
 // External Light Tracking
 //-----------------------------------------------------------------------------
-float lastExternalLux = 0.0;      // Previous external light measurement
-float externalLuxAverage = 0.0;   // Smoothed external illuminance
-const float EXT_LUX_ALPHA = 0.05; // Slow-moving average coefficient
+const float EXT_LUX_ALPHA = 0.05;                   // Slow-moving average coefficient
+const float EXTERNAL_LIGHT_CHANGE_THRESHOLD = 1.0f; // Minimum lux change to trigger adaptation
 
 //-----------------------------------------------------------------------------
 // CAN Communication State
@@ -126,32 +176,6 @@ uint8_t nodeID = 0;                     // Node ID (set during initialization)
 unsigned long lastCANSend = 0;          // Last transmission timestamp
 unsigned long lastHeartbeat = 0;        // Last heartbeat timestamp
 unsigned long heartbeatInterval = 5000; // Heartbeat interval (ms)
-
-//-----------------------------------------------------------------------------
-// External Light Tracking
-//-----------------------------------------------------------------------------
-float ledGain = 25.0; // Gain value G for LED contribution (calibrated at startup)
-
-float baselineIlluminance = 0.0; // Illuminance measured with LED off
-
-//-----------------------------------------------------------------------------
-// Streaming & Data Logging
-//-----------------------------------------------------------------------------
-bool streamingEnabled = false;    // Enable serial data streaming
-String streamingVar = "";         // Variable to stream
-int streamingIndex = 0;           // Node index for streaming
-unsigned long lastStreamTime = 0; // Last stream update timestamp
-
-StreamRequest remoteStreamRequests[MAX_STREAM_REQUESTS];
-
-//-----------------------------------------------------------------------------
-// Debug Configuration
-//-----------------------------------------------------------------------------
-bool DEBUG_MODE = false;     // Master debug switch
-bool DEBUG_LED = false;      // LED driver debug messages
-bool DEBUG_SENSOR = false;   // Sensor readings debug
-bool DEBUG_PI = false;       // PI control debug messages
-bool DEBUG_PLOTTING = false; // Serial plotter output
 
 //-----------------------------------------------------------------------------
 // Neighbor Management
@@ -172,60 +196,51 @@ NeighborInfo neighbors[MAX_NEIGHBORS]; // Neighbor state array
 //-----------------------------------------------------------------------------
 // Controller Object
 //-----------------------------------------------------------------------------
-PIController pid(Kp, Ki, BETA, DT); // PI controller instance with Beta=1.0
-
-//=============================================================================
-// STATE MANAGEMENT SUBSYSTEM
-//=============================================================================
-
-/**
- * Change luminaire operating state and update settings accordingly
- *
- * @param newState The target state (OFF, UNOCCUPIED, OCCUPIED)
- */
 void changeState(LuminaireState newState)
 {
   // Don't do anything if state is unchanged
-  if (newState == luminaireState)
+  critical_section_enter(&commStateLock);
+  if (newState == controlState.luminaireState)
   {
     return;
   }
 
-  luminaireState = newState;
+  controlState.luminaireState = newState;
 
   // Update setpoint based on new state
-  switch (luminaireState)
+  switch (controlState.luminaireState)
   {
   case STATE_OFF:
-    setpointLux = SETPOINT_OFF;
-    feedbackControl = false; // Turn off control when lights are off
+    controlState.setpointLux = SETPOINT_OFF;
+    controlState.feedbackControl = false;
     break;
 
   case STATE_UNOCCUPIED:
-    setpointLux = SETPOINT_UNOCCUPIED;
-    feedbackControl = true;
+    controlState.setpointLux = SETPOINT_UNOCCUPIED;
+    controlState.feedbackControl = true;
     break;
 
   case STATE_OCCUPIED:
-    setpointLux = SETPOINT_OCCUPIED;
-    feedbackControl = true;
+    controlState.setpointLux = SETPOINT_OCCUPIED;
+    controlState.feedbackControl = true;
     break;
   }
+  critical_section_exit(&commStateLock);
 
   // Reset PID controller to avoid integral windup during transitions
   pid.reset();
 
-  // Update reference illuminance for metrics calculation
-  refIlluminance = setpointLux;
-
-  // Broadcast state change to network
-  sendControlCommand(CAN_ADDR_BROADCAST, CAN_CTRL_STATE_CHANGE, (float)luminaireState);
+  // Send to CAN bus using core0
+  CoreMessage msg;
+  msg.msgType = MSG_SEND_CONTROL;
+  msg.nodeId = CAN_ADDR_BROADCAST;
+  msg.dataType = CAN_CTRL_STATE_CHANGE;
+  msg.value = (float)controlState.luminaireState;
+  queue_add_blocking(&core1to0queue, &msg);
 }
-
 //=============================================================================
-// SENSOR SUBSYSTEM
+// STATE MANAGEMENT SUBSYSTEM
 //=============================================================================
-bool filterEnabled = true; // Enable/disable sensor filtering
 
 /**
  * Read and process illuminance with multi-stage filtering:
@@ -238,6 +253,14 @@ bool filterEnabled = true; // Enable/disable sensor filtering
  */
 float readLux()
 {
+  bool isFilterEnabled;
+  float lastFiltered;
+
+  critical_section_enter(&commStateLock);
+  isFilterEnabled = sensorState.filterEnabled;
+  lastFiltered = sensorState.lastFilteredLux;
+  critical_section_exit(&commStateLock);
+
   float samples[NUM_SAMPLES];
   float sum = 0.0;
   float count = 0.0;
@@ -272,12 +295,14 @@ float readLux()
     return 0.0; // No valid readings
 
   // Store the raw lux (average of all samples without further filtering)
-  rawLux = sum / count;
+  critical_section_enter(&commStateLock);
+  sensorState.rawLux = sum / count;
+  critical_section_exit(&commStateLock);
 
   // If filtering is disabled, return the raw value immediately
-  if (!filterEnabled)
+  if (!isFilterEnabled)
   {
-    return rawLux;
+    return sensorState.rawLux;
   }
 
   // 2. Calculate mean and standard deviation
@@ -320,9 +345,15 @@ float readLux()
   }
 
   // 5. Apply calibration offset and safety bounds check
-  float calibratedLux = lastFilteredLux + calibrationOffset;
+  float calibratedLux = lastFilteredLux + deviceConfig.calibrationOffset;
   if (calibratedLux < 0.0)
     calibratedLux = 0.0;
+
+  // Store in sensorState with proper synchronization
+  critical_section_enter(&commStateLock);
+  sensorState.rawLux = sum / count;
+  sensorState.lastFilteredLux = calibratedLux;
+  critical_section_exit(&commStateLock);
 
   return calibratedLux;
 }
@@ -348,18 +379,20 @@ void calibrateLuxSensor(float knownLux)
     float resistance = FIXED_RESISTOR * (VCC / voltage - 1.0);
     float logR = log10(resistance);
     float logLux = (logR - LDR_B) / LDR_M;
-    float rawLux = pow(10, logLux);
+    critical_section_enter(&commStateLock);
+    sensorState.rawLux = pow(10, logLux);
+    critical_section_exit(&commStateLock);
 
-    measuredLux += rawLux;
+    measuredLux += sensorState.rawLux;
     delay(50); // Short delay between readings
   }
   measuredLux /= CAL_SAMPLES;
 
   // Calculate the offset needed
-  calibrationOffset = knownLux - measuredLux;
+  deviceConfig.calibrationOffset = knownLux - measuredLux;
 
   Serial.print("Sensor calibrated: offset = ");
-  Serial.println(calibrationOffset);
+  Serial.println(deviceConfig.calibrationOffset);
 }
 
 /**
@@ -374,37 +407,35 @@ float getVoltageAtLDR()
 }
 
 /**
- * Calculate external illuminance by subtracting LED contribution
- * Uses calibrated gain value G to determine LED contribution
+ * Get estimated external illuminance (without LED contribution)
+ * Calculates background illuminance by subtracting LED contribution from total
  *
  * @return Estimated external illuminance in lux
  */
 float getExternalIlluminance()
 {
-  float measuredLux = readLux();
+  float totalLux;
+  float ledContribution;
+  float currentDuty;
 
-  // Remove baseline offset
-  float baselineOffset = baselineIlluminance; // Use the global variable
+  // Access shared data safely
+  critical_section_enter(&commStateLock);
+  totalLux = sensorState.filteredLux;   // Current measured illuminance
+  currentDuty = controlState.dutyCycle; // Current LED duty cycle
+  float ledGain = deviceConfig.ledGain; // LED contribution factor
+  critical_section_exit(&commStateLock);
 
-  // Linear model using calibrated gain: d = y - G*u - baseline
-  float ledContribution = dutyCycle * ledGain;
+  // Calculate LED's contribution using duty cycle and gain
+  ledContribution = currentDuty * ledGain;
 
-  // Calculate current external lux estimate
-  float currentExternalLux = max(0.0f, measuredLux - ledContribution - baselineOffset);
+  // Subtract LED contribution from total measured illuminance
+  float externalLux = totalLux - ledContribution;
 
-  // Rest of function stays the same
-  if (lastExternalLux == 0.0)
-  {
-    externalLuxAverage = currentExternalLux;
-  }
-  else
-  {
-    externalLuxAverage = EXT_LUX_ALPHA * currentExternalLux +
-                         (1.0 - EXT_LUX_ALPHA) * externalLuxAverage;
-  }
+  // Ensure we don't return negative values
+  if (externalLux < 0.0f)
+    externalLux = 0.0f;
 
-  lastExternalLux = currentExternalLux;
-  return externalLuxAverage;
+  return externalLux;
 }
 
 /**
@@ -426,19 +457,23 @@ void adaptToExternalLight()
   // Get current external illuminance
   float externalLux = getExternalIlluminance();
 
-  // Skip first run or when in manual mode
-  if (previousExternal < 0 || !feedbackControl)
+  critical_section_enter(&commStateLock);
+  bool feedback = controlState.feedbackControl;
+  critical_section_exit(&commStateLock);
+  if (previousExternal < 0 || !feedback)
   {
     previousExternal = externalLux;
     return;
   }
 
   // If external light has changed significantly (>1 lux)
-  if (abs(externalLux - previousExternal) > 1.0)
+  if (abs(externalLux - previousExternal) > EXTERNAL_LIGHT_CHANGE_THRESHOLD)
   {
     // Calculate how much of our setpoint is satisfied by external light
-    float externalContribution = min(externalLux, setpointLux);
-    float requiredFromLED = max(0.0f, setpointLux - externalContribution);
+    critical_section_enter(&commStateLock);
+    float externalContribution = min(externalLux, controlState.setpointLux);
+    float requiredFromLED = max(0.0f, controlState.setpointLux - externalContribution);
+    critical_section_exit(&commStateLock);
 
     // Pre-adjust duty cycle based on external light (feedforward control)
     float estimatedDuty = requiredFromLED / 30.0; // Assuming 30 lux at full power
@@ -449,16 +484,6 @@ void adaptToExternalLight()
     float newDuty = currentDuty * 0.7 + estimatedDuty * 0.3; // Gradual adjustment
 
     setLEDDutyCycle(newDuty);
-
-    if (DEBUG_MODE && DEBUG_SENSOR)
-    {
-      Serial.print("External light adaptation: ");
-      Serial.print(externalLux);
-      Serial.print(" lux, required from LED: ");
-      Serial.print(requiredFromLED);
-      Serial.print(" lux, adjusted duty: ");
-      Serial.println(newDuty, 3);
-    }
 
     previousExternal = externalLux;
   }
@@ -565,7 +590,9 @@ void coordinateWithNeighbors()
   if (neighborContribution > 0.5)
   { // Only adjust if contribution is significant
     // Adjust our target to account for light from neighbors
-    float adjustedTarget = max(0.0f, setpointLux - neighborContribution * 0.8);
+    critical_section_enter(&commStateLock);
+    float adjustedTarget = max(0.0f, controlState.setpointLux - neighborContribution * 0.8);
+    critical_section_exit(&commStateLock);
 
     // Dynamic PID adjustment based on cooperation
     pid.setTarget(adjustedTarget);
@@ -583,7 +610,11 @@ void coordinateWithNeighbors()
  */
 float getPowerConsumption()
 {
-  return dutyCycle * MAX_POWER_WATTS;
+  critical_section_enter(&commStateLock);
+  float duty = controlState.dutyCycle;
+  critical_section_exit(&commStateLock);
+
+  return duty * MAX_POWER_WATTS;
 }
 
 /**
@@ -594,32 +625,6 @@ float getPowerConsumption()
 unsigned long getElapsedTime()
 {
   return millis() / 1000;
-}
-
-/**
- * Run a quick LED test sequence
- * Ramps brightness up and down to verify hardware
- */
-void testLED()
-{
-  // Quick test of LED by ramping up and down
-  Serial.println("Testing LED...");
-
-  for (int i = 0; i <= 100; i += 10)
-  {
-    setLEDPercentage(i);
-    delay(50);
-  }
-
-  for (int i = 100; i >= 0; i -= 10)
-  {
-    setLEDPercentage(i);
-    delay(50);
-  }
-
-  // Set LED to off after test
-  setLEDDutyCycle(0.0);
-  Serial.println("LED test complete.");
 }
 
 /**
@@ -650,7 +655,7 @@ float calibrateIlluminanceModel()
   y1 /= SAMPLES;
 
   // Store in global variable for use in getExternalIlluminance()
-  baselineIlluminance = y1;
+  sensorState.baselineIlluminance = y1;
 
   Serial.print("Background illuminance (LED off): ");
   Serial.print(y1);
@@ -699,43 +704,6 @@ float calibrateSystem(float referenceValue)
   const int STABILIZE_TIME = 500;      // Wait time between measurements in ms
   const int LED_RESPONSE_TIME = 10000; // Wait time for LDR to respond to LED changes
 
-  Serial.println("Starting comprehensive calibration...");
-
-  //---------------------------------------------------------------------
-  // 1. First calibrate the LDR sensor for accurate absolute readings
-  //---------------------------------------------------------------------
-  float measuredLux = 0.0;
-  const int CAL_SAMPLES = 10;
-
-  Serial.println("Calibrating LDR sensor...");
-
-  for (int i = 0; i < CAL_SAMPLES; i++)
-  {
-    // Use special raw reading to avoid existing calibration
-    int adcValue = analogRead(LDR_PIN);
-    float voltage = (adcValue / MY_ADC_RESOLUTION) * VCC;
-    if (voltage <= 0.0)
-      continue;
-
-    float resistance = FIXED_RESISTOR * (VCC / voltage - 1.0);
-    float logR = log10(resistance);
-    float logLux = (logR - LDR_B) / LDR_M;
-    float rawLux = pow(10, logLux);
-
-    measuredLux += rawLux;
-    delay(50); // Short delay between readings
-  }
-  measuredLux /= CAL_SAMPLES;
-
-  // Calculate the offset needed
-  calibrationOffset = referenceValue - measuredLux;
-
-  Serial.print("Sensor calibrated: offset = ");
-  Serial.println(calibrationOffset);
-
-  //---------------------------------------------------------------------
-  // 2. Now calibrate the illuminance model with LED contribution
-  //---------------------------------------------------------------------
   Serial.println("Calibrating illuminance model...");
 
   // Turn LED off and measure y1
@@ -752,7 +720,9 @@ float calibrateSystem(float referenceValue)
   y1 /= SAMPLES;
 
   // Store baseline illuminance for external light calculation
-  baselineIlluminance = y1;
+  critical_section_enter(&commStateLock);
+  sensorState.baselineIlluminance = y1;
+  critical_section_exit(&commStateLock);
 
   Serial.print("Background illuminance (LED off): ");
   Serial.print(y1);
@@ -791,57 +761,222 @@ float calibrateSystem(float referenceValue)
   return gain;
 }
 
+/******************************************************************************************************************************************************************************************************************************************************************************** */
+// LED DRIVER SECTION
+/******************************************************************************************************************************************************************************************************************************************************************************** */
+
+//-----------------------------------------------------------------------------
+// CONFIGURATION AND VARIABLES
+//-----------------------------------------------------------------------------
+
+// Static module variables
+static int ledPin = -1;   // GPIO pin connected to the LED
+static int pwmMax = 4095; // Maximum PWM value (12-bit resolution)
+static int pwmMin = 0;    // Minimum PWM value (off)
+
+// PWM configuration constants
+const unsigned int PWM_FREQUENCY = 30000; // 30 kHz frequency
+
+//-----------------------------------------------------------------------------
+// INITIALIZATION FUNCTIONS
+//-----------------------------------------------------------------------------
+
+/**
+ * Initialize the LED driver with the specified GPIO pin
+ * Configures PWM parameters and sets initial state to off
+ *
+ * @param pin GPIO pin number connected to the LED
+ */
+void initLEDDriver(int pin)
+{
+  // Store pin and configure it as output
+  ledPin = pin;
+  pinMode(ledPin, OUTPUT);
+
+  // Configure PWM with optimal settings
+  // - Sets resolution to 12-bit (0-4095)
+  // - Sets frequency to 30kHz for flicker-free operation
+  analogWriteRange(pwmMax);
+  analogWriteFreq(PWM_FREQUENCY);
+
+  // Start with LED off
+  analogWrite(ledPin, pwmMin);
+  dutyCycle = 0.0; // Use the global duty cycle variable
+}
+
+//-----------------------------------------------------------------------------
+// LED CONTROL FUNCTIONS
+//-----------------------------------------------------------------------------
+
+/**
+ * Set LED brightness using PWM duty cycle (0.0 to 1.0)
+ * This is the primary control function that other methods call
+ *
+ * @param newDutyCycle Duty cycle value between 0.0 (off) and 1.0 (fully on)
+ */
+void setLEDDutyCycle(float newDutyCycle)
+{
+  // Validate and constrain input
+  if (isnan(newDutyCycle) || isinf(newDutyCycle))
+  {
+    return; // Protect against invalid inputs
+  }
+
+  // Constrain to valid range
+  newDutyCycle = constrain(newDutyCycle, 0.0f, 1.0f);
+
+  // Apply duty cycle by converting to appropriate PWM value
+  int pwmValue = (int)(newDutyCycle * pwmMax);
+  analogWrite(ledPin, pwmValue);
+
+  // Update the global duty cycle
+  dutyCycle = newDutyCycle;
+}
+
+/**
+ * Set LED brightness using percentage (0% to 100%)
+ * Converts percentage to duty cycle and calls setLEDDutyCycle
+ *
+ * @param percentage Brightness percentage between 0.0 (off) and 100.0 (fully on)
+ */
+void setLEDPercentage(float percentage)
+{
+  // Constrain to valid percentage range
+  percentage = constrain(percentage, 0.0f, 100.0f);
+
+  // Convert percentage to duty cycle
+  float newDutyCycle = percentage / 100.0f;
+
+  // Set the LED using the calculated duty cycle
+  setLEDDutyCycle(newDutyCycle);
+}
+
+/**
+ * Set LED brightness using direct PWM value (0 to pwmMax)
+ * Bypasses duty cycle calculation for direct hardware control
+ *
+ * @param pwmValue PWM value between 0 (off) and pwmMax (fully on)
+ */
+void setLEDPWMValue(int pwmValue)
+{
+  // Constrain to valid PWM range
+  pwmValue = constrain(pwmValue, pwmMin, pwmMax);
+
+  // Apply PWM value directly
+  analogWrite(ledPin, pwmValue);
+
+  // Update global duty cycle to maintain state consistency
+  dutyCycle = (float)pwmValue / pwmMax;
+}
+
+/**
+ * Set LED brightness based on desired power consumption
+ * Maps power in watts to appropriate duty cycle
+ *
+ * @param powerWatts Desired power in watts from 0.0 to MAX_POWER_WATTS
+ */
+void setLEDPower(float powerWatts)
+{
+  // Constrain to valid power range
+  powerWatts = constrain(powerWatts, 0.0f, MAX_POWER_WATTS);
+
+  // Convert power to duty cycle (assumes linear relationship)
+  float newDutyCycle = powerWatts / MAX_POWER_WATTS;
+
+  // Set the LED using the calculated duty cycle
+  setLEDDutyCycle(newDutyCycle);
+}
+
+//-----------------------------------------------------------------------------
+// LED STATUS QUERY FUNCTIONS
+//-----------------------------------------------------------------------------
+
+/**
+ * Get current LED duty cycle setting
+ *
+ * @return Current duty cycle value (0.0 to 1.0)
+ */
+float getLEDDutyCycle()
+{
+  return dutyCycle;
+}
+
+/**
+ * Get current LED brightness as percentage
+ *
+ * @return Current brightness percentage (0.0 to 100.0)
+ */
+float getLEDPercentage()
+{
+  return dutyCycle * 100.0f;
+}
+
+/**
+ * Get current LED PWM value
+ *
+ * @return Current PWM value (0 to pwmMax)
+ */
+int getLEDPWMValue()
+{
+  return (int)(dutyCycle * pwmMax);
+}
+
+/**
+ * Get estimated current LED power consumption
+ *
+ * @return Estimated power consumption in watts
+ */
+float getLEDPower()
+{
+  return dutyCycle * MAX_POWER_WATTS;
+}
+
 //=============================================================================
 // DATA STREAMING SUBSYSTEM
 //=============================================================================
 
-/**
- * Start streaming a variable to serial port
- *
- * @param var Variable to stream (y=illuminance, u=duty, etc.)
- * @param index Node index to stream
- */
 void startStream(const String &var, int index)
 {
-  streamingEnabled = true;
-  streamingVar = var;
-  streamingIndex = index;
+  critical_section_enter(&commStateLock); // MISSING THIS LINE
+  commState.streamingEnabled = true;
+  commState.streamingVar = var;
+  commState.streamingIndex = index;
+  critical_section_exit(&commStateLock);
   Serial.println("ack");
 }
 
-/**
- * Stop streaming a variable
- *
- * @param var Variable to stop streaming
- * @param index Node index
- */
 void stopStream(const String &var, int index)
 {
-  streamingEnabled = false;
-  streamingVar = ""; // Clear the variable
+  critical_section_enter(&commStateLock);
+  commState.streamingEnabled = false;
+  commState.streamingVar = ""; // Clear the variable
+  critical_section_exit(&commStateLock);
   Serial.print("Stopped streaming ");
   Serial.print(var);
   Serial.print(" for node ");
   Serial.println(index);
 }
-
 /**
  * Process streaming in main loop
  * Sends requested variable at regular intervals
  */
 void handleStreaming()
 {
-  if (!streamingEnabled || (millis() - lastStreamTime < 500))
+  // Use struct members with proper synchronization
+  critical_section_enter(&commStateLock);
+  if (!commState.streamingEnabled || (millis() - commState.lastStreamTime < 500))
   {
+    critical_section_exit(&commStateLock);
     return; // Not streaming or not time to stream yet
   }
 
   unsigned long currentTime = millis();
-  lastStreamTime = currentTime;
-  String var = streamingVar;
-  int index = streamingIndex;
+  commState.lastStreamTime = currentTime;
+  String var = commState.streamingVar;
+  int index = commState.streamingIndex;
+  critical_section_exit(&commStateLock);
 
-  if (var.equalsIgnoreCase("y"))
+  if (strcmp(var, "y") == 0)
   {
     float lux = readLux();
     Serial.print("s "); // Add "s" prefix
@@ -853,29 +988,34 @@ void handleStreaming()
     Serial.print(" ");
     Serial.println(currentTime); // Add timestamp
   }
-  else if (var.equalsIgnoreCase("u"))
+  else if (strcmp(var, "u") == 0)
   {
+    critical_section_enter(&commStateLock);
+    float duty = controlState.dutyCycle;
+    critical_section_exit(&commStateLock);
+
     Serial.print("s "); // Add "s" prefix
     Serial.print(var);
     Serial.print(" ");
     Serial.print(index);
     Serial.print(" ");
-    Serial.print(dutyCycle, 4);
+    Serial.print(duty, 4);
     Serial.print(" ");
     Serial.println(currentTime); // Add timestamp
   }
-  else if (var.equalsIgnoreCase("p"))
-  {
-    float power = getPowerConsumption();
-    Serial.print("s "); // Add "s" prefix
-    Serial.print(var);
-    Serial.print(" ");
-    Serial.print(index);
-    Serial.print(" ");
-    Serial.print(power, 2);
-    Serial.print(" ");
-    Serial.println(currentTime); // Add timestamp
-  }
+  else
+    (strcmp(var, "p") == 0)
+    {
+      float power = getPowerConsumption();
+      Serial.print("s "); // Add "s" prefix
+      Serial.print(var);
+      Serial.print(" ");
+      Serial.print(index);
+      Serial.print(" ");
+      Serial.print(power, 2);
+      Serial.print(" ");
+      Serial.println(currentTime); // Add timestamp
+    }
 }
 
 void handleRemoteStreamRequests()
@@ -883,37 +1023,53 @@ void handleRemoteStreamRequests()
   unsigned long now = millis();
 
   // Check if it's time to send data (every 500ms)
+  critical_section_enter(&commStateLock);
+  StreamRequest *requests = commState.remoteStreamRequests;
+  critical_section_exit(&commStateLock);
+
   for (int i = 0; i < MAX_STREAM_REQUESTS; i++)
   {
-    if (!remoteStreamRequests[i].active)
-      continue;
-
-    if (now - remoteStreamRequests[i].lastSent >= 500)
+    critical_section_enter(&commStateLock);
+    if (!requests[i].active)
     {
-      float value = 0.0; // Add this declaration
+      critical_section_exit(&commStateLock);
+      continue;
+    }
 
-      switch (remoteStreamRequests[i].variableType)
+    if (now - requests[i].lastSent >= 500)
+    {
+      critical_section_exit(&commStateLock);
+      float value = 0.0;
+
+      switch (requests[i].variableType)
       {
       case 0: // y = illuminance
         value = readLux();
         break;
       case 1: // u = duty cycle
-        value = dutyCycle;
+        critical_section_enter(&commStateLock);
+        value = controlState.dutyCycle;
+        critical_section_exit(&commStateLock);
         break;
       case 2: // p = power
         value = getPowerConsumption();
         break;
-      // Add other variable types as needed
       default:
         value = 0.0;
       }
 
       // Send the value to the requesting node
-      sendSensorReading(remoteStreamRequests[i].requesterNode,
-                        remoteStreamRequests[i].variableType,
+      sendSensorReading(requests[i].requesterNode,
+                        requests[i].variableType,
                         value);
 
-      remoteStreamRequests[i].lastSent = now;
+      critical_section_enter(&commStateLock);
+      requests[i].lastSent = now;
+      critical_section_exit(&commStateLock);
+    }
+    else
+    {
+      critical_section_exit(&commStateLock);
     }
   }
 }
@@ -946,12 +1102,12 @@ String getLastMinuteBuffer(const String &var, int index)
   {
     int realIndex = (startIndex + i) % LOG_SIZE;
 
-    if (var.equalsIgnoreCase("y"))
+    if (strcmp(var, "y") == 0)
     {
       // For illuminance values
       result += String(logBuffer[realIndex].lux, 1);
     }
-    else if (var.equalsIgnoreCase("u"))
+    else if (strcmp(var, "u") == 0)
     {
       // For duty cycle values
       result += String(logBuffer[realIndex].duty, 3);
@@ -978,100 +1134,45 @@ void setup()
 {
   Serial.begin(115200);
 
-  // Debug board ID
-  pico_unique_board_id_t board_id;
-  pico_get_unique_board_id(&board_id);
-
-  // Configure ADC and PWM
+  // Configure hardware
   analogReadResolution(12);
   analogWriteFreq(30000);
   analogWriteRange(PWM_MAX);
 
-  // Initialize LED driver with the LED pin
+  // Initialize subsystems
   initLEDDriver(LED_PIN);
-
-  // Run LED test to verify hardware
-  testLED();
-
-  // Initialize circular buffer storage for logging
   initStorage();
-
-  Serial.println("Distributed Control System with CAN-BUS and Command Interface");
-
-  // Initialize CAN communication
   initCANComm();
 
-  // Calibrate the LDR sensor
-  ledGain = calibrateSystem(1.0); // Use a lower reference value like 1.0 lux
+  // Initialize synchronization primitives
+  critical_section_init(&commStateLock);
+  queue_init(&core0to1queue, sizeof(CoreMessage), 10);
+  queue_init(&core1to0queue, sizeof(CoreMessage), 10);
 
-  // Synchronize initial setpoint and reference
-  setpointLux = SETPOINT_UNOCCUPIED;
-  refIlluminance = setpointLux;
+  // Set initial state values
+  sensorState.filterEnabled = true;
+  sensorState.lastFilteredLux = -1.0;
 
-  for (int i = 0; i < MAX_STREAM_REQUESTS; i++)
-  {
-    remoteStreamRequests[i].active = false;
-  }
+  controlState.setpointLux = SETPOINT_UNOCCUPIED;
+  controlState.luminaireState = STATE_UNOCCUPIED;
+  controlState.feedbackControl = true;
+  controlState.antiWindup = true;
+  controlState.dutyCycle = 0.0;
 
-  // Print header for Serial Plotter (if using)
-  if (DEBUG_PLOTTING)
-  {
-    Serial.println("MeasuredLux\tSetpoint");
-  }
-}
+  commState.streamingEnabled = false;
 
-/**
- * Update flicker metrics for both filtered and unfiltered data
- * Tracks direction changes in duty cycle as indicator of oscillations
- *
- * @param filteredLux Current filtered lux reading
- * @param rawLux Current unfiltered lux reading
- * @param duty Current duty cycle
- */
-void updateFlickerMetrics(float filteredLux, float rawLux, float duty)
-{
-  // Skip if data is invalid
-  if (filteredLux <= 0 || rawLux <= 0 || duty < 0)
-  {
-    return;
-  }
+  // Configure device based on unique ID
+  configureDeviceFromID();
 
-  // Initialize values on first call
-  if (!flickerInitialized)
-  {
-    prevDutyWithFilter1 = prevDutyWithFilter2 = duty;
-    prevDutyWithoutFilter1 = prevDutyWithoutFilter2 = duty;
-    flickerInitialized = true;
-    return;
-  }
+  // Calibrate the system
+  deviceConfig.ledGain = calibrateSystem(1.0);
 
-  // Calculate flicker with filtered lux
-  float diffFiltered1 = prevDutyWithFilter1 - prevDutyWithFilter2;
-  float diffFiltered2 = duty - prevDutyWithFilter1;
+  // Launch core 0 for CAN communication
+  multicore_launch_core1(core0_main);
 
-  // Calculate flicker with unfiltered lux
-  float diffUnfiltered1 = prevDutyWithoutFilter1 - prevDutyWithoutFilter2;
-  float diffUnfiltered2 = duty - prevDutyWithoutFilter1;
+  initPendingQueries();
 
-  // Detect direction changes (sign changes) in duty - indicator of oscillation
-  if (diffFiltered1 * diffFiltered2 < 0)
-  {
-    // Accumulate flicker magnitude (sum of absolute changes)
-    flickerWithFilter += fabs(diffFiltered1) + fabs(diffFiltered2);
-  }
-
-  if (diffUnfiltered1 * diffUnfiltered2 < 0)
-  {
-    // Accumulate flicker magnitude for unfiltered case
-    flickerWithoutFilter += fabs(diffUnfiltered1) + fabs(diffUnfiltered2);
-  }
-
-  // Update previous values for next iteration
-  prevDutyWithFilter2 = prevDutyWithFilter1;
-  prevDutyWithFilter1 = duty;
-
-  prevDutyWithoutFilter2 = prevDutyWithoutFilter1;
-  prevDutyWithoutFilter1 = duty;
+  Serial.println("Distributed Control System with CAN-BUS initialized");
 }
 
 /**
@@ -1083,87 +1184,162 @@ void loop()
   // (A) Process incoming serial commands
   processSerialCommands();
 
-  // (B) Handle any active streaming
+  // (B) Handle streaming
   handleStreaming();
-  // Handle streaming requests from other nodes
-  handleRemoteStreamRequests();
 
-  // (C) Read sensor data
+  // (C) Read sensor data safely
   float lux = readLux();
+  critical_section_enter(&commStateLock);
+  sensorState.filteredLux = lux;
+  critical_section_exit(&commStateLock);
 
-  // Update flicker metrics
-  updateFlickerMetrics(lux, rawLux, dutyCycle);
+  // (D) Control system
+  critical_section_enter(&commStateLock);
+  LuminaireState state = controlState.luminaireState;
+  bool feedback = controlState.feedbackControl;
+  float setpoint = controlState.setpointLux;
+  critical_section_exit(&commStateLock);
 
-  // (D) Adapt to external light conditions
-  adaptToExternalLight();
-
-  // (E) Coordinate with neighbors for energy optimization
-  if (luminaireState != STATE_OFF)
+  if (state == STATE_OFF)
   {
-    coordinateWithNeighbors();
-  }
-
-  // (F) Control action computation and application
-  if (luminaireState == STATE_OFF)
-  {
-    // Turn off the light when in OFF state
     setLEDDutyCycle(0.0);
   }
-  else if (feedbackControl)
+  else if (feedback)
   {
-    // Use PID control in feedback mode
-    float u = pid.compute(setpointLux, lux);
+    float u = pid.compute(setpoint, lux);
     setLEDPWMValue((int)u);
   }
   else
   {
-    // Direct duty cycle control in manual mode
-    setLEDDutyCycle(dutyCycle);
+    critical_section_enter(&commStateLock);
+    float duty = controlState.dutyCycle;
+    critical_section_exit(&commStateLock);
+    setLEDDutyCycle(duty);
   }
 
-  // After calculating a new duty cycle, update the unfiltered tracking variables
-  prevDutyWithoutFilter2 = prevDutyWithoutFilter1;
-  prevDutyWithoutFilter1 = dutyCycle;
+  // Update duty cycle after control action
+  critical_section_enter(&commStateLock);
+  controlState.dutyCycle = getLEDDutyCycle();
+  critical_section_exit(&commStateLock);
 
-  // (G) Log the current sample in the circular buffer
-  logData(millis(), lux, dutyCycle);
-
-  // (H) Process CAN messages (nonblocking)
-  canCommLoop();
-
-  // (I) Periodic CAN tasks
-  unsigned long now = millis();
-
-  // Send sensor data if periodic mode is enabled
-  if (periodicCANEnabled && (now - lastCANSend >= 1000))
-  {
-    lastCANSend = now;
-
-    // Send illuminance reading (broadcast)
-    sendSensorReading(CAN_ADDR_BROADCAST, 0, lux);
-
-    // Send duty cycle (broadcast)
-    sendSensorReading(CAN_ADDR_BROADCAST, 1, dutyCycle);
-
-    // Send state information (broadcast)
-    sendSensorReading(CAN_ADDR_BROADCAST, 2, (float)luminaireState);
-
-    // Send external light estimate (broadcast)
-    sendSensorReading(CAN_ADDR_BROADCAST, 3, getExternalIlluminance());
-  }
-
-  // Debug plotting if enabled
-  if (DEBUG_MODE && DEBUG_PLOTTING)
-  {
-    Serial.print(lux, 2);
-    Serial.print("\t");
-    Serial.print(setpointLux, 2);
-    Serial.print("\t");
-    Serial.print(30.0, 2); // Upper limit
-    Serial.print("\t");
-    Serial.println(0.0, 2); // Lower limit
-  }
+  // Log data
+  logData(millis(), lux, controlState.dutyCycle);
 
   // Wait for next control cycle
   delay((int)(pid.getSamplingTime() * 1000));
+}
+
+void applyDeviceConfig(const DeviceConfig &config)
+{
+  deviceConfig = config; // Store the configuration
+
+  // Apply settings
+  nodeID = config.nodeId;
+
+  // Configure PID controller
+  pid.setGains(config.pidKp, config.pidKi);
+  pid.setWeighting(config.pidBeta);
+
+  Serial.print("Configured as device #");
+  Serial.print(config.nodeId);
+  Serial.print(", gain=");
+  Serial.print(config.ledGain);
+  Serial.print(", Kp=");
+  Serial.print(config.pidKp);
+  Serial.print(", Ki=");
+  k
+      Serial.println(config.pidKi);
+}
+
+void configureDeviceFromID()
+{
+  // Read hardware ID
+  pico_unique_board_id_t board_id;
+  pico_get_unique_board_id(&board_id);
+
+  // Last byte of ID determines device type
+  uint8_t deviceType = board_id.id[7] % 3; // 0, 1, or 2
+
+  DeviceConfig config;
+
+  switch (deviceType)
+  {
+  case 0: // First device
+    config.nodeId = 1;
+    config.pidKp = 20.0;
+    config.pidKi = 400.0;
+    config.pidBeta = 0.8;
+    break;
+
+  case 1: // Second device
+    config.nodeId = 2;
+    config.pidKp = 25.0;
+    config.pidKi = 350.0;
+    config.pidBeta = 0.75;
+    break;
+
+  case 2: // Third device
+    config.nodeId = 3;
+    config.pidKp = 22.0;
+    config.pidKi = 380.0;
+    config.pidBeta = 0.82;
+    break;
+  }
+
+  // Apply the configuration
+  applyDeviceConfig(config);
+}
+// Core 0: CAN Communication
+void core0_main()
+{
+  while (true)
+  {
+    // Process CAN messages
+    canCommLoop();
+    unsigned long now = millis();
+    CoreMessage msg;
+    if (queue_try_remove(&core1to0queue, &msg))
+    {
+      switch (msg.msgType)
+      {
+      case MSG_SEND_SENSOR:
+        sendSensorReading(msg.nodeId, msg.dataType, msg.value);
+        break;
+      case MSG_SEND_CONTROL:
+        sendControlCommand(msg.nodeId, msg.dataType, msg.value);
+        break;
+      case MSG_UPDATE_STATE:
+        // Handle state update
+        break;
+      }
+    }
+
+    // Send periodic CAN updates if enabled
+    if (periodicCANEnabled && (now - lastCANSend >= 1000))
+    {
+      lastCANSend = now;
+
+      critical_section_enter(&commStateLock);
+      float lux = sensorState.filteredLux;
+      float duty = controlState.dutyCycle;
+      LuminaireState state = controlState.luminaireState;
+      critical_section_exit(&commStateLock);
+
+      // Send sensor data to the network
+      sendSensorReading(CAN_ADDR_BROADCAST, 0, lux);
+      sendSensorReading(CAN_ADDR_BROADCAST, 1, duty);
+      sendSensorReading(CAN_ADDR_BROADCAST, 2, (float)state);
+      sendSensorReading(CAN_ADDR_BROADCAST, 3, getExternalIlluminance());
+    }
+
+    // Send heartbeat periodically
+    if (now - lastHeartbeat >= heartbeatInterval)
+    {
+      lastHeartbeat = now;
+      sendHeartbeat();
+    }
+
+    // Brief delay to prevent core hogging
+    sleep_ms(1);
+  }
 }
