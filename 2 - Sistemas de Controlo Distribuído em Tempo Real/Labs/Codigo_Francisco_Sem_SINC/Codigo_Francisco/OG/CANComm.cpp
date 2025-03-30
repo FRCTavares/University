@@ -3,6 +3,10 @@
 #include "Globals.h"
 #include "PIController.h"
 
+extern float readLux();
+extern float getPowerConsumption();
+extern float getVoltageAtLDR();
+
 //-----------------------------------------------------------------------------
 // CONFIGURATION AND INITIALIZATION
 //-----------------------------------------------------------------------------
@@ -283,7 +287,7 @@ bool sendHeartbeat()
 
   // Create status flags byte from control settings
   uint8_t statusFlags = 0;
-  critical_section_enter(&commStateLock);
+  critical_section_enter_blocking(&commStateLock);
   if (controlState.feedbackControl)
     statusFlags |= 0x01;
 
@@ -447,7 +451,7 @@ void processIncomingMessage(const can_frame &msg)
     // Basic setpoint control
     if (controlType == 0)
     {
-      critical_section_enter(&commStateLock);
+      critical_section_enter_blocking(&commStateLock);
       controlState.setpointLux = value;
       critical_section_exit(&commStateLock);
     }
@@ -508,7 +512,7 @@ void processIncomingMessage(const can_frame &msg)
     // System state control commands
     else if (controlType == 7)
     { // Set luminaireState
-      critical_section_enter(&commStateLock);
+      critical_section_enter_blocking(&commStateLock);
       int stateVal = (int)value;
       if (stateVal >= 0 && stateVal <= 2)
       {
@@ -523,7 +527,7 @@ void processIncomingMessage(const can_frame &msg)
     }
     else if (controlType == 8)
     { // Set anti-windup
-      critical_section_enter(&commStateLock);
+      critical_section_enter_blocking(&commStateLock);
       controlState.antiWindup = (value != 0.0f);
       critical_section_exit(&commStateLock);
       if (canMonitorEnabled)
@@ -534,7 +538,7 @@ void processIncomingMessage(const can_frame &msg)
     }
     else if (controlType == 9)
     { // Set feedback control
-      critical_section_enter(&commStateLock);
+      critical_section_enter_blocking(&commStateLock);
       controlState.feedbackControl = (value != 0.0f);
       critical_section_exit(&commStateLock);
       if (canMonitorEnabled)
@@ -545,7 +549,7 @@ void processIncomingMessage(const can_frame &msg)
     }
     else if (controlType == 10)
     { // Reference illuminance
-      critical_section_enter(&commStateLock);
+      critical_section_enter_blocking(&commStateLock);
       controlState.setpointLux = value;
       critical_section_exit(&commStateLock);
 
@@ -563,7 +567,7 @@ void processIncomingMessage(const can_frame &msg)
       int emptySlot = -1;
       for (int i = 0; i < MAX_STREAM_REQUESTS; i++)
       {
-        if (!remoteStreamRequests[i].active)
+        if (!commState.remoteStreamRequests[i].active)
         {
           emptySlot = i;
           break;
@@ -572,10 +576,12 @@ void processIncomingMessage(const can_frame &msg)
 
       if (emptySlot >= 0)
       {
-        remoteStreamRequests[emptySlot].requesterNode = sourceNode;
-        remoteStreamRequests[emptySlot].variableType = (int)varCode;
-        remoteStreamRequests[emptySlot].active = true;
-        remoteStreamRequests[emptySlot].lastSent = 0;
+        critical_section_enter_blocking(&commStateLock);
+        commState.remoteStreamRequests[emptySlot].requesterNode = sourceNode;
+        commState.remoteStreamRequests[emptySlot].variableType = (int)varCode;
+        commState.remoteStreamRequests[emptySlot].active = true;
+        commState.remoteStreamRequests[emptySlot].lastSent = 0;
+        critical_section_exit(&commStateLock);
       }
     }
     else if (controlType == 12)
@@ -584,11 +590,13 @@ void processIncomingMessage(const can_frame &msg)
       // Find and deactivate the matching stream request
       for (int i = 0; i < MAX_STREAM_REQUESTS; i++)
       {
-        if (remoteStreamRequests[i].active &&
-            remoteStreamRequests[i].requesterNode == sourceNode &&
-            remoteStreamRequests[i].variableType == (int)varCode)
+        if (commState.remoteStreamRequests[i].active &&
+          commState.remoteStreamRequests[i].requesterNode == sourceNode &&
+          commState.remoteStreamRequests[i].variableType == (int)varCode)
         {
-          remoteStreamRequests[i].active = false;
+          critical_section_enter_blocking(&commStateLock);
+          commState.remoteStreamRequests[i].active = false;
+          critical_section_exit(&commStateLock);
         }
       }
     }
@@ -605,7 +613,7 @@ void processIncomingMessage(const can_frame &msg)
     }
     else if (controlType == 14)
     { // Set filter enable/disable
-      critical_section_enter(&commStateLock);
+      critical_section_enter_blocking(&commStateLock);
       sensorState.filterEnabled = (value != 0.0f);
       critical_section_exit(&commStateLock);
       if (canMonitorEnabled)
@@ -632,25 +640,27 @@ void processIncomingMessage(const can_frame &msg)
         responseValue = computeEnergyFromBuffer();
         break;
       case 23: // Duty cycle
-        responseValue = dutyCycle;
+        critical_section_enter_blocking(&commStateLock);
+        responseValue = controlState.dutyCycle;
+        critical_section_exit(&commStateLock);
         break;
       case 24: // luminaireState state
-        critical_section_enter(&commStateLock);
+        critical_section_enter_blocking(&commStateLock);
         responseValue = static_cast<float>(controlState.luminaireState);
         critical_section_exit(&commStateLock);
         break;
       case 25: // Anti-windup state
-        critical_section_enter(&commStateLock);
+        critical_section_enter_blocking(&commStateLock);
         responseValue = controlState.antiWindup ? 1.0f : 0.0f;
         critical_section_exit(&commStateLock);
         break;
       case 26: // Feedback control state
-        critical_section_enter(&commStateLock);
+        critical_section_enter_blocking(&commStateLock);
         responseValue = controlState.feedbackControl ? 1.0f : 0.0f;
-        critical_section_enter(&commStateLock);
+        critical_section_exit(&commStateLock);
         break;
       case 27: // Reference illuminance
-        critical_section_enter(&commStateLock);
+        critical_section_enter_blocking(&commStateLock);
         responseValue = controlState.setpointLux;
         critical_section_exit(&commStateLock);
         break;

@@ -15,10 +15,6 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import os
-import torch
-import torch.nn as nn
-from torch.utils.data import Dataset, DataLoader
-from sklearn.preprocessing import StandardScaler
 
 # ============================================================================================================================================
 # Parâmetros Globais
@@ -116,9 +112,29 @@ def pf3ph(t, z, si, vr, el, ni, al, s, nBUS):
 # ============================================================================================================================================
 # Função para criar e obter as medições
 # ============================================================================================================================================
-def get_measurements():
+def get_measurements(measured_node_index=3):
+    """
+    Obtém as medições de tensão de um nó específico da rede.
+    
+    Parâmetros:
+    measured_node_index - índice do nó onde são realizadas as medições (padrão: 3, que corresponde ao nó 4)
+    
+    Retorna:
+    Y - vetor de tensões medidas (3M)
+    X - matriz auxiliar
+    v - matriz auxiliar
+    dv_abs - variações de tensão para visualização
+    al - ângulo de fase
+    voltages - tensões medidas para visualização
+    loads - cargas dos clientes
+    """
     # Obter dados
     s, topo, nBUS, z, vr, el, ni = data()
+    
+    # Validar o índice do nó de medição
+    if measured_node_index < 0 or measured_node_index >= nBUS:
+        print(f"Aviso: Índice de nó inválido ({measured_node_index+1}). Usando nó 4 como padrão.")
+        measured_node_index = 3  # Valor padrão: nó 4 (índice 3)
     
     # Ângulo de fase
     al = np.exp(np.multiply(np.multiply(complex(0,-1),2/3),np.pi))
@@ -140,23 +156,24 @@ def get_measurements():
                                                                           # ligado ao Bus 2 na Fase 3
         mvp = pf3ph(topo, z, si, vr, el, ni, al, s, nBUS)
         noise = 1 + noiseFactor * np.random.randn(3)
-        mvp[:,3] = np.multiply(mvp[:,3], noise)                       # Adicionar ruído às tensões
-        Y[3*(i):3*(i)+3] = mvp[:,3]                                  # Guardar as tensões na matriz Y
-        dv_abs[i,:] = vr - np.abs(mvp[:,3])                            # Variações de tensão (apenas para plotar)
+        # Usar o nó especificado pelo parâmetro measured_node_index
+        mvp[:,measured_node_index] = np.multiply(mvp[:,measured_node_index], noise)  # Adicionar ruído às tensões
+        Y[3*(i):3*(i)+3] = mvp[:,measured_node_index]                                # Guardar as tensões na matriz Y
+        dv_abs[i,:] = vr - np.abs(mvp[:,measured_node_index])                        # Variações de tensão (para plotar)
         
         # Armazenar valores para visualização
-        voltages[i, :] = np.abs(mvp[:,3])  # Magnitudes das tensões
+        voltages[i, :] = np.abs(mvp[:,measured_node_index])  # Magnitudes das tensões do nó especificado
 
     Volt = np.reshape(Y, (m,3))   
 
-    print('As tensões medidas nos PMUs são:\n', Volt)
+    #print(f'As tensões medidas nos PMUs do nó {measured_node_index+1} são:\n', Volt)
 
     return Y, X, v, dv_abs, al, voltages, loads
 
 # ============================================================================================================================================
 # Função para criar a matriz X e o vetor y para o problema de mínimos quadrados
 # ============================================================================================================================================
-def build_regression_matrices(Y, al, s):
+def build_regression_matrices(Y, al, s, normalize=False):
     """
     Constrói a matriz X (3M x 3N) e o vetor y (3M x 1) para o problema de mínimos quadrados
     
@@ -164,6 +181,7 @@ def build_regression_matrices(Y, al, s):
     Y - vetor de tensões medidas (3M)
     al - ângulo de fase
     s - matriz de consumo (M x N)
+    normalize - se True, normaliza as colunas da matriz X (padrão: False)
     
     Retorna:
     X - matriz de regressão (3M x 3N)
@@ -201,8 +219,17 @@ def build_regression_matrices(Y, al, s):
             # Onde Z é a matriz de impedância/deslocamento e s_ij é o consumo do cliente j no tempo i
             X[3*i:3*i+3, 3*j:3*j+3] = Z * s[i, j]
     
-    print("Matriz X construída com dimensão:", X.shape)
-    print("Vetor y construído com dimensão:", y.shape)
+    # Normalização das colunas da matriz X (opcional)
+    if normalize:
+        # Para cada cliente j
+        for j in range(N):
+            # Normalizar cada bloco 3x3 da matriz X
+            for k in range(3):
+                col_idx = 3*j + k
+                # Normalização L2 da coluna
+                col_norm = np.linalg.norm(X[:, col_idx])
+                if col_norm > 0:
+                    X[:, col_idx] = X[:, col_idx] / col_norm
     
     return X, y
 
@@ -238,30 +265,22 @@ def solve_and_identify(X, y, n_clients):
     # Identificação das fases: argmax da parte real
     phases = np.argmax(beta_real, axis=1) + 1
     
-    
-    # Impressão dos resultados
-    print("\nCoeficientes beta (complexos) para cada cliente:")
-    print(beta_matrix)
-    
-    print("\nParte real dos coeficientes beta:")
-    print(beta_real)
-    
-    print("\nMagnitudes dos coeficientes beta:")
-    print(beta_abs)
-    
-    print("\nFases identificadas para cada cliente:")
+    print("\nCoeficientes beta (parte real) para cada cliente:")
+    phase_names = ["A", "B", "C"]
     for i in range(n_clients):
-        phase_name = ["A", "B", "C"][phases[i]-1]
-        print(f"Cliente {i+1}: Fase {phases[i]} (Fase {phase_name})")
+        print(f"Cliente {i+1}: [{beta_real[i, 0]:.4f}, {beta_real[i, 1]:.4f}, {beta_real[i, 2]:.4f}] -> Fase {phases[i]} ({phase_names[phases[i]-1]})")
     
     return beta_matrix, phases
 
 # ============================================================================================================================================
-# Função para cálculo de fase usando mínimos quadrados
+# Funções para cálculo de fase usando mínimos quadrados e visualização dos resultados
 # ============================================================================================================================================
-def phase_id_least_squares():
+def phase_id_least_squares(normalize=True):
     """
     Identificação de fase usando o método dos mínimos quadrados
+    
+    Parâmetros:
+    normalize - se True, normaliza as colunas da matriz X (padrão: True)
     
     Retorna:
     beta_matrix - matriz de coeficientes (N x 3)
@@ -270,7 +289,7 @@ def phase_id_least_squares():
     voltages - tensões medidas (M x 3)
     loads - cargas dos clientes (M x N)
     """
-    # Obter dados
+    # Obter dados com escalamento opcional
     s, topo, nBUS, z, vr, el, ni = data()
     
     # Obter medições
@@ -279,112 +298,17 @@ def phase_id_least_squares():
     # Número de clientes
     n_clients = loads.shape[1]
     
-    # Construir a matriz X e o vetor y
-    X, y = build_regression_matrices(Y, al, loads)
+    # Construir a matriz X e o vetor y com normalização opcional
+    X, y = build_regression_matrices(Y, al, loads, normalize)
     
     # Resolver o sistema e identificar as fases
     beta_matrix, phases = solve_and_identify(X, y, n_clients)
-    
+
     # Calcular magnitudes para fins de visualização
     beta_abs = np.abs(beta_matrix)
     
     return beta_matrix, beta_abs, phases, voltages, loads
 
-# ============================================================================================================================================
-# DESAFIO EXTRA 2 - Função para implementar diferentes valores de ruído no método dos mínimos quadrados
-# ============================================================================================================================================
-def compare_noise_impact_on_ls(seeds=[0, 1, 2, 3, 4]):
-    """
-    Avalia a robustez do modelo LS a diferentes níveis de ruído.
-    Mede a percentagem de acertos comparando com o caso sem ruído.
-    """
-    print("\n--- Robustez do modelo LS a ruído ---")
-    noise_values = [0.0, 0.01, 0.03, 0.05, 0.1, 0.15, 0.2]
-    al_ref = np.exp(np.multiply(np.multiply(complex(0, -1), 2 / 3), np.pi))
-
-    reference_phases = None  # Fases com ruído 0 (referência)
-    ls_means = []
-    ls_stds = []
-
-    for noise in noise_values:
-        globals()['noiseFactor'] = noise
-        print(f"\n>> Noise = {noise}")
-
-        accs = []
-
-        for seed in seeds:
-            torch.manual_seed(seed)
-            np.random.seed(seed)
-
-            _, _, ls_phases, voltages, loads = phase_id_least_squares()
-
-            if noise == 0.0 and reference_phases is None:
-                reference_phases = ls_phases  # Save baseline
-                accs.append(100.0)
-                continue
-
-            correct = [int(ls_phases[i]) == int(reference_phases[i]) for i in range(4)]
-            acc = 100 * sum(correct) / 4
-            accs.append(acc)
-
-        ls_mean = np.mean(accs)
-        ls_std = np.std(accs)
-
-        ls_means.append(ls_mean)
-        ls_stds.append(ls_std)
-
-        print(f"LS Accuracy vs no-noise: {ls_mean:.2f}% ± {ls_std:.2f}%")
-
-    print("\n=== RESUMO FINAL ===")
-    for i, noise in enumerate(noise_values):
-        print(f"Noise: {noise:.2f} | LS Accuracy: {ls_means[i]:.2f}% ± {ls_stds[i]:.2f}%")
-
-    return noise_values, ls_means, ls_stds
-
-
-def plot_noise_vs_accuracy_combined(noise_values, ls_acc, nn_acc, ls_std=None, nn_std=None):
-    plt.figure(figsize=(10, 6))
-
-    # Plot LS
-    plt.errorbar(noise_values, ls_acc, yerr=ls_std, fmt='o-', label='Least Squares (LS)', capsize=4)
-
-    # Plot NN
-    plt.errorbar(noise_values, nn_acc, yerr=nn_std, fmt='s--', label='Neural Network (NN)', capsize=4)
-
-    plt.title("Robustez dos métodos vs Nível de Ruído")
-    plt.xlabel("Fator de Ruído")
-    plt.ylabel("Precisão (%)")
-    plt.ylim(0, 105)
-    plt.grid(True, alpha=0.3)
-    plt.legend()
-    plt.tight_layout()
-    
-    # Guardar e mostrar
-    if not os.path.exists("plots"):
-        os.makedirs("plots")
-    plt.savefig("plots/noise_vs_combined_accuracy.png")
-    plt.show()
-
-    return noise_values, ls_acc, nn_acc, ls_std, nn_std
-
-
-def plot_noise_vs_accuracy(noise_values, ls_acc, _, ls_std=None):
-    plt.figure(figsize=(10, 6))
-    plt.errorbar(noise_values, ls_acc, yerr=ls_std, fmt='o-', label='Least Squares (LS)', capsize=4)
-
-    plt.title("Robustez do LS vs Nível de Ruído")
-    plt.xlabel("Fator de Ruído")
-    plt.ylabel("Precisão (%)")
-    plt.ylim(0, 105)
-    plt.grid(True, alpha=0.3)
-    plt.legend()
-    plt.tight_layout()
-    plt.savefig("plots/noise_vs_ls_accuracy.png")
-    plt.show()
-
-# ============================================================================================================================================
-# Função para plotar os resultados
-# ============================================================================================================================================
 def plot_results(voltages, loads):
     """
     Gera dois gráficos em subplots verticais com estilo de step plot:
@@ -398,34 +322,38 @@ def plot_results(voltages, loads):
     # Criar figura com dois subplots verticais
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 10), sharex=True)
     
-    # Configurar eixo X comum
-    x = range(len(voltages))
+    # Configurar eixo X comum - use integers for x-axis
+    x = np.arange(len(voltages))
     
     # Plot 1: Variação das tensões terminais por fase (estilo step plot)
-    ax1.step(x, 1 - voltages[:, 0], where='mid', linewidth=2, color='blue', label='Fase A')
-    ax1.step(x, 1 - voltages[:, 1], where='mid', linewidth=2, color='orange', label='Fase B')
-    ax1.step(x, 1 - voltages[:, 2], where='mid', linewidth=2, color='green', label='Fase C')
+    ax1.step(x, 1 - voltages[:, 0], where='post', linewidth=2, color='blue', label='Fase A')
+    ax1.step(x, 1 - voltages[:, 1], where='post', linewidth=2, color='orange', label='Fase B')
+    ax1.step(x, 1 - voltages[:, 2], where='post', linewidth=2, color='green', label='Fase C')
     
     ax1.set_title('Variação das tensões terminais por fase', fontsize=14)
-    ax1.set_ylabel('Tensão [pu]', fontsize=12)
+    ax1.set_ylabel('Queda de Tensão [pu]', fontsize=12)
     ax1.set_xlim(-0.5, len(voltages)-0.5)
+    
+    # Set up proper ticks at integer positions
     ax1.set_xticks(x)
-    ax1.set_xticklabels([f"{i}" for i in x])
+    # Convert to time labels (each step is 15 minutes)
+    time_labels = [f"{i*15}" for i in x]
+    ax1.set_xticklabels(time_labels)
+    
     ax1.grid(True, alpha=0.3)
     ax1.legend(fontsize=10, loc='best')
     
     # Plot 2: Leituras dos consumidores (estilo step plot)
-    ax2.step(x, loads[:, 0], where='mid', linewidth=2, color='blue', label='Carga 1')
-    ax2.step(x, loads[:, 1], where='mid', linewidth=2, color='orange', label='Carga 2')
-    ax2.step(x, loads[:, 2], where='mid', linewidth=2, color='green', label='Carga 3')
-    ax2.step(x, loads[:, 3], where='mid', linewidth=2, color='red', label='Carga 4')
+    ax2.step(x, loads[:, 0], where='post', linewidth=2, color='blue', label='Carga 1')
+    ax2.step(x, loads[:, 1], where='post', linewidth=2, color='orange', label='Carga 2')
+    ax2.step(x, loads[:, 2], where='post', linewidth=2, color='green', label='Carga 3')
+    ax2.step(x, loads[:, 3], where='post', linewidth=2, color='red', label='Carga 4')
     
     ax2.set_title('Leituras dos consumidores', fontsize=14)
-    ax2.set_xlabel('Marca temporal [15min]', fontsize=12)
+    ax2.set_xlabel('Tempo [min]', fontsize=12)
     ax2.set_ylabel('Potência [pu]', fontsize=12)
-    ax2.set_xlim(-0.5, len(voltages)-0.5)
-    ax2.set_xticks(x)
-    ax2.set_xticklabels([f"{i*15}" for i in x])  # Marca temporal [15min]
+    
+    # Same x-axis setup as the first plot (handled by sharex=True)
     ax2.grid(True, alpha=0.3)
     ax2.legend(fontsize=10, loc='best')
     
@@ -441,31 +369,135 @@ def plot_results(voltages, loads):
     fig.savefig('plots/phase_id_results.png')
 
 # ============================================================================================================================================
-# Função para comparação das implementações
+# DESAFIO EXTRA 1 - Função para cálculo de fase alterando o indicador para o nó 1
 # ============================================================================================================================================
-def phase_id_least_squares_with_data(voltages, loads, al):
-    """Version of phase_id_least_squares that accepts pre-generated data"""
-    # Get other necessary data
+def switch_indicator_position(node_index=0, normalize=True):
+    '''
+    Altera a posição do indicador de fase para o nó especificado e recalcula as fases dos clientes.
+    
+    Argumentos:
+    - node_index: índice do nó a usar como indicador (0, 1, 2 ou 3)
+    - normalize: se True, normaliza as colunas da matriz X (padrão: True)
+    - scale_factor: fator de escala para as cargas (padrão: 20.0)
+    
+    Retorna:
+    - beta_matrix: matriz dos coeficientes do modelo LS
+    - beta_abs: magnitudes dos coeficientes (|beta|)
+    - phases: fases identificadas para os clientes
+    - voltages: tensões medidas
+    - loads: cargas dos clientes
+    '''
+    # Obter dados com escalamento opcional
     s, topo, nBUS, z, vr, el, ni = data()
-    
-    # Reconstruct Y from voltages
-    Y = np.zeros((3*m), dtype=complex)
-    for i in range(m):
-        # Convert real voltages back to complex with phase angles
-        Y[3*i] = voltages[i, 0]  # Phase A (magnitude only)
-        Y[3*i+1] = voltages[i, 1] * al  # Phase B with 120° phase shift
-        Y[3*i+2] = voltages[i, 2] * al**2  # Phase C with 240° phase shift
-    
-    # Number of clients
+
+    # Obter medições com novo indicador
+    Y, _, v, dv_abs, al, voltages, loads = get_measurements(node_index)
+
+    # Número de clientes
     n_clients = loads.shape[1]
-    
-    # Build regression matrices and solve
-    X, y = build_regression_matrices(Y, al, loads)
+
+    # Construir a matriz X e o vetor y com normalização opcional
+    X, y = build_regression_matrices(Y, al, loads, normalize)
+
+    # Resolver o sistema e identificar as fases
     beta_matrix, phases = solve_and_identify(X, y, n_clients)
+
+    # Calcular magnitudes para visualização
     beta_abs = np.abs(beta_matrix)
-    
-    return beta_matrix, beta_abs, phases
-   
+
+    return beta_matrix, beta_abs, phases, voltages, loads
+# ============================================================================================================================================
+# DESAFIO EXTRA 2 - Função para implementar diferentes valores de ruído no método dos mínimos quadrados
+# ============================================================================================================================================
+def compare_noise_impact_on_ls(seeds=[0, 1, 2, 3, 4]):
+    """
+    Avalia a robustez do modelo LS a diferentes níveis de ruído.
+    Mede a percentagem de acertos comparando com o caso sem ruído.
+    """
+    print("\n--- Robustez do modelo LS a ruído ---")
+    noise_values = [0.0, 0.0005, 0.001, 0.0015, 0.002, 0.0025, 0.003, 0.0035, 0.004, 0.0045, 0.005]
+    al_ref = np.exp(np.multiply(np.multiply(complex(0, -1), 2 / 3), np.pi))
+
+    reference_phases = None  # Fases com ruído 0 (referência)
+    ls_means_1 = []
+    ls_stds_1 = []
+    ls_means_4 = []
+    ls_stds_4 = []
+
+    for noise in noise_values:
+        globals()['noiseFactor'] = noise
+        print(f"\n>> Noise = {noise}")
+
+        accs = []
+
+        # Nó = 4
+        for seed in seeds:
+            np.random.seed(seed)
+
+            _, _, ls_phases, voltages, loads = phase_id_least_squares()
+
+            if noise == 0.0 and reference_phases is None:
+                reference_phases = ls_phases  # Save baseline
+                accs.append(100.0)
+                continue
+
+            correct = [int(ls_phases[i]) == int(reference_phases[i]) for i in range(4)]
+            acc = 100 * sum(correct) / 4
+            accs.append(acc)
+
+        ls_mean_4 = np.mean(accs)
+        ls_std_4 = np.std(accs)
+
+        ls_means_4.append(ls_mean_4)
+        ls_stds_4.append(ls_std_4) 
+
+        print(f"LS Accuracy (node 4) vs no-noise: {ls_mean_4:.2f}% ± {ls_std_4:.2f}%")
+
+        # Nó = 1
+        for seed in seeds:
+            np.random.seed(seed)
+
+            _, _, ls_phases, voltages, loads = switch_indicator_position()
+
+            if noise == 0.0 and reference_phases is None:
+                reference_phases = ls_phases  # Save baseline
+                accs.append(100.0)
+                continue
+
+        correct = [int(ls_phases[i]) == int(reference_phases[i]) for i in range(4)]
+        acc = 100 * sum(correct) / 4
+        accs.append(acc)
+
+        ls_mean_1 = np.mean(accs)
+        ls_std_1 = np.std(accs)
+
+        ls_means_1.append(ls_mean_1)
+        ls_stds_1.append(ls_std_1)
+
+        print(f"LS Accuracy (node 1) vs no-noise: {ls_mean_1:.2f}% ± {ls_std_1:.2f}%")
+
+    return noise_values, ls_means_1, ls_means_4
+
+def plot_noise_vs_accuracy(noise_values, ls_means_1, ls_means_4):
+    plt.figure(figsize=(10, 6))
+
+    plt.errorbar(noise_values, ls_means_1, fmt='o-', label='Nó 1', color='blue', capsize=5)
+    plt.errorbar(noise_values, ls_means_4, fmt='o-', label='Nó 4', color='red', capsize=5)
+
+    plt.title("Robustez do LS vs Nível de Ruído")
+    plt.xlabel("Fator de Ruído")
+    plt.ylabel("Precisão (%)")
+    plt.ylim(0, 105)
+    plt.grid(True, alpha=0.3)
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig("plots/noise_vs_ls_accuracy.png")
+    plt.show()
+
+    # Plot 
+
+    return None
+
 # ============================================================================================================================================
 # Função Principal
 # ============================================================================================================================================
@@ -478,8 +510,8 @@ def show_menu():
     print("\nEscolha uma opção:")
     print("0 - Sair")
     print("1 - Método dos Mínimos Quadrados")
-    print("2 - Mudar onde o indicador esta na rede LV po lo mais a meio SPOILER: vai ser pior porque não tem tanta informação")
-    print("3 - Precuisão do modelo para diferentes valores de ruído")
+    print("2 - Alteração do Indicador de Fase")
+    print("3 - Variação do Ruído")
 
     try:
         option_input = input("\nOpção: ").strip()
@@ -525,15 +557,22 @@ def main():
             print("\nOs gráficos foram gerados com sucesso!")
             
         elif option == 2:
-
-            print("\nA Mudar onde o indicador esta na rede LV po lo mais a meio SPOILER: vai ser pior porque não tem tanta informação")
-
+            # Alterar a posição do indicador de fase para o nó 1
+            beta_matrix, beta_abs, ls_phases, voltages, loads = switch_indicator_position(1)  # Índice 0 = nó 1
+            print("\nAs fases foram recalculadas com sucesso!")
+            
+            # Gerar gráficos
+            plot_results(voltages, loads)
+            print("\nOs gráficos foram gerados com sucesso!")
 
         elif option == 3:
             # Comparar robustez ao ruído
-            noise_values, ls_means, ls_stds = compare_noise_impact_on_ls()
-            plot_noise_vs_accuracy(noise_values, ls_means, None, ls_stds)
-            print("\nGráfico gerado com sucesso!")
+            noise_values, ls_means_1, ls_means_4 = compare_noise_impact_on_ls()
+            print("\nOs resultados foram calculados com sucesso!")
+
+            # Gerar gráfico
+            plot_noise_vs_accuracy(noise_values, ls_means_1, ls_means_4)
+            print("\nO gráfico foi gerado com sucesso!")
 
         else:
             print("Opção inválida. Tente novamente.")
@@ -541,6 +580,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-# Outra opção é em vez de só ter um medidor k, ter dois na rede LV!
-# Outra ainda é aumentar a potência num cliente e ver se isso melhora a precisão ou não!

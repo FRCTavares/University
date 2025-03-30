@@ -3,6 +3,12 @@
 
 #include <Arduino.h>
 
+// Define constants at the top of the header file
+#define CMD_MAX_LENGTH 64
+#define MAX_TOKENS 6
+#define TOKEN_MAX_LENGTH 16
+#define MAX_PENDING_QUERIES 10
+
 //=============================================================================
 // COMMAND INTERFACE MODULE
 //=============================================================================
@@ -57,5 +63,25 @@ void stopStream(const char *var, int index);
  * @return CSV string of historical values
  */
 void getLastMinuteBuffer(const char *var, int index, char *buffer, size_t bufferSize);
+
+/**
+ * Parse a command line into tokens
+ * 
+ * @param cmdLine The command line to parse
+ * @param tokens Array to store tokens
+ * @param maxTokens Maximum number of tokens to extract
+ * @return Number of tokens found
+ */
+int parseTokensChar(const char *cmdLine, char tokens[][TOKEN_MAX_LENGTH], int maxTokens);
+
+/**
+ * Print help information for all available commands
+ */
+void printHelp();
+
+/**
+ * Initialize the pending queries array
+ */
+void initPendingQueries();
 
 #endif // COMMANDINTERFACE_H

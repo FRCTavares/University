@@ -68,7 +68,7 @@ float PIController::compute(float setpoint, float measurement)
 {
   // Get current ledGain to use as the basis for Kp
   float dynamicKp;
-  critical_section_enter(&commStateLock);
+  critical_section_enter_blocking(&commStateLock);
   dynamicKp = deviceConfig.ledGain;
   critical_section_exit(&commStateLock);
 
@@ -129,7 +129,7 @@ float PIController::compute(float setpoint, float measurement)
   // Only apply anti-windup correction if the feature is enabled
   // Get the anti-windup flag from controlState with proper synchronization
   bool useAntiWindup;
-  critical_section_enter(&commStateLock);
+  critical_section_enter_blocking(&commStateLock);
   useAntiWindup = controlState.antiWindup;
   critical_section_exit(&commStateLock);
 
@@ -364,7 +364,7 @@ void logData(unsigned long timestampMs, float lux, float duty)
   float externalLux = getExternalIlluminance();
 
   // Save the data into the log buffer:
-  critical_section_enter(&commStateLock);
+  critical_section_enter_blocking(&commStateLock);
   logBuffer[logIndex].timestamp = timestampMs;
   logBuffer[logIndex].lux = lux;
   logBuffer[logIndex].duty = duty;
@@ -581,9 +581,6 @@ int findClosestEntry(unsigned long timestamp)
 // Power consumption parameters
 const float Pmax = 0.08755; // Maximum LED power in Watts
 
-// External references
-extern float controlState.setpointLux; // Reference illuminance target from main.ino
-
 //=============================================================================
 // METRICS COMPUTATION AND REPORTING
 //=============================================================================
@@ -715,7 +712,7 @@ float computeVisibilityErrorFromBuffer()
 
     // Only accumulate error when below setpoint
     // (we care about insufficient lighting, not excess)
-    critical_section_enter(&commStateLock);
+    critical_section_enter_blocking(&commStateLock);
     if (measuredLux < controlState.setpointLux)
     {
       totalErr += (controlState.setpointLux - measuredLux);

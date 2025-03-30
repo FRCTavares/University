@@ -18,51 +18,6 @@
 #include "pico/multicore.h"
 #include "Globals.h"
 
-// Device-specific configuration (differs between Picos)
-struct DeviceConfig
-{
-  uint8_t nodeId;          // Unique ID for this device
-  float ledGain;           // Calibrated LED contribution gain
-  float calibrationOffset; // LDR sensor calibration offset
-  // PID tuning parameters
-  float pidKp;
-  float pidKi;
-  float pidBeta;
-};
-
-// Sensor subsystem state
-struct SensorState
-{
-  float rawLux;              // Unfiltered illuminance
-  float filteredLux;         // Filtered illuminance
-  float lastFilteredLux;     // Previous filtered reading for EMA
-  float baselineIlluminance; // Background illuminance with LED off
-  float externalLuxAverage;  // Estimated external light contribution
-  bool filterEnabled;        // Enable/disable filtering
-};
-
-// Control system state
-struct ControlState
-{
-  float setpointLux;             // Target illuminance
-  float dutyCycle;               // Current LED duty cycle [0-1]
-  LuminaireState luminaireState; // Current operating state
-  bool feedbackControl;          // Feedback vs manual control
-  bool antiWindup;               // Anti-windup for PID
-};
-
-// Communication state (accessed by both cores)
-struct CommState
-{
-  bool streamingEnabled;
-  char *streamingVar;
-  int streamingIndex;
-  unsigned long lastStreamTime;
-  // Remote streaming requests
-  StreamRequest remoteStreamRequests[MAX_STREAM_REQUESTS];
-  // Atomic flag to indicate new CAN messages
-  atomic_flag hasNewMessages;
-};
 
 #define MSG_SEND_SENSOR 1
 #define MSG_SEND_CONTROL 2
@@ -74,13 +29,6 @@ SensorState sensorState;
 ControlState controlState;
 CommState commState;
 
-void updateSharedData(float value)
-{
-  critical_section_enter(&commStateLock);
-  // Update shared data here
-  critical_section_exit(&commStateLock);
-}
-
 struct CoreMessage
 {
   uint8_t msgType;  // Message type identifier
@@ -90,7 +38,6 @@ struct CoreMessage
 };
 
 queue_t core0to1queue;
-
 queue_t core1to0queue;
 
 //=============================================================================
@@ -100,9 +47,6 @@ queue_t core1to0queue;
 //-----------------------------------------------------------------------------
 // Sensor Configuration
 //-----------------------------------------------------------------------------
-#define VCC 3.3                  // Supply voltage for analog reference
-#define MY_ADC_RESOLUTION 4095.0 // 12-bit ADC resolution
-#define FIXED_RESISTOR 10000.0   // Fixed resistor in voltage divider (ohms)
 
 // LDR Calibration parameters (for lux conversion)
 const float R10 = 225000.0;       // LDR resistance at ~10 lux (ohms)
@@ -135,7 +79,7 @@ const float Kp = 20;    // Initial proportional gain (will be replaced by ledGai
 const float Ki = 400;   // Integral gain
 const float DT = 0.01;  // Sampling period (seconds)
 const float BETA = 0.8; // Setpoint weighting factor (0.0-1.0)
-
+PIController pid(Kp, Ki, BETA, DT); // Create pid controller with initial values
 //-----------------------------------------------------------------------------
 // Power Consumption Model
 //-----------------------------------------------------------------------------
@@ -199,9 +143,10 @@ NeighborInfo neighbors[MAX_NEIGHBORS]; // Neighbor state array
 void changeState(LuminaireState newState)
 {
   // Don't do anything if state is unchanged
-  critical_section_enter(&commStateLock);
+  critical_section_enter_blocking(&commStateLock);
   if (newState == controlState.luminaireState)
   {
+    critical_section_exit(&commStateLock); 
     return;
   }
 
@@ -256,7 +201,7 @@ float readLux()
   bool isFilterEnabled;
   float lastFiltered;
 
-  critical_section_enter(&commStateLock);
+  critical_section_enter_blocking(&commStateLock);
   isFilterEnabled = sensorState.filterEnabled;
   lastFiltered = sensorState.lastFilteredLux;
   critical_section_exit(&commStateLock);
@@ -295,7 +240,7 @@ float readLux()
     return 0.0; // No valid readings
 
   // Store the raw lux (average of all samples without further filtering)
-  critical_section_enter(&commStateLock);
+  critical_section_enter_blocking(&commStateLock);
   sensorState.rawLux = sum / count;
   critical_section_exit(&commStateLock);
 
@@ -316,7 +261,6 @@ float readLux()
       variance += sq(samples[i] - mean);
     }
   }
-  variance /= count;
   float stdDev = sqrt(variance);
 
   // 3. Filter outliers and recalculate mean
@@ -335,22 +279,22 @@ float readLux()
   float filteredMean = (filteredCount > 0) ? filteredSum / filteredCount : mean;
 
   // 4. Apply exponential moving average (EMA) filter for temporal smoothing
-  if (lastFilteredLux < 0)
+  if (lastFiltered < 0)
   {
-    lastFilteredLux = filteredMean; // First valid reading
+    lastFiltered = filteredMean; // First valid reading
   }
   else
   {
-    lastFilteredLux = ALPHA * filteredMean + (1.0 - ALPHA) * lastFilteredLux;
+    lastFiltered = ALPHA * filteredMean + (1.0 - ALPHA) * lastFiltered;
   }
 
   // 5. Apply calibration offset and safety bounds check
-  float calibratedLux = lastFilteredLux + deviceConfig.calibrationOffset;
+  float calibratedLux = lastFiltered+ deviceConfig.calibrationOffset;
   if (calibratedLux < 0.0)
     calibratedLux = 0.0;
 
   // Store in sensorState with proper synchronization
-  critical_section_enter(&commStateLock);
+  critical_section_enter_blocking(&commStateLock);
   sensorState.rawLux = sum / count;
   sensorState.lastFilteredLux = calibratedLux;
   critical_section_exit(&commStateLock);
@@ -379,7 +323,7 @@ void calibrateLuxSensor(float knownLux)
     float resistance = FIXED_RESISTOR * (VCC / voltage - 1.0);
     float logR = log10(resistance);
     float logLux = (logR - LDR_B) / LDR_M;
-    critical_section_enter(&commStateLock);
+    critical_section_enter_blocking(&commStateLock);
     sensorState.rawLux = pow(10, logLux);
     critical_section_exit(&commStateLock);
 
@@ -419,7 +363,7 @@ float getExternalIlluminance()
   float currentDuty;
 
   // Access shared data safely
-  critical_section_enter(&commStateLock);
+  critical_section_enter_blocking(&commStateLock);
   totalLux = sensorState.filteredLux;   // Current measured illuminance
   currentDuty = controlState.dutyCycle; // Current LED duty cycle
   float ledGain = deviceConfig.ledGain; // LED contribution factor
@@ -457,7 +401,7 @@ void adaptToExternalLight()
   // Get current external illuminance
   float externalLux = getExternalIlluminance();
 
-  critical_section_enter(&commStateLock);
+  critical_section_enter_blocking(&commStateLock);
   bool feedback = controlState.feedbackControl;
   critical_section_exit(&commStateLock);
   if (previousExternal < 0 || !feedback)
@@ -470,7 +414,7 @@ void adaptToExternalLight()
   if (abs(externalLux - previousExternal) > EXTERNAL_LIGHT_CHANGE_THRESHOLD)
   {
     // Calculate how much of our setpoint is satisfied by external light
-    critical_section_enter(&commStateLock);
+    critical_section_enter_blocking(&commStateLock);
     float externalContribution = min(externalLux, controlState.setpointLux);
     float requiredFromLED = max(0.0f, controlState.setpointLux - externalContribution);
     critical_section_exit(&commStateLock);
@@ -590,7 +534,7 @@ void coordinateWithNeighbors()
   if (neighborContribution > 0.5)
   { // Only adjust if contribution is significant
     // Adjust our target to account for light from neighbors
-    critical_section_enter(&commStateLock);
+    critical_section_enter_blocking(&commStateLock);
     float adjustedTarget = max(0.0f, controlState.setpointLux - neighborContribution * 0.8);
     critical_section_exit(&commStateLock);
 
@@ -610,7 +554,7 @@ void coordinateWithNeighbors()
  */
 float getPowerConsumption()
 {
-  critical_section_enter(&commStateLock);
+  critical_section_enter_blocking(&commStateLock);
   float duty = controlState.dutyCycle;
   critical_section_exit(&commStateLock);
 
@@ -720,7 +664,7 @@ float calibrateSystem(float referenceValue)
   y1 /= SAMPLES;
 
   // Store baseline illuminance for external light calculation
-  critical_section_enter(&commStateLock);
+  critical_section_enter_blocking(&commStateLock);
   sensorState.baselineIlluminance = y1;
   critical_section_exit(&commStateLock);
 
@@ -801,7 +745,9 @@ void initLEDDriver(int pin)
 
   // Start with LED off
   analogWrite(ledPin, pwmMin);
-  dutyCycle = 0.0; // Use the global duty cycle variable
+  critical_section_enter_blocking(&commStateLock);
+  controlState.dutyCycle = 0.0; // Use the global duty cycle variable
+  critical_section_exit(&commStateLock);
 }
 
 //-----------------------------------------------------------------------------
@@ -830,7 +776,9 @@ void setLEDDutyCycle(float newDutyCycle)
   analogWrite(ledPin, pwmValue);
 
   // Update the global duty cycle
-  dutyCycle = newDutyCycle;
+  critical_section_enter_blocking(&commStateLock);
+  controlState.dutyCycle = newDutyCycle;
+  critical_section_exit(&commStateLock);
 }
 
 /**
@@ -866,7 +814,9 @@ void setLEDPWMValue(int pwmValue)
   analogWrite(ledPin, pwmValue);
 
   // Update global duty cycle to maintain state consistency
-  dutyCycle = (float)pwmValue / pwmMax;
+  critical_section_enter_blocking(&commStateLock);
+  controlState.dutyCycle = (float)pwmValue / pwmMax;
+  critical_section_exit(&commStateLock);
 }
 
 /**
@@ -898,7 +848,7 @@ void setLEDPower(float powerWatts)
  */
 float getLEDDutyCycle()
 {
-  return dutyCycle;
+  return controlState.dutyCycle;
 }
 
 /**
@@ -908,7 +858,7 @@ float getLEDDutyCycle()
  */
 float getLEDPercentage()
 {
-  return dutyCycle * 100.0f;
+  return controlState.dutyCycle * 100.0f;
 }
 
 /**
@@ -918,7 +868,7 @@ float getLEDPercentage()
  */
 int getLEDPWMValue()
 {
-  return (int)(dutyCycle * pwmMax);
+  return (int)(controlState.dutyCycle * pwmMax);
 }
 
 /**
@@ -928,94 +878,96 @@ int getLEDPWMValue()
  */
 float getLEDPower()
 {
-  return dutyCycle * MAX_POWER_WATTS;
+  return controlState.dutyCycle * MAX_POWER_WATTS;
 }
 
 //=============================================================================
 // DATA STREAMING SUBSYSTEM
 //=============================================================================
 
-void startStream(const String &var, int index)
+void startStream(const char* var, int index)
 {
-  critical_section_enter(&commStateLock); // MISSING THIS LINE
+  critical_section_enter_blocking(&commStateLock);
   commState.streamingEnabled = true;
-  commState.streamingVar = var;
+  // Allocate memory for streaming variable if needed
+  if (commState.streamingVar == nullptr) {
+    commState.streamingVar = (char*)malloc(16); // Allocate space for the variable name
+  }
+  strncpy(commState.streamingVar, var, 15);
+  commState.streamingVar[15] = '\0'; // Ensure null termination
   commState.streamingIndex = index;
+  commState.lastStreamTime = millis();
   critical_section_exit(&commStateLock);
-  Serial.println("ack");
 }
 
-void stopStream(const String &var, int index)
+void stopStream(const char* var, int index)
 {
-  critical_section_enter(&commStateLock);
+  critical_section_enter_blocking(&commStateLock);
   commState.streamingEnabled = false;
-  commState.streamingVar = ""; // Clear the variable
+  // Instead of assigning a string literal, we zero out the first byte
+  if (commState.streamingVar != nullptr) {
+    commState.streamingVar[0] = '\0';
+  }
   critical_section_exit(&commStateLock);
-  Serial.print("Stopped streaming ");
-  Serial.print(var);
-  Serial.print(" for node ");
-  Serial.println(index);
 }
+
 /**
  * Process streaming in main loop
  * Sends requested variable at regular intervals
  */
 void handleStreaming()
 {
-  // Use struct members with proper synchronization
-  critical_section_enter(&commStateLock);
+  critical_section_enter_blocking(&commStateLock);
   if (!commState.streamingEnabled || (millis() - commState.lastStreamTime < 500))
   {
     critical_section_exit(&commStateLock);
-    return; // Not streaming or not time to stream yet
+    return;
   }
-
-  unsigned long currentTime = millis();
-  commState.lastStreamTime = currentTime;
-  String var = commState.streamingVar;
+  
+  char* var = commState.streamingVar;
   int index = commState.streamingIndex;
+  commState.lastStreamTime = millis();
   critical_section_exit(&commStateLock);
-
+  
+  if (var == nullptr || var[0] == '\0') return;
+  
   if (strcmp(var, "y") == 0)
   {
     float lux = readLux();
-    Serial.print("s "); // Add "s" prefix
-    Serial.print(var);
-    Serial.print(" ");
+    Serial.print("y ");
     Serial.print(index);
     Serial.print(" ");
-    Serial.print(lux, 2);
-    Serial.print(" ");
-    Serial.println(currentTime); // Add timestamp
+    Serial.println(lux, 2);
   }
   else if (strcmp(var, "u") == 0)
   {
-    critical_section_enter(&commStateLock);
-    float duty = controlState.dutyCycle;
+    Serial.print("u ");
+    Serial.print(index);
+    Serial.print(" ");
+    critical_section_enter_blocking(&commStateLock);
+    Serial.println(controlState.dutyCycle, 4);
     critical_section_exit(&commStateLock);
-
-    Serial.print("s "); // Add "s" prefix
+  }
+  else if (strcmp(var, "p") == 0 || strcmp(var, "V") == 0 || 
+           strcmp(var, "F") == 0 || strcmp(var, "E") == 0)
+  {
+    float power = getPowerConsumption();
     Serial.print(var);
     Serial.print(" ");
     Serial.print(index);
     Serial.print(" ");
-    Serial.print(duty, 4);
-    Serial.print(" ");
-    Serial.println(currentTime); // Add timestamp
-  }
-  else
-    (strcmp(var, "p") == 0)
-    {
-      float power = getPowerConsumption();
-      Serial.print("s "); // Add "s" prefix
-      Serial.print(var);
-      Serial.print(" ");
-      Serial.print(index);
-      Serial.print(" ");
+    if (strcmp(var, "p") == 0) {
       Serial.print(power, 2);
-      Serial.print(" ");
-      Serial.println(currentTime); // Add timestamp
+    } else if (strcmp(var, "F") == 0) { //flicker
+      Serial.print(flickerWithFilter, 2);
+    } else if (strcmp(var, "V") == 0) { //Visibility
+      Serial.print(computeVisibilityErrorFromBuffer(), 2);
+    }else if (strcmp(var, "E") == 0) { //Energy
+      Serial.print(computeEnergyFromBuffer(), 2);
     }
+    unsigned long timeNow = millis();
+    Serial.println(timeNow); // Changed from currentTime
+  }
 }
 
 void handleRemoteStreamRequests()
@@ -1023,13 +975,13 @@ void handleRemoteStreamRequests()
   unsigned long now = millis();
 
   // Check if it's time to send data (every 500ms)
-  critical_section_enter(&commStateLock);
+  critical_section_enter_blocking(&commStateLock);
   StreamRequest *requests = commState.remoteStreamRequests;
   critical_section_exit(&commStateLock);
 
   for (int i = 0; i < MAX_STREAM_REQUESTS; i++)
   {
-    critical_section_enter(&commStateLock);
+    critical_section_enter_blocking(&commStateLock);
     if (!requests[i].active)
     {
       critical_section_exit(&commStateLock);
@@ -1047,7 +999,7 @@ void handleRemoteStreamRequests()
         value = readLux();
         break;
       case 1: // u = duty cycle
-        critical_section_enter(&commStateLock);
+        critical_section_enter_blocking(&commStateLock);
         value = controlState.dutyCycle;
         critical_section_exit(&commStateLock);
         break;
@@ -1063,7 +1015,7 @@ void handleRemoteStreamRequests()
                         requests[i].variableType,
                         value);
 
-      critical_section_enter(&commStateLock);
+      critical_section_enter_blocking(&commStateLock);
       requests[i].lastSent = now;
       critical_section_exit(&commStateLock);
     }
@@ -1081,12 +1033,16 @@ void handleRemoteStreamRequests()
  * @param index Node index
  * @return CSV string of historical values
  */
-String getLastMinuteBuffer(const String &var, int index)
+void getLastMinuteBuffer(const char* var, int index, char* buffer, size_t bufferSize)
 {
   String result = "";
   int count = getLogCount();
   if (count == 0)
-    return result;
+  {
+    strncpy(buffer, "No data available", bufferSize - 1);
+    buffer[bufferSize - 1] = '\0';
+    return;
+  }
 
   LogEntry *logBuffer = getLogBuffer();
   int startIndex = isBufferFull() ? getCurrentIndex() : 0;
@@ -1118,8 +1074,8 @@ String getLastMinuteBuffer(const String &var, int index)
       result += ",";
     }
   }
-
-  return result;
+  strncpy(buffer, result.c_str(), bufferSize - 1);
+  buffer[bufferSize - 1] = '\0'; // Ensure null termination
 }
 
 //=============================================================================
@@ -1157,7 +1113,7 @@ void setup()
   controlState.luminaireState = STATE_UNOCCUPIED;
   controlState.feedbackControl = true;
   controlState.antiWindup = true;
-  controlState.dutyCycle = 0.0;
+  controlState.dutyCycle = 0.0; 
 
   commState.streamingEnabled = false;
 
@@ -1189,12 +1145,12 @@ void loop()
 
   // (C) Read sensor data safely
   float lux = readLux();
-  critical_section_enter(&commStateLock);
+  critical_section_enter_blocking(&commStateLock);
   sensorState.filteredLux = lux;
   critical_section_exit(&commStateLock);
 
   // (D) Control system
-  critical_section_enter(&commStateLock);
+  critical_section_enter_blocking(&commStateLock);
   LuminaireState state = controlState.luminaireState;
   bool feedback = controlState.feedbackControl;
   float setpoint = controlState.setpointLux;
@@ -1211,14 +1167,14 @@ void loop()
   }
   else
   {
-    critical_section_enter(&commStateLock);
+    critical_section_enter_blocking(&commStateLock);
     float duty = controlState.dutyCycle;
     critical_section_exit(&commStateLock);
     setLEDDutyCycle(duty);
   }
 
   // Update duty cycle after control action
-  critical_section_enter(&commStateLock);
+  critical_section_enter_blocking(&commStateLock);
   controlState.dutyCycle = getLEDDutyCycle();
   critical_section_exit(&commStateLock);
 
@@ -1247,8 +1203,8 @@ void applyDeviceConfig(const DeviceConfig &config)
   Serial.print(", Kp=");
   Serial.print(config.pidKp);
   Serial.print(", Ki=");
-  k
-      Serial.println(config.pidKi);
+  
+  Serial.println(config.pidKi);
 }
 
 void configureDeviceFromID()
@@ -1319,7 +1275,7 @@ void core0_main()
     {
       lastCANSend = now;
 
-      critical_section_enter(&commStateLock);
+      critical_section_enter_blocking(&commStateLock);
       float lux = sensorState.filteredLux;
       float duty = controlState.dutyCycle;
       LuminaireState state = controlState.luminaireState;

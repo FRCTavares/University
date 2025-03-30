@@ -5,8 +5,6 @@
 #include "Globals.h"
 #include "PIController.h"
 
-static void printHelp();
-
 // Maximum command line length
 #define CMD_MAX_LENGTH 64
 // Maximum number of tokens in a command
@@ -15,6 +13,14 @@ static void printHelp();
 #define TOKEN_MAX_LENGTH 16
 // Maximum number of pending queries that can be tracked
 #define MAX_PENDING_QUERIES 10
+
+// Forward declarations of functions used but defined elsewhere
+extern float readLux();
+extern float getVoltageAtLDR();
+extern float getExternalIlluminance();
+extern float getPowerConsumption();
+extern unsigned long getElapsedTime();
+extern bool responseReceived;
 
 // Structure to track pending query requests
 struct PendingQuery
@@ -31,7 +37,7 @@ struct PendingQuery
 static PendingQuery pendingQueries[MAX_PENDING_QUERIES];
 
 // Initialize the pending queries array
-static void initPendingQueries()
+void initPendingQueries()
 {
   for (int i = 0; i < MAX_PENDING_QUERIES; i++)
   {
@@ -216,6 +222,37 @@ static bool parseFloatParam(const char *str, float *result)
   return true;
 }
 
+int parseTokensChar(const char *cmdLine, char tokens[][TOKEN_MAX_LENGTH], int maxTokens)
+{
+  int numTokens = 0;
+  int cmdLen = strlen(cmdLine);
+  int i = 0;
+  
+  while (i < cmdLen && numTokens < maxTokens)
+  {
+    // Skip leading whitespace
+    while (i < cmdLen && isspace(cmdLine[i]))
+      i++;
+      
+    if (i >= cmdLen)
+      break;
+      
+    // Copy token
+    int tokenLen = 0;
+    while (i < cmdLen && !isspace(cmdLine[i]) && tokenLen < TOKEN_MAX_LENGTH - 1)
+    {
+      tokens[numTokens][tokenLen] = cmdLine[i];
+      tokenLen++;
+      i++;
+    }
+    
+    tokens[numTokens][tokenLen] = '\0';
+    numTokens++;
+  }
+  
+  return numTokens;
+}
+
 /**
  * Check if float value is within specified range
  * 
@@ -239,7 +276,7 @@ static bool shouldForwardCommand(uint8_t targetNode)
 {
   // If target is broadcast (0) or matches this node, process locally
   if (targetNode == 0 || targetNode == nodeID)
-  {k
+  {
     return false;
   }
   // Otherwise, forward to target node
@@ -559,7 +596,7 @@ static void processCommandLine(const char *cmdLine)
       if (sendControlCommand(CAN_ADDR_BROADCAST, 7, val))
       {
         // Also apply locally since broadcast includes this node
-        critical_section_enter(&commStateLock);
+        critical_section_enter_blocking(&commStateLock);
         controlState.luminaireState = static_cast<LuminaireState>(val); // Direct casting
         critical_section_exit(&commStateLock);
         Serial.println("ack");
@@ -572,7 +609,7 @@ static void processCommandLine(const char *cmdLine)
     }
 
     // Apply locally
-    critical_section_enter(&commStateLock);
+    critical_section_enter_blocking(&commStateLock);
     controlState.luminaireState = static_cast<LuminaireState>(val); // Direct casting
     critical_section_exit(&commStateLock);
     Serial.println("ack");
@@ -623,7 +660,7 @@ static void processCommandLine(const char *cmdLine)
       if (sendControlCommand(CAN_ADDR_BROADCAST, 8, val))
       {
         // Also apply locally since broadcast includes this node
-        critical_section_enter(&commStateLock);
+        critical_section_enter_blocking(&commStateLock);
         controlState.antiWindup = (val == 1);
         critical_section_exit(&commStateLock);
         Serial.println("ack");
@@ -636,7 +673,7 @@ static void processCommandLine(const char *cmdLine)
     }
     
     // Apply locally
-    critical_section_enter(&commStateLock);
+    critical_section_enter_blocking(&commStateLock);
     controlState.antiWindup = (val == 1);
     critical_section_exit(&commStateLock);
     Serial.println("ack");
@@ -687,7 +724,7 @@ static void processCommandLine(const char *cmdLine)
       if (sendControlCommand(CAN_ADDR_BROADCAST, 14, val))
       {
         // Also apply locally since broadcast includes this node
-        critical_section_enter(&commStateLock);
+        critical_section_enter_blocking(&commStateLock);
         sensorState.filterEnabled = (val == 1);
         critical_section_exit(&commStateLock);
         Serial.println("ack");
@@ -700,7 +737,7 @@ static void processCommandLine(const char *cmdLine)
     }
 
     // Apply locally
-    critical_section_enter(&commStateLock);
+    critical_section_enter_blocking(&commStateLock);
     sensorState.filterEnabled = (val == 1);
     critical_section_exit(&commStateLock);
     Serial.println("ack");
@@ -751,7 +788,7 @@ static void processCommandLine(const char *cmdLine)
       if (sendControlCommand(CAN_ADDR_BROADCAST, 9, val))
       {
         // Also apply locally since broadcast includes this node
-        critical_section_enter(&commStateLock);
+        critical_section_enter_blocking(&commStateLock);
         controlState.feedbackControl = (val == 1);
         critical_section_exit(&commStateLock);
         Serial.println("ack");
@@ -764,7 +801,7 @@ static void processCommandLine(const char *cmdLine)
     }
     
     // Apply locally
-    critical_section_enter(&commStateLock);
+    critical_section_enter_blocking(&commStateLock);
     controlState.feedbackControl = (val == 1);
     critical_section_exit(&commStateLock);
     Serial.println("ack");
@@ -815,7 +852,7 @@ static void processCommandLine(const char *cmdLine)
       if (sendControlCommand(CAN_ADDR_BROADCAST, 10, val))
       {
         // Also apply locally since broadcast includes this node
-        critical_section_enter(&commStateLock);
+        critical_section_enter_blocking(&commStateLock);
         controlState.setpointLux = val;
         critical_section_exit(&commStateLock);
         Serial.println("ack");
@@ -828,7 +865,7 @@ static void processCommandLine(const char *cmdLine)
     }
     
     // Apply locally
-    critical_section_enter(&commStateLock);
+    critical_section_enter_blocking(&commStateLock);
     controlState.setpointLux = val;
     critical_section_exit(&commStateLock);
     Serial.println("ack");
@@ -1125,13 +1162,15 @@ static void processCommandLine(const char *cmdLine)
       Serial.print("u ");
       Serial.print(idx);
       Serial.print(" ");
-      Serial.println(dutyCycle, 4);
+      critical_section_enter_blocking(&commStateLock);
+      Serial.println(controlState.dutyCycle, 4);
+      critical_section_exit(&commStateLock);
       return;
     }
     // "g o <i>" => "o <i> <val>" (occupancy)
     else if (strcmp(subCommand, "o") == 0)
     {
-      critical_section_enter(&commStateLock);
+      critical_section_enter_blocking(&commStateLock);
       int occVal = static_cast<int>(controlState.luminaireState);
       critical_section_exit(&commStateLock);
       Serial.print("o ");
@@ -1143,7 +1182,7 @@ static void processCommandLine(const char *cmdLine)
     // "g a <i>" => "a <i> <val>" (anti-windup)
     else if (strcmp(subCommand, "a") == 0)
     {
-      critical_section_enter(&commStateLock);
+      critical_section_enter_blocking(&commStateLock);
       int awVal = controlState.antiWindup ? 1 : 0;
       critical_section_exit(&commStateLock);
       Serial.print("a ");
@@ -1155,7 +1194,7 @@ static void processCommandLine(const char *cmdLine)
     // "g f <i>" => "f <i> <val>" (feedback control)
     else if (strcmp(subCommand, "f") == 0)
     {
-      critical_section_enter(&commStateLock);
+      critical_section_enter_blocking(&commStateLock);
       int fbVal = controlState.feedbackControl ? 1 : 0;
       critical_section_exit(&commStateLock);
       Serial.print("f ");
@@ -1170,7 +1209,7 @@ static void processCommandLine(const char *cmdLine)
       Serial.print("r ");
       Serial.print(idx);
       Serial.print(" ");
-      critical_section_enter(&commStateLock);
+      critical_section_enter_blocking(&commStateLock);
       Serial.println(controlState.setpointLux, 4);
       critical_section_exit(&commStateLock);
       return;
@@ -1626,8 +1665,8 @@ static void processCommandLine(const char *cmdLine)
             can_frame frame;
             if (readCANMessage(&frame) == MCP2515::ERROR_OK)
             {
-              uint8_t msgType, srcAddr, priority;
-              parseCANId(frame.can_id, msgType, srcAddr, priority);
+              uint8_t msgType, srcAddr;
+              parseCANId(frame.can_id, msgType, srcAddr);
 
               if (!nodeFound[srcAddr])
               {
@@ -1650,8 +1689,8 @@ static void processCommandLine(const char *cmdLine)
         can_frame frame;
         if (readCANMessage(&frame) == MCP2515::ERROR_OK)
         {
-          uint8_t msgType, srcAddr, priority;
-          parseCANId(frame.can_id, msgType, srcAddr, priority);
+          uint8_t msgType, srcAddr;
+          parseCANId(frame.can_id, msgType, srcAddr);
 
           if (!nodeFound[srcAddr])
           {
@@ -1728,8 +1767,8 @@ static void processCommandLine(const char *cmdLine)
             if (readCANMessage(&frame) == MCP2515::ERROR_OK)
             {
               // Check if it's an echo response
-              uint8_t msgType, srcAddr, priority;
-              parseCANId(frame.can_id, msgType, srcAddr, priority);
+              uint8_t msgType, srcAddr;
+              parseCANId(frame.can_id, msgType, srcAddr);
 
               if (msgType == CAN_TYPE_RESPONSE && srcAddr == destNode)
               {
@@ -1907,7 +1946,7 @@ void processSerialCommands()
  * Print a comprehensive list of all available commands
  * Organizes commands by category and provides descriptions
  */
-static void printHelp()
+void printHelp()
 {
   Serial.println("\n===== Distributed Lighting Control System Commands =====\n");
 

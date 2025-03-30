@@ -3,6 +3,7 @@
 
 #include <Arduino.h>
 #include "mcp2515.h"
+#include "Globals.h"
 
 /**
  * CAN Communication Module
@@ -47,18 +48,6 @@
  * @param msg Reference to received CAN frame
  */
 typedef void (*CANMessageCallback)(const can_frame &msg);
-
-/**
- * Structure to track a request to stream data to another node
- * Used to maintain state for periodic data transmission
- */
-struct StreamRequest
-{
-    bool active;            // Is this request currently active?
-    uint8_t requesterNode;  // Node ID requesting the data
-    int variableType;       // Type of variable to stream (maps to sensor types)
-    unsigned long lastSent; // Timestamp of last transmission
-};
 
 //=============================================================================
 // INITIALIZATION FUNCTIONS
