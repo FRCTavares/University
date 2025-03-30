@@ -147,53 +147,86 @@ static void processPendingQueries()
 //-----------------------------------------------------------------------------
 
 /**
- * Split a command line into space-separated tokens using char arrays
- *
- * @param cmd The command string to parse
- * @param tokens Array of char arrays to store tokens
- * @param maxTokens Maximum number of tokens to extract
- * @return Number of tokens found
+ * Parse a string to an integer with error checking
+ * 
+ * @param str String to parse
+ * @param result Output parameter for the parsed integer value
+ * @return true if parsing was successful, false otherwise
  */
-static int parseTokensChar(const char *cmd, char tokens[][TOKEN_MAX_LENGTH], int maxTokens)
+static bool parseIntParam(const char *str, int *result)
 {
-  int numTokens = 0;
-  int cmdLen = strlen(cmd);
-  int tokenStart = 0;
-  int tokenPos = 0;
-
-  // Skip leading spaces
-  while (tokenStart < cmdLen && cmd[tokenStart] == ' ')
-  {
-    tokenStart++;
+  if (str == NULL || result == NULL) {
+    return false;
   }
-
-  for (int i = tokenStart; i <= cmdLen && numTokens < maxTokens; i++)
-  {
-    // Check for token delimiter (space or end of string)
-    if (i == cmdLen || cmd[i] == ' ')
-    {
-      if (tokenPos > 0)
-      { // We have a complete token
-        // Copy token and add null terminator
-        tokens[numTokens][tokenPos] = '\0';
-        numTokens++;
-        tokenPos = 0;
-
-        // Skip consecutive spaces
-        while (i < cmdLen && cmd[i + 1] == ' ')
-        {
-          i++;
-        }
-      }
-    }
-    else if (tokenPos < TOKEN_MAX_LENGTH - 1)
-    {
-      // Add character to current token
-      tokens[numTokens][tokenPos++] = cmd[i];
-    }
+  
+  // Check if string is empty
+  if (str[0] == '\0') {
+    return false;
   }
+  
+  char *endPtr;
+  long value = strtol(str, &endPtr, 10);
+  
+  // Check if any conversion happened and if we reached the end of the string
+  if (endPtr == str || *endPtr != '\0') {
+    return false;
+  }
+  
+  // Check for overflow/underflow
+  if (value > INT_MAX || value < INT_MIN) {
+    return false;
+  }
+  
+  *result = (int)value;
+  return true;
+}
 
-  return numTokens;
+/**
+ * Parse a string to a float with error checking
+ * 
+ * @param str String to parse
+ * @param result Output parameter for the parsed float value
+ * @return true if parsing was successful, false otherwise
+ */
+static bool parseFloatParam(const char *str, float *result)
+{
+  if (str == NULL || result == NULL) {
+    return false;
+  }
+  
+  // Check if string is empty
+  if (str[0] == '\0') {
+    return false;
+  }
+  
+  char *endPtr;
+  float value = strtof(str, &endPtr);
+  
+  // Check if any conversion happened and if we reached the end of the string
+  if (endPtr == str || *endPtr != '\0') {
+    return false;
+  }
+  
+  // Check for NaN or infinity
+  if (isnan(value) || isinf(value)) {
+    return false;
+  }
+  
+  *result = value;
+  return true;
+}
+
+/**
+ * Check if float value is within specified range
+ * 
+ * @param value Value to check
+ * @param min Minimum allowed value (inclusive)
+ * @param max Maximum allowed value (inclusive)
+ * @return true if value is within range, false otherwise
+ */
+static bool isInRange(float value, float min, float max)
+{
+  return value >= min && value <= max;
 }
 
 /**
@@ -206,7 +239,7 @@ static bool shouldForwardCommand(uint8_t targetNode)
 {
   // If target is broadcast (0) or matches this node, process locally
   if (targetNode == 0 || targetNode == nodeID)
-  {
+  {k
     return false;
   }
   // Otherwise, forward to target node
@@ -301,16 +334,22 @@ static void processCommandLine(const char *cmdLine)
   {
     if (numTokens < 3)
     {
-      Serial.println("err");
+      Serial.println("err: Missing parameters");
       return;
     }
 
-    uint8_t targetNode = atoi(tokens[1]);
-    float val = strtof(tokens[2], NULL);
-
-    if (val < 0.0f || val > 1.0f)
-    {
-      Serial.println("err");
+    int targetNode;
+    float val;
+    
+    // Parse node ID
+    if (!parseIntParam(tokens[1], &targetNode) || targetNode < 0 || targetNode > 63) {
+      Serial.println("err: Invalid node ID");
+      return;
+    }
+    
+    // Parse duty cycle value
+    if (!parseFloatParam(tokens[2], &val) || !isInRange(val, 0.0f, 1.0f)) {
+      Serial.println("err: Invalid duty cycle (must be between 0.0 and 1.0)");
       return;
     }
 
@@ -350,77 +389,87 @@ static void processCommandLine(const char *cmdLine)
     Serial.println("ack");
     return;
   }
-
   // "p <i> <percentage>" => set LED by percentage (0-100%)
   else if (strcmp(tokens[0], "p") == 0)
-  {
-    if (numTokens < 3)
     {
-      Serial.println("err");
+      if (numTokens < 3)
+      {
+        Serial.println("err: Missing parameters");
+        return;
+      }
+  
+      int targetNode;
+      float val;
+      
+      // Parse node ID
+      if (!parseIntParam(tokens[1], &targetNode) || targetNode < 0 || targetNode > 63) {
+        Serial.println("err: Invalid node ID");
+        return;
+      }
+      
+      // Parse percentage value
+      if (!parseFloatParam(tokens[2], &val) || !isInRange(val, 0.0f, 100.0f)) {
+        Serial.println("err: Invalid percentage (must be between 0.0 and 100.0)");
+        return;
+      }
+  
+      // Check if we need to forward this command
+      if (shouldForwardCommand(targetNode))
+      {
+        // Forward to specific node - control type 5 = percentage
+        if (sendControlCommand(targetNode, 5, val))
+        {
+          Serial.println("ack");
+        }
+        else
+        {
+          Serial.println("err: CAN forwarding failed");
+        }
+        return;
+      }
+  
+      // Handle broadcast case (targetNode = 0)
+      if (targetNode == 0)
+      {
+        if (sendControlCommand(CAN_ADDR_BROADCAST, 5, val))
+        {
+          // Also apply locally since broadcast includes this node
+          setLEDPercentage(val);
+          Serial.println("ack");
+        }
+        else
+        {
+          Serial.println("err: CAN broadcast failed");
+        }
+        return;
+      }
+  
+      // Apply locally
+      setLEDPercentage(val);
+      Serial.println("ack");
       return;
     }
-
-    uint8_t targetNode = atoi(tokens[1]);
-    float val = strtof(tokens[2], NULL);
-
-    if (val < 0.0f || val > 100.0f)
-    {
-      Serial.println("err");
-      return;
-    }
-
-    // Check if we need to forward this command
-    if (shouldForwardCommand(targetNode))
-    {
-      // Forward to specific node - control type 5 = percentage
-      if (sendControlCommand(targetNode, 5, val))
-      {
-        Serial.println("ack");
-      }
-      else
-      {
-        Serial.println("err: CAN forwarding failed");
-      }
-      return;
-    }
-
-    // Handle broadcast case (targetNode = 0)
-    if (targetNode == 0)
-    {
-      if (sendControlCommand(CAN_ADDR_BROADCAST, 5, val))
-      {
-        // Also apply locally since broadcast includes this node
-        setLEDPercentage(val); // FIXED: Use percentage function instead of duty cycle
-        Serial.println("ack");
-      }
-      else
-      {
-        Serial.println("err: CAN broadcast failed");
-      }
-      return;
-    }
-
-    // Apply locally
-    setLEDPercentage(val);
-    Serial.println("ack");
-    return;
-  }
-
   // "w <i> <watts>" => set LED by power in watts
   else if (strcmp(tokens[0], "w") == 0)
   {
     if (numTokens < 3)
     {
-      Serial.println("err");
+      Serial.println("err: Missing parameters");
       return;
     }
 
-    uint8_t targetNode = atoi(tokens[1]);
-    float val = strtof(tokens[2], NULL);
-
-    if (val < 0.0f || val > MAX_POWER_WATTS)
-    {
-      Serial.println("err");
+    int targetNode;
+    float val;
+    
+    // Parse node ID
+    if (!parseIntParam(tokens[1], &targetNode) || targetNode < 0 || targetNode > 63) {
+      Serial.println("err: Invalid node ID");
+      return;
+    }
+    
+    // Parse power value
+    if (!parseFloatParam(tokens[2], &val) || !isInRange(val, 0.0f, MAX_POWER_WATTS)) {
+      Serial.println("err: Invalid power (must be between 0.0 and MAX_POWER_WATTS)");
       return;
     }
 
@@ -455,6 +504,7 @@ static void processCommandLine(const char *cmdLine)
       return;
     }
 
+    // Apply locally
     setLEDPower(val);
     Serial.println("ack");
     return;
@@ -465,21 +515,26 @@ static void processCommandLine(const char *cmdLine)
   //-----------------------------------------------------------------------------
 
   // "o <i> <val>" => set occupancy state (0=off, 1=unoccupied, 2=occupied)
-
   else if (strcmp(tokens[0], "o") == 0)
   {
     if (numTokens < 3)
     {
-      Serial.println("err");
+      Serial.println("err: Missing parameters");
       return;
     }
 
-    uint8_t targetNode = atoi(tokens[1]);
-    float val = strtof(tokens[2], NULL);
-
-    if (val < 0 || val > 2) // Allow values 0, 1, and 2
-    {
-      Serial.println("err");
+    int targetNode;
+    int val;
+    
+    // Parse node ID
+    if (!parseIntParam(tokens[1], &targetNode) || targetNode < 0 || targetNode > 63) {
+      Serial.println("err: Invalid node ID");
+      return;
+    }
+    
+    // Parse state value
+    if (!parseIntParam(tokens[2], &val) || !isInRange(val, 0, 2)) {
+      Serial.println("err: Invalid state (must be 0=off, 1=unoccupied, or 2=occupied)");
       return;
     }
 
@@ -523,22 +578,27 @@ static void processCommandLine(const char *cmdLine)
     Serial.println("ack");
     return;
   }
-
   // "a <i> <val>" => set anti-windup on/off (0=off, 1=on)
   else if (strcmp(tokens[0], "a") == 0)
   {
     if (numTokens < 3)
     {
-      Serial.println("err");
+      Serial.println("err: Missing parameters");
       return;
     }
 
-    uint8_t targetNode = atoi(tokens[1]);
-    int val = atoi(tokens[2]); // Changed from strtof to atoi
-
-    if (val != 0 && val != 1)
-    {
-      Serial.println("err");
+    int targetNode;
+    int val;
+    
+    // Parse node ID
+    if (!parseIntParam(tokens[1], &targetNode) || targetNode < 0 || targetNode > 63) {
+      Serial.println("err: Invalid node ID");
+      return;
+    }
+    
+    // Parse anti-windup value
+    if (!parseIntParam(tokens[2], &val) || !isInRange(val, 0, 1)) {
+      Serial.println("err: Invalid anti-windup value (must be 0=off or 1=on)");
       return;
     }
 
@@ -574,6 +634,8 @@ static void processCommandLine(const char *cmdLine)
       }
       return;
     }
+    
+    // Apply locally
     critical_section_enter(&commStateLock);
     controlState.antiWindup = (val == 1);
     critical_section_exit(&commStateLock);
@@ -585,16 +647,22 @@ static void processCommandLine(const char *cmdLine)
   {
     if (numTokens < 3)
     {
-      Serial.println("err");
+      Serial.println("err: Missing parameters");
       return;
     }
 
-    uint8_t targetNode = atoi(tokens[1]);
-    int val = atoi(tokens[2]); // Changed from strtof to atoi
-
-    if (val != 0 && val != 1)
-    {
-      Serial.println("err");
+    int targetNode;
+    int val;
+    
+    // Parse node ID
+    if (!parseIntParam(tokens[1], &targetNode) || targetNode < 0 || targetNode > 63) {
+      Serial.println("err: Invalid node ID");
+      return;
+    }
+    
+    // Parse filter value
+    if (!parseIntParam(tokens[2], &val) || !isInRange(val, 0, 1)) {
+      Serial.println("err: Invalid filter value (must be 0=off or 1=on)");
       return;
     }
 
@@ -631,28 +699,34 @@ static void processCommandLine(const char *cmdLine)
       return;
     }
 
+    // Apply locally
     critical_section_enter(&commStateLock);
     sensorState.filterEnabled = (val == 1);
     critical_section_exit(&commStateLock);
     Serial.println("ack");
     return;
   }
-
   // "f <i> <val>" => set feedback control on/off (0=off, 1=on)
   else if (strcmp(tokens[0], "f") == 0)
   {
     if (numTokens < 3)
     {
-      Serial.println("err");
+      Serial.println("err: Missing parameters");
       return;
     }
 
-    uint8_t targetNode = atoi(tokens[1]);
-    int val = atoi(tokens[2]); // Changed from strtof to atoi
-
-    if (val != 0 && val != 1)
-    {
-      Serial.println("err");
+    int targetNode;
+    int val;
+    
+    // Parse node ID
+    if (!parseIntParam(tokens[1], &targetNode) || targetNode < 0 || targetNode > 63) {
+      Serial.println("err: Invalid node ID");
+      return;
+    }
+    
+    // Parse feedback control value
+    if (!parseIntParam(tokens[2], &val) || !isInRange(val, 0, 1)) {
+      Serial.println("err: Invalid feedback control value (must be 0=off or 1=on)");
       return;
     }
 
@@ -688,28 +762,35 @@ static void processCommandLine(const char *cmdLine)
       }
       return;
     }
+    
+    // Apply locally
     critical_section_enter(&commStateLock);
     controlState.feedbackControl = (val == 1);
     critical_section_exit(&commStateLock);
     Serial.println("ack");
     return;
   }
-
   // "r <i> <val>" => set illuminance reference (lux)
   else if (strcmp(tokens[0], "r") == 0)
   {
     if (numTokens < 3)
     {
-      Serial.println("err");
+      Serial.println("err: Missing parameters");
       return;
     }
 
-    uint8_t targetNode = atoi(tokens[1]);
-    float val = strtof(tokens[2], NULL);
-
-    if (val < 0.0f || val > MAX_ILLUMINANCE)
-    {
-      Serial.println("err");
+    int targetNode;
+    float val;
+    
+    // Parse node ID
+    if (!parseIntParam(tokens[1], &targetNode) || targetNode < 0 || targetNode > 63) {
+      Serial.println("err: Invalid node ID");
+      return;
+    }
+    
+    // Parse illuminance reference value
+    if (!parseFloatParam(tokens[2], &val) || !isInRange(val, 0.0f, MAX_ILLUMINANCE)) {
+      Serial.println("err: Invalid illuminance reference (must be between 0.0 and MAX_ILLUMINANCE)");
       return;
     }
 
@@ -719,11 +800,6 @@ static void processCommandLine(const char *cmdLine)
       // Forward to specific node - control type 10 = reference illuminance
       if (sendControlCommand(targetNode, 10, val))
       {
-        Serial.print("Query request sent to node ");
-        Serial.print(targetNode);
-        Serial.print(": ");
-        Serial.println(val);
-
         Serial.println("ack");
       }
       else
@@ -750,6 +826,8 @@ static void processCommandLine(const char *cmdLine)
       }
       return;
     }
+    
+    // Apply locally
     critical_section_enter(&commStateLock);
     controlState.setpointLux = val;
     critical_section_exit(&commStateLock);
@@ -772,14 +850,19 @@ static void processCommandLine(const char *cmdLine)
   {
     if (numTokens < 3)
     {
-      Serial.println("err");
+      Serial.println("err: Missing parameters");
       return;
     }
 
     char var[TOKEN_MAX_LENGTH];
     strcpy(var, tokens[1]); // Variable name is in tokens[1]
-
-    uint8_t targetNode = atoi(tokens[2]); // Target node is in tokens[2]
+    
+    int targetNode;
+    // Parse node ID with error checking
+    if (!parseIntParam(tokens[2], &targetNode) || targetNode < 0 || targetNode > 63) {
+      Serial.println("err: Invalid node ID");
+      return;
+    }
 
     // Check if we need to forward this command
     if (shouldForwardCommand(targetNode))
@@ -813,6 +896,10 @@ static void processCommandLine(const char *cmdLine)
         varCode = 11; // Flicker
       else if (strcmpIgnoreCase(var, "E") == 0)
         varCode = 12; // Energy
+      else {
+        Serial.println("err: Unknown variable");
+        return;
+      }
 
       if (sendControlCommand(targetNode, 11, varCode))
       {
@@ -824,6 +911,7 @@ static void processCommandLine(const char *cmdLine)
       }
       return;
     }
+    
     // Handle locally
     startStream(var, targetNode);
     Serial.println("ack");
@@ -835,14 +923,19 @@ static void processCommandLine(const char *cmdLine)
   {
     if (numTokens < 3)
     {
-      Serial.println("err");
+      Serial.println("err: Missing parameters");
       return;
     }
 
     char var[TOKEN_MAX_LENGTH];
     strcpy(var, tokens[1]); // Variable name is in tokens[1]
-
-    uint8_t targetNode = atoi(tokens[2]); // Target node is in tokens[2]
+    
+    int targetNode;
+    // Parse node ID with error checking
+    if (!parseIntParam(tokens[2], &targetNode) || targetNode < 0 || targetNode > 63) {
+      Serial.println("err: Invalid node ID");
+      return;
+    }
 
     // Check if we need to forward this command
     if (shouldForwardCommand(targetNode))
@@ -876,6 +969,10 @@ static void processCommandLine(const char *cmdLine)
         varCode = 11; // Flicker
       else if (strcmpIgnoreCase(var, "E") == 0)
         varCode = 12; // Energy
+      else {
+        Serial.println("err: Unknown variable");
+        return;
+      }
 
       if (sendControlCommand(targetNode, 12, varCode))
       {
@@ -903,7 +1000,7 @@ static void processCommandLine(const char *cmdLine)
   {
     if (numTokens < 3)
     {
-      Serial.println("err");
+      Serial.println("err: Missing parameters");
       return;
     }
 
@@ -914,7 +1011,12 @@ static void processCommandLine(const char *cmdLine)
     strcpy(originalCase, tokens[1]);
     strcpy(idx, tokens[2]);
 
-    uint8_t targetNode = atoi(tokens[2]);
+    int targetNode;
+    // Parse node ID with error checking
+    if (!parseIntParam(tokens[2], &targetNode) || targetNode < 0 || targetNode > 63) {
+      Serial.println("err: Invalid node ID");
+      return;
+    }
 
     // Check if we need to forward this command
     if (shouldForwardCommand(targetNode))
@@ -955,44 +1057,28 @@ static void processCommandLine(const char *cmdLine)
         return;
       }
 
-      // Send the query to the remote node
       if (sendControlCommand(targetNode, queryType, 0.0f))
       {
         Serial.print("Query sent to node ");
         Serial.println(targetNode);
 
-        // Wait for response with timeout
-        unsigned long timeout = millis() + 500; // 500ms timeout
-        bool responseReceived = false;
-
-        if (sendControlCommand(targetNode, queryType, 0.0f))
+        // Instead of waiting in a blocking loop, store the query details
+        if (!addPendingQuery(targetNode, queryType, originalCase[0] == 'V' || originalCase[0] == 'F' || originalCase[0] == 'E' ? originalCase : subCommand, idx))
         {
-          Serial.print("Query sent to node ");
-          Serial.println(targetNode);
-
-          // Instead of waiting in a blocking loop, store the query details
-          if (!addPendingQuery(targetNode, queryType, originalCase[0] == 'V' || originalCase[0] == 'F' || originalCase[0] == 'E' ? originalCase : subCommand, idx))
-          {
-            Serial.println("err: Too many pending queries");
-          }
-          return;
+          Serial.println("err: Too many pending queries");
         }
-        else
-        {
-          Serial.print("err: Failed to send query to node ");
-          Serial.println(targetNode);
-          return;
-        }
-
-        if (!responseReceived)
-        {
-          Serial.print("err: No response from node ");
-          Serial.println(targetNode);
-        }
+        return;
       }
       else
       {
         Serial.print("err: Failed to send query to node ");
+        Serial.println(targetNode);
+        return;
+      }
+
+      if (!responseReceived)
+      {
+        Serial.print("err: No response from node ");
         Serial.println(targetNode);
       }
       return;
@@ -1383,27 +1469,40 @@ static void processCommandLine(const char *cmdLine)
   {
     if (numTokens < 4)
     {
-      Serial.println("err");
+      Serial.println("err: Missing parameters");
       return;
     }
 
-    uint8_t targetNode = atoi(tokens[1]);
+    int targetNode;
+    float value;
+    
+    // Parse node ID
+    if (!parseIntParam(tokens[1], &targetNode) || targetNode < 0 || targetNode > 63) {
+      Serial.println("err: Invalid node ID");
+      return;
+    }
+    
     char param[TOKEN_MAX_LENGTH];
     strcpy(param, tokens[2]);
-    float value = strtof(tokens[3], NULL);
+    
+    // Parse parameter value
+    if (!parseFloatParam(tokens[3], &value)) {
+      Serial.println("err: Invalid parameter value");
+      return;
+    }
 
     // Check if we need to forward this command
     if (shouldForwardCommand(targetNode))
     {
       // Map parameter to control code for CAN
       uint8_t paramCode = 0;
-      if (strcmp(tokens[2], "b") == 0) // Correct token index
+      if (strcmp(param, "b") == 0)
         paramCode = 15;
-      else if (strcmp(tokens[2], "k") == 0) // Correct token index
+      else if (strcmp(param, "k") == 0)
         paramCode = 16;
       else
       {
-        Serial.println("err: unknown parameter");
+        Serial.println("err: Unknown parameter (must be 'b' or 'k')");
         return;
       }
 
@@ -1419,17 +1518,16 @@ static void processCommandLine(const char *cmdLine)
     }
 
     // Handle locally
-    if (strcmp(tokens[2], "b") == 0)
+    if (strcmp(param, "b") == 0)
     {
-      if (value < 0.0 || value > 1.0)
-      {
-        Serial.println("err: beta must be between 0.0 and 1.0");
+      if (!isInRange(value, 0.0f, 1.0f)) {
+        Serial.println("err: Beta must be between 0.0 and 1.0");
         return;
       }
       pid.setWeighting(value);
       Serial.println("ack");
     }
-    else if (strcmp(tokens[2], "k") == 0) // Changed from "kp" to "k"
+    else if (strcmp(param, "k") == 0)
     {
       // Set both gains to the same value
       pid.setGains(value, value);
@@ -1437,7 +1535,7 @@ static void processCommandLine(const char *cmdLine)
     }
     else
     {
-      Serial.println("err: unknown parameter");
+      Serial.println("err: Unknown parameter (must be 'b' or 'k')");
     }
     return;
   }
@@ -1454,11 +1552,17 @@ static void processCommandLine(const char *cmdLine)
     {
       if (numTokens < 3)
       {
-        Serial.println("err");
+        Serial.println("err: Missing parameters");
         return;
       }
 
-      canMonitorEnabled = (atoi(tokens[2]) == 1);
+      int val;
+      if (!parseIntParam(tokens[2], &val) || !isInRange(val, 0, 1)) {
+        Serial.println("err: Invalid monitoring value (must be 0=off or 1=on)");
+        return;
+      }
+
+      canMonitorEnabled = (val == 1);
 
       Serial.print("CAN monitoring ");
       Serial.println(canMonitorEnabled ? "enabled" : "disabled");
@@ -1577,17 +1681,26 @@ static void processCommandLine(const char *cmdLine)
       return;
     }
 
-    // "c l <destNode> <count>" => Measure round-trip latency
+    // For the "c l" command (latency test):
     else if (strcmp(tokens[1], "l") == 0)
     {
       if (numTokens < 4)
       {
-        Serial.println("err");
+        Serial.println("err: Missing parameters");
         return;
       }
 
-      uint8_t destNode = atoi(tokens[2]);
-      int count = atoi(tokens[3]);
+      int destNode;
+      if (!parseIntParam(tokens[2], &destNode) || destNode < 1 || destNode > 63) {
+        Serial.println("err: Invalid destination node ID");
+        return;
+      }
+
+      int count;
+      if (!parseIntParam(tokens[3], &count) || count < 1) {
+        Serial.println("err: Invalid sample count (must be >= 1)");
+        return;
+      }
 
       Serial.print("Measuring round-trip latency to node ");
       Serial.print(destNode);
@@ -1678,16 +1791,21 @@ static void processCommandLine(const char *cmdLine)
   {
     if (numTokens < 3)
     {
-      Serial.println("err");
+      Serial.println("err: Missing parameters");
       return;
     }
+    
     char stateStr[TOKEN_MAX_LENGTH];
     strcpy(stateStr, tokens[2]);
-    uint8_t targetNode = atoi(tokens[1]);
-    float val = strtof(tokens[2], NULL);
+    
+    int targetNode;
+    if (!parseIntParam(tokens[1], &targetNode) || targetNode < 0 || targetNode > 63) {
+      Serial.println("err: Invalid node ID");
+      return;
+    }
 
     // Convert state string to value for CAN transmission
-    int stateVal = 0;
+    int stateVal = -1; // Invalid by default
     if (strcmp(stateStr, "off") == 0)
       stateVal = 0;
     else if (strcmp(stateStr, "unoccupied") == 0)
@@ -1696,7 +1814,7 @@ static void processCommandLine(const char *cmdLine)
       stateVal = 2;
     else
     {
-      Serial.println("err");
+      Serial.println("err: Invalid state (must be 'off', 'unoccupied', or 'occupied')");
       return;
     }
 

@@ -10,6 +10,17 @@
  */
 
 #include <Arduino.h>
+#include "pico/critical_section.h" 
+
+//=============================================================================
+// SYNCHRONIZATION PRIMITIVES
+//=============================================================================
+
+/**
+ * Global critical section lock for thread synchronization
+ * Used to protect shared data access between cores
+ */
+extern critical_section_t commStateLock;
 
 //=============================================================================
 // SYSTEM CONSTANTS
