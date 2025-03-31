@@ -173,7 +173,7 @@ def get_measurements(measured_node_index=3):
 # ============================================================================================================================================
 # Função para criar a matriz X e o vetor y para o problema de mínimos quadrados
 # ============================================================================================================================================
-def build_regression_matrices(Y, al, s, normalize=False):
+def build_regression_matrices(Y, al, s, z):
     """
     Constrói a matriz X (3M x 3N) e o vetor y (3M x 1) para o problema de mínimos quadrados
     
@@ -181,7 +181,7 @@ def build_regression_matrices(Y, al, s, normalize=False):
     Y - vetor de tensões medidas (3M)
     al - ângulo de fase
     s - matriz de consumo (M x N)
-    normalize - se True, normaliza as colunas da matriz X (padrão: False)
+    z - impedâncias dos troços
     
     Retorna:
     X - matriz de regressão (3M x 3N)
@@ -191,15 +191,26 @@ def build_regression_matrices(Y, al, s, normalize=False):
     M = m  # m é o parâmetro global (12)
     N = s.shape[1]  # N é o número de colunas em s (4)
     
-    # Matriz Z (matriz de impedância/deslocamento)
-    Z = np.array([[2, al, al**2],
-                  [1, 2*al, al**2],
-                  [1, al, 2*al**2]])
+    # Matriz base de impedância/deslocamento
+    Z_base = np.array([[2, al, al**2],
+                      [1, 2*al, al**2],
+                      [1, al, 2*al**2]])
+    
+    # Calcular as impedâncias acumuladas para cada nó
+    # Para nó 1: Znm (apenas o primeiro troço)
+    # Para nó 2 e 3: Znm + Zml (soma dos primeiros dois troços)
+    # Para nó 4: Znm + Zml + Zlk (soma dos três troços)
+    z_accumulated = [
+        z[0],                 # Node 1: z[0] (impedância entre source e nó 1)
+        z[0] + z[1],          # Node 2: z[0] + z[1] (impedância acumulada até nó 2)
+        z[0] + z[1],          # Node 3: z[0] + z[1] (impedância acumulada até nó 3, igual ao nó 2)
+        z[0] + z[1] + z[2]    # Node 4: z[0] + z[1] + z[2] (impedância acumulada até nó 4)
+    ]
     
     # Inicialização da matriz X com dimensão 3M x 3N
     X = np.zeros((3*M, 3*N), dtype=complex)
     
-    # Inicialização do vetor y com dimensão 3M, dtype=complex)
+    # Inicialização do vetor y com dimensão 3M
     y = np.zeros(3*M, dtype=complex)
     
     # Tensão de referência
@@ -210,26 +221,14 @@ def build_regression_matrices(Y, al, s, normalize=False):
         # Para cada amostra de tempo i
         
         # Vetor y: diferença entre tensão de referência e tensões medidas
-        # y_m = [V_ref,a, V_ref,b, V_ref,c]^T - [V_m,a, V_m,b, V_m,c]^T
         y[3*i:3*i+3] = np.multiply(vr, [1, al, al**2]) - Y[3*i:3*i+3]
         
         # Para cada cliente j
         for j in range(N):
-            # Bloco X_ij = Z * s_ij
-            # Onde Z é a matriz de impedância/deslocamento e s_ij é o consumo do cliente j no tempo i
-            X[3*i:3*i+3, 3*j:3*j+3] = Z * s[i, j]
-    
-    # Normalização das colunas da matriz X (opcional)
-    if normalize:
-        # Para cada cliente j
-        for j in range(N):
-            # Normalizar cada bloco 3x3 da matriz X
-            for k in range(3):
-                col_idx = 3*j + k
-                # Normalização L2 da coluna
-                col_norm = np.linalg.norm(X[:, col_idx])
-                if col_norm > 0:
-                    X[:, col_idx] = X[:, col_idx] / col_norm
+            # Aplicar a impedância acumulada correta para cada nó
+            # Bloco X_ij = Z_base * s_ij * z_accumulated[j]
+            X[3*i:3*i+3, 3*j:3*j+3] = Z_base * s[i, j] * z_accumulated[j]
+
     
     return X, y
 
@@ -275,7 +274,7 @@ def solve_and_identify(X, y, n_clients):
 # ============================================================================================================================================
 # Funções para cálculo de fase usando mínimos quadrados e visualização dos resultados
 # ============================================================================================================================================
-def phase_id_least_squares(normalize=True):
+def phase_id_least_squares():
     """
     Identificação de fase usando o método dos mínimos quadrados
     
@@ -298,8 +297,8 @@ def phase_id_least_squares(normalize=True):
     # Número de clientes
     n_clients = loads.shape[1]
     
-    # Construir a matriz X e o vetor y com normalização opcional
-    X, y = build_regression_matrices(Y, al, loads, normalize)
+    # Construir a matriz X e o vetor y 
+    X, y = build_regression_matrices(Y, al, loads, z)
     
     # Resolver o sistema e identificar as fases
     beta_matrix, phases = solve_and_identify(X, y, n_clients)
@@ -371,7 +370,7 @@ def plot_results(voltages, loads):
 # ============================================================================================================================================
 # DESAFIO EXTRA 1 - Função para cálculo de fase alterando o indicador para o nó 1
 # ============================================================================================================================================
-def switch_indicator_position(node_index=0, normalize=True):
+def switch_indicator_position(node_index=0):
     '''
     Altera a posição do indicador de fase para o nó especificado e recalcula as fases dos clientes.
     
@@ -397,7 +396,7 @@ def switch_indicator_position(node_index=0, normalize=True):
     n_clients = loads.shape[1]
 
     # Construir a matriz X e o vetor y com normalização opcional
-    X, y = build_regression_matrices(Y, al, loads, normalize)
+    X, y = build_regression_matrices(Y, al, loads, z)
 
     # Resolver o sistema e identificar as fases
     beta_matrix, phases = solve_and_identify(X, y, n_clients)
@@ -406,16 +405,17 @@ def switch_indicator_position(node_index=0, normalize=True):
     beta_abs = np.abs(beta_matrix)
 
     return beta_matrix, beta_abs, phases, voltages, loads
+
 # ============================================================================================================================================
 # DESAFIO EXTRA 2 - Função para implementar diferentes valores de ruído no método dos mínimos quadrados
 # ============================================================================================================================================
-def compare_noise_impact_on_ls(seeds=[0, 1, 2, 3, 4]):
+def compare_noise_impact_on_ls(iterations=10):
     """
     Avalia a robustez do modelo LS a diferentes níveis de ruído.
     Mede a percentagem de acertos comparando com o caso sem ruído.
     """
     print("\n--- Robustez do modelo LS a ruído ---")
-    noise_values = [0.0, 0.0005, 0.001, 0.0015, 0.002, 0.0025, 0.003, 0.0035, 0.004, 0.0045, 0.005]
+    noise_values = [0.0, 0.005, 0.01, 0.015, 0.02, 0.025, 0.03, 0.035, 0.04, 0.045, 0.05]
     al_ref = np.exp(np.multiply(np.multiply(complex(0, -1), 2 / 3), np.pi))
 
     reference_phases = None  # Fases com ruído 0 (referência)
@@ -431,7 +431,7 @@ def compare_noise_impact_on_ls(seeds=[0, 1, 2, 3, 4]):
         accs = []
 
         # Nó = 4
-        for seed in seeds:
+        for seed in range(iterations):
             np.random.seed(seed)
 
             _, _, ls_phases, voltages, loads = phase_id_least_squares()
@@ -451,10 +451,13 @@ def compare_noise_impact_on_ls(seeds=[0, 1, 2, 3, 4]):
         ls_means_4.append(ls_mean_4)
         ls_stds_4.append(ls_std_4) 
 
+        variancia4 = np.var(ls_means_4)
+
         print(f"LS Accuracy (node 4) vs no-noise: {ls_mean_4:.2f}% ± {ls_std_4:.2f}%")
 
         # Nó = 1
-        for seed in seeds:
+        for seed in range(iterations):
+            # Resetar o ruído para o nó 1
             np.random.seed(seed)
 
             _, _, ls_phases, voltages, loads = switch_indicator_position()
@@ -473,6 +476,9 @@ def compare_noise_impact_on_ls(seeds=[0, 1, 2, 3, 4]):
 
         ls_means_1.append(ls_mean_1)
         ls_stds_1.append(ls_std_1)
+
+        # variancia
+        variancia1 = np.var(ls_means_1)
 
         print(f"LS Accuracy (node 1) vs no-noise: {ls_mean_1:.2f}% ± {ls_std_1:.2f}%")
 
