@@ -5,6 +5,10 @@
 #include "Globals.h"
 #include "PIController.h"
 
+//=============================================================================
+// CONSTANTS AND DEFINITIONS
+//=============================================================================
+
 // Maximum command line length
 #define CMD_MAX_LENGTH 64
 // Maximum number of tokens in a command
@@ -22,6 +26,10 @@ extern float getPowerConsumption();
 extern unsigned long getElapsedTime();
 extern bool responseReceived;
 
+//==========================================================================================================================================================
+// DATA STRUCTURES
+//==========================================================================================================================================================
+
 // Structure to track pending query requests
 struct PendingQuery
 {
@@ -33,10 +41,17 @@ struct PendingQuery
   unsigned long timeoutTime; // When this query expires
 };
 
+//==========================================================================================================================================================
+// QUERY MANAGEMENT
+//==========================================================================================================================================================
+
 // Array of pending queries
 static PendingQuery pendingQueries[MAX_PENDING_QUERIES];
 
-// Initialize the pending queries array
+/**
+ * Initialize the pending queries array
+ * Clears all query slots by marking them as inactive
+ */
 void initPendingQueries()
 {
   for (int i = 0; i < MAX_PENDING_QUERIES; i++)
@@ -45,6 +60,15 @@ void initPendingQueries()
   }
 }
 
+/**
+ * Add a new query to the pending queries list
+ * 
+ * @param targetNode The node ID being queried
+ * @param queryType The type of query being sent
+ * @param cmd The original command string (e.g., "u", "y", "V")
+ * @param index The display index to use in the response
+ * @return true if query was added successfully, false if no slots available
+ */
 static bool addPendingQuery(uint8_t targetNode, uint8_t queryType, const char *cmd, const char *index)
 {
   // Find an empty slot
@@ -66,6 +90,11 @@ static bool addPendingQuery(uint8_t targetNode, uint8_t queryType, const char *c
   return false; // No slots available
 }
 
+/**
+ * Process all pending queries
+ * Checks for responses or timeouts for each active query
+ * Should be called regularly from the main loop
+ */
 static void processPendingQueries()
 {
   // Check each active query
@@ -148,9 +177,10 @@ static void processPendingQueries()
     }
   }
 }
-//-----------------------------------------------------------------------------
+
+//==========================================================================================================================================================
 // COMMAND PARSING HELPERS
-//-----------------------------------------------------------------------------
+//==========================================================================================================================================================
 
 /**
  * Parse a string to an integer with error checking
@@ -222,6 +252,14 @@ static bool parseFloatParam(const char *str, float *result)
   return true;
 }
 
+/**
+ * Parse a command line into tokens
+ * 
+ * @param cmdLine The command line string to parse
+ * @param tokens Array to store the parsed tokens
+ * @param maxTokens Maximum number of tokens to extract
+ * @return Number of tokens found
+ */
 int parseTokensChar(const char *cmdLine, char tokens[][TOKEN_MAX_LENGTH], int maxTokens)
 {
   int numTokens = 0;
@@ -267,26 +305,6 @@ static bool isInRange(float value, float min, float max)
 }
 
 /**
- * Determine if a command should be executed locally or forwarded to another node
- *
- * @param targetNode The node ID specified in the command
- * @return true if command should be forwarded, false for local execution
- */
-static bool shouldForwardCommand(uint8_t targetNode)
-{
-  // If target is broadcast (0) or matches this node, process locally
-  if (targetNode == 0 || targetNode == nodeID)
-  {
-    return false;
-  }
-  // Otherwise, forward to target node
-  return true;
-}
-
-//-----------------------------------------------------------------------------
-// COMMAND PROCESSING
-//-----------------------------------------------------------------------------
-/**
  * Case-insensitive string comparison
  *
  * @param str1 First string to compare
@@ -313,863 +331,191 @@ static int strcmpIgnoreCase(const char *str1, const char *str2)
 }
 
 /**
- * Process a single command line from Serial
- * Parses and executes commands for control, metrics, and CAN operations
- *
- * @param cmdLine The command string to process
+ * Prepare command line by trimming and tokenizing
+ * 
+ * @param cmdLine The raw command line to process
+ * @param tokens Array to store the parsed tokens
+ * @return Number of tokens found
  */
-static void processCommandLine(const char *cmdLine)
-{
-  // Buffer to store trimmed command
+static int prepareCommand(const char *cmdLine, char tokens[][TOKEN_MAX_LENGTH]) {
   char trimmedCmd[CMD_MAX_LENGTH];
   int cmdLen = strlen(cmdLine);
-
+  
   // Trim leading spaces
   int startPos = 0;
-  while (startPos < cmdLen && cmdLine[startPos] == ' ')
-  {
-    startPos++;
+  while (startPos < cmdLen && cmdLine[startPos] == ' ') {
+      startPos++;
   }
-
+  
   // Trim trailing spaces
   int endPos = cmdLen - 1;
-  while (endPos >= 0 && cmdLine[endPos] == ' ')
-  {
-    endPos--;
+  while (endPos >= 0 && cmdLine[endPos] == ' ') {
+      endPos--;
   }
-
+  
   // Copy trimmed command
-  if (endPos >= startPos)
-  {
-    int trimmedLen = endPos - startPos + 1;
-    if (trimmedLen >= CMD_MAX_LENGTH)
-      trimmedLen = CMD_MAX_LENGTH - 1;
-    strncpy(trimmedCmd, cmdLine + startPos, trimmedLen);
-    trimmedCmd[trimmedLen] = '\0';
+  if (endPos >= startPos) {
+      int trimmedLen = endPos - startPos + 1;
+      if (trimmedLen >= CMD_MAX_LENGTH)
+          trimmedLen = CMD_MAX_LENGTH - 1;
+      strncpy(trimmedCmd, cmdLine + startPos, trimmedLen);
+      trimmedCmd[trimmedLen] = '\0';
+  } else {
+      // Empty command after trimming
+      trimmedCmd[0] = '\0';
+      return 0;
   }
-  else
-  {
-    // Empty command after trimming
-    return;
-  }
-
+  
   // Tokenize the command line
-  char tokens[MAX_TOKENS][TOKEN_MAX_LENGTH];
-  int numTokens = parseTokensChar(trimmedCmd, tokens, MAX_TOKENS);
+  return parseTokensChar(trimmedCmd, tokens, MAX_TOKENS);
+}
 
-  if (numTokens == 0)
+//==========================================================================================================================================================
+// COMMAND EXECUTION UTILITIES
+//==========================================================================================================================================================
+
+/**
+ * Determine if a command should be executed locally or forwarded to another node
+ *
+ * @param targetNode The node ID specified in the command
+ * @return true if command should be forwarded, false for local execution
+ */
+static bool shouldForwardCommand(uint8_t targetNode)
+{
+  // If target is broadcast (0) or matches this node, process locally
+  if (targetNode == 0 || targetNode == nodeID)
   {
-    return;
+    return false;
   }
+  // Otherwise, forward to target node
+  return true;
+}
 
-  //-----------------------------------------------------------------------------
-  // LED CONTROL COMMANDS
-  //-----------------------------------------------------------------------------
-
-  // "u <i> <val>" => set duty cycle (0.0-1.0)
-  if (strcmp(tokens[0], "u") == 0)
-  {
-    if (numTokens < 3)
-    {
-      Serial.println("err: Missing parameters");
-      return;
-    }
-
-    int targetNode;
-    float val;
-    
-    // Parse node ID
-    if (!parseIntParam(tokens[1], &targetNode) || targetNode < 0 || targetNode > 63) {
-      Serial.println("err: Invalid node ID");
-      return;
-    }
-    
-    // Parse duty cycle value
-    if (!parseFloatParam(tokens[2], &val) || !isInRange(val, 0.0f, 1.0f)) {
-      Serial.println("err: Invalid duty cycle (must be between 0.0 and 1.0)");
-      return;
-    }
-
-    // Check if we need to forward this command
-    if (shouldForwardCommand(targetNode))
-    {
-      // Forward to specific node - control type 4 = duty cycle
-      if (sendControlCommand(targetNode, 4, val))
-      {
-        Serial.println("ack");
-      }
-      else
-      {
-        Serial.println("err: CAN forwarding failed");
-      }
-      return;
-    }
-
-    // Handle broadcast case (targetNode = 0)
-    if (targetNode == 0)
-    {
-      if (sendControlCommand(CAN_ADDR_BROADCAST, 4, val))
-      {
-        // Also apply locally since broadcast includes this node
-        setLEDDutyCycle(val);
-        Serial.println("ack");
-      }
-      else
-      {
-        Serial.println("err: CAN broadcast failed");
-      }
-      return;
-    }
-
-    // Apply locally
-    setLEDDutyCycle(val);
-    Serial.println("ack");
-    return;
-  }
-  // "p <i> <percentage>" => set LED by percentage (0-100%)
-  else if (strcmp(tokens[0], "p") == 0)
-    {
-      if (numTokens < 3)
-      {
-        Serial.println("err: Missing parameters");
-        return;
-      }
-  
-      int targetNode;
-      float val;
-      
-      // Parse node ID
-      if (!parseIntParam(tokens[1], &targetNode) || targetNode < 0 || targetNode > 63) {
-        Serial.println("err: Invalid node ID");
-        return;
-      }
-      
-      // Parse percentage value
-      if (!parseFloatParam(tokens[2], &val) || !isInRange(val, 0.0f, 100.0f)) {
-        Serial.println("err: Invalid percentage (must be between 0.0 and 100.0)");
-        return;
-      }
-  
-      // Check if we need to forward this command
-      if (shouldForwardCommand(targetNode))
-      {
-        // Forward to specific node - control type 5 = percentage
-        if (sendControlCommand(targetNode, 5, val))
-        {
+/**
+* Generic handler for targeted commands that follow the same pattern
+* 
+* @param targetNode Node to target (0 for broadcast)
+* @param controlType CAN control type code
+* @param value Command value
+* @return true if handled successfully
+*/
+static bool handleTargetedCommand(uint8_t targetNode, uint8_t controlType, float value) {
+  // Check if we need to forward this command
+  if (shouldForwardCommand(targetNode)) {
+      // Forward to specific node
+      if (sendControlCommand(targetNode, controlType, value)) {
           Serial.println("ack");
-        }
-        else
-        {
+      } else {
           Serial.println("err: CAN forwarding failed");
-        }
-        return;
       }
+      return true;
+  }
   
-      // Handle broadcast case (targetNode = 0)
-      if (targetNode == 0)
-      {
-        if (sendControlCommand(CAN_ADDR_BROADCAST, 5, val))
-        {
+  // Handle broadcast case (targetNode = 0)
+  if (targetNode == 0) {
+      if (sendControlCommand(CAN_ADDR_BROADCAST, controlType, value)) {
           // Also apply locally since broadcast includes this node
-          setLEDPercentage(val);
+          applyLocalCommand(controlType, value);
           Serial.println("ack");
-        }
-        else
-        {
+      } else {
           Serial.println("err: CAN broadcast failed");
-        }
-        return;
       }
+      return true;
+  }
   
-      // Apply locally
-      setLEDPercentage(val);
-      Serial.println("ack");
-      return;
-    }
-  // "w <i> <watts>" => set LED by power in watts
-  else if (strcmp(tokens[0], "w") == 0)
-  {
-    if (numTokens < 3)
-    {
-      Serial.println("err: Missing parameters");
-      return;
-    }
+  // Apply locally
+  applyLocalCommand(controlType, value);
+  Serial.println("ack");
+  return true;
+}
 
-    int targetNode;
-    float val;
-    
-    // Parse node ID
-    if (!parseIntParam(tokens[1], &targetNode) || targetNode < 0 || targetNode > 63) {
-      Serial.println("err: Invalid node ID");
-      return;
-    }
-    
-    // Parse power value
-    if (!parseFloatParam(tokens[2], &val) || !isInRange(val, 0.0f, MAX_POWER_WATTS)) {
-      Serial.println("err: Invalid power (must be between 0.0 and MAX_POWER_WATTS)");
-      return;
-    }
-
-    // Check if we need to forward this command
-    if (shouldForwardCommand(targetNode))
-    {
-      // Forward to specific node - control type 6 = power in watts
-      if (sendControlCommand(targetNode, 6, val))
-      {
-        Serial.println("ack");
-      }
-      else
-      {
-        Serial.println("err: CAN forwarding failed");
-      }
-      return;
-    }
-
-    // Handle broadcast case (targetNode = 0)
-    if (targetNode == 0)
-    {
-      if (sendControlCommand(CAN_ADDR_BROADCAST, 6, val))
-      {
-        // Also apply locally since broadcast includes this node
-        setLEDPower(val);
-        Serial.println("ack");
-      }
-      else
-      {
-        Serial.println("err: CAN broadcast failed");
-      }
-      return;
-    }
-
-    // Apply locally
-    setLEDPower(val);
-    Serial.println("ack");
-    return;
+/**
+* Apply a command locally based on control type
+* 
+* @param controlType CAN control type code
+* @param value Command value
+*/
+static void applyLocalCommand(uint8_t controlType, float value) {
+  switch (controlType) {
+      case 4: // Duty cycle
+          setLEDDutyCycle(value);
+          break;
+      case 5: // Percentage
+          setLEDPercentage(value);
+          break;
+      case 6: // Power in watts
+          setLEDPower(value);
+          break;
+      case 7: // Luminaire state
+          critical_section_enter_blocking(&commStateLock);
+          controlState.luminaireState = static_cast<LuminaireState>((int)value);
+          critical_section_exit(&commStateLock);
+          break;
+      case 8: // Anti-windup
+          critical_section_enter_blocking(&commStateLock);
+          controlState.antiWindup = (value == 1);
+          critical_section_exit(&commStateLock);
+          break;
+      case 9: // Feedback control
+          critical_section_enter_blocking(&commStateLock);
+          controlState.feedbackControl = (value == 1);
+          critical_section_exit(&commStateLock);
+          break;
+      case 10: // Reference illuminance
+          critical_section_enter_blocking(&commStateLock);
+          controlState.setpointLux = value;
+          critical_section_exit(&commStateLock);
+          break;
+      case 14: // Filter enable/disable
+          critical_section_enter_blocking(&commStateLock);
+          sensorState.filterEnabled = (value == 1);
+          critical_section_exit(&commStateLock);
+          break;
   }
+}
 
-  //-----------------------------------------------------------------------------
-  // SYSTEM STATE CONTROL COMMANDS
-  //-----------------------------------------------------------------------------
-
-  // "o <i> <val>" => set occupancy state (0=off, 1=unoccupied, 2=occupied)
-  else if (strcmp(tokens[0], "o") == 0)
-  {
-    if (numTokens < 3)
-    {
-      Serial.println("err: Missing parameters");
-      return;
-    }
-
-    int targetNode;
-    int val;
-    
-    // Parse node ID
-    if (!parseIntParam(tokens[1], &targetNode) || targetNode < 0 || targetNode > 63) {
-      Serial.println("err: Invalid node ID");
-      return;
-    }
-    
-    // Parse state value
-    if (!parseIntParam(tokens[2], &val) || !isInRange(val, 0, 2)) {
-      Serial.println("err: Invalid state (must be 0=off, 1=unoccupied, or 2=occupied)");
-      return;
-    }
-
-    // Check if we need to forward this command
-    if (shouldForwardCommand(targetNode))
-    {
-      // Forward to specific node - control type 7 = occupancy
-      if (sendControlCommand(targetNode, 7, val))
-      {
-        Serial.println("ack");
-      }
-      else
-      {
-        Serial.println("err: CAN forwarding failed");
-      }
-      return;
-    }
-
-    // Handle broadcast case (targetNode = 0)
-    if (targetNode == 0)
-    {
-      if (sendControlCommand(CAN_ADDR_BROADCAST, 7, val))
-      {
-        // Also apply locally since broadcast includes this node
-        critical_section_enter_blocking(&commStateLock);
-        controlState.luminaireState = static_cast<LuminaireState>(val); // Direct casting
-        critical_section_exit(&commStateLock);
-        Serial.println("ack");
-      }
-      else
-      {
-        Serial.println("err: CAN broadcast failed");
-      }
-      return;
-    }
-
-    // Apply locally
-    critical_section_enter_blocking(&commStateLock);
-    controlState.luminaireState = static_cast<LuminaireState>(val); // Direct casting
-    critical_section_exit(&commStateLock);
-    Serial.println("ack");
-    return;
-  }
-  // "a <i> <val>" => set anti-windup on/off (0=off, 1=on)
-  else if (strcmp(tokens[0], "a") == 0)
-  {
-    if (numTokens < 3)
-    {
-      Serial.println("err: Missing parameters");
-      return;
-    }
-
-    int targetNode;
-    int val;
-    
-    // Parse node ID
-    if (!parseIntParam(tokens[1], &targetNode) || targetNode < 0 || targetNode > 63) {
-      Serial.println("err: Invalid node ID");
-      return;
-    }
-    
-    // Parse anti-windup value
-    if (!parseIntParam(tokens[2], &val) || !isInRange(val, 0, 1)) {
-      Serial.println("err: Invalid anti-windup value (must be 0=off or 1=on)");
-      return;
-    }
-
-    // Check if we need to forward this command
-    if (shouldForwardCommand(targetNode))
-    {
-      // Forward to specific node - control type 8 = anti-windup
-      if (sendControlCommand(targetNode, 8, val))
-      {
-        Serial.println("ack");
-      }
-      else
-      {
-        Serial.println("err: CAN forwarding failed");
-      }
-      return;
-    }
-
-    // Handle broadcast case (targetNode = 0)
-    if (targetNode == 0)
-    {
-      if (sendControlCommand(CAN_ADDR_BROADCAST, 8, val))
-      {
-        // Also apply locally since broadcast includes this node
-        critical_section_enter_blocking(&commStateLock);
-        controlState.antiWindup = (val == 1);
-        critical_section_exit(&commStateLock);
-        Serial.println("ack");
-      }
-      else
-      {
-        Serial.println("err: CAN broadcast failed");
-      }
-      return;
-    }
-    
-    // Apply locally
-    critical_section_enter_blocking(&commStateLock);
-    controlState.antiWindup = (val == 1);
-    critical_section_exit(&commStateLock);
-    Serial.println("ack");
-    return;
-  }
-  // "fi <i> <val>" => set filter enable/disable (0=off, 1=on)
-  else if (strcmp(tokens[0], "fi") == 0)
-  {
-    if (numTokens < 3)
-    {
-      Serial.println("err: Missing parameters");
-      return;
-    }
-
-    int targetNode;
-    int val;
-    
-    // Parse node ID
-    if (!parseIntParam(tokens[1], &targetNode) || targetNode < 0 || targetNode > 63) {
-      Serial.println("err: Invalid node ID");
-      return;
-    }
-    
-    // Parse filter value
-    if (!parseIntParam(tokens[2], &val) || !isInRange(val, 0, 1)) {
-      Serial.println("err: Invalid filter value (must be 0=off or 1=on)");
-      return;
-    }
-
-    // Check if we need to forward this command
-    if (shouldForwardCommand(targetNode))
-    {
-      // Forward to specific node - control type 14 = filter enable/disable
-      if (sendControlCommand(targetNode, 14, val))
-      {
-        Serial.println("ack");
-      }
-      else
-      {
-        Serial.println("err: CAN forwarding failed");
-      }
-      return;
-    }
-
-    // Handle broadcast case (targetNode = 0)
-    if (targetNode == 0)
-    {
-      if (sendControlCommand(CAN_ADDR_BROADCAST, 14, val))
-      {
-        // Also apply locally since broadcast includes this node
-        critical_section_enter_blocking(&commStateLock);
-        sensorState.filterEnabled = (val == 1);
-        critical_section_exit(&commStateLock);
-        Serial.println("ack");
-      }
-      else
-      {
-        Serial.println("err: CAN broadcast failed");
-      }
-      return;
-    }
-
-    // Apply locally
-    critical_section_enter_blocking(&commStateLock);
-    sensorState.filterEnabled = (val == 1);
-    critical_section_exit(&commStateLock);
-    Serial.println("ack");
-    return;
-  }
-  // "f <i> <val>" => set feedback control on/off (0=off, 1=on)
-  else if (strcmp(tokens[0], "f") == 0)
-  {
-    if (numTokens < 3)
-    {
-      Serial.println("err: Missing parameters");
-      return;
-    }
-
-    int targetNode;
-    int val;
-    
-    // Parse node ID
-    if (!parseIntParam(tokens[1], &targetNode) || targetNode < 0 || targetNode > 63) {
-      Serial.println("err: Invalid node ID");
-      return;
-    }
-    
-    // Parse feedback control value
-    if (!parseIntParam(tokens[2], &val) || !isInRange(val, 0, 1)) {
-      Serial.println("err: Invalid feedback control value (must be 0=off or 1=on)");
-      return;
-    }
-
-    // Check if we need to forward this command
-    if (shouldForwardCommand(targetNode))
-    {
-      // Forward to specific node - control type 9 = feedback control
-      if (sendControlCommand(targetNode, 9, val))
-      {
-        Serial.println("ack");
-      }
-      else
-      {
-        Serial.println("err: CAN forwarding failed");
-      }
-      return;
-    }
-
-    // Handle broadcast case (targetNode = 0)
-    if (targetNode == 0)
-    {
-      if (sendControlCommand(CAN_ADDR_BROADCAST, 9, val))
-      {
-        // Also apply locally since broadcast includes this node
-        critical_section_enter_blocking(&commStateLock);
-        controlState.feedbackControl = (val == 1);
-        critical_section_exit(&commStateLock);
-        Serial.println("ack");
-      }
-      else
-      {
-        Serial.println("err: CAN broadcast failed");
-      }
-      return;
-    }
-    
-    // Apply locally
-    critical_section_enter_blocking(&commStateLock);
-    controlState.feedbackControl = (val == 1);
-    critical_section_exit(&commStateLock);
-    Serial.println("ack");
-    return;
-  }
-  // "r <i> <val>" => set illuminance reference (lux)
-  else if (strcmp(tokens[0], "r") == 0)
-  {
-    if (numTokens < 3)
-    {
-      Serial.println("err: Missing parameters");
-      return;
-    }
-
-    int targetNode;
-    float val;
-    
-    // Parse node ID
-    if (!parseIntParam(tokens[1], &targetNode) || targetNode < 0 || targetNode > 63) {
-      Serial.println("err: Invalid node ID");
-      return;
-    }
-    
-    // Parse illuminance reference value
-    if (!parseFloatParam(tokens[2], &val) || !isInRange(val, 0.0f, MAX_ILLUMINANCE)) {
-      Serial.println("err: Invalid illuminance reference (must be between 0.0 and MAX_ILLUMINANCE)");
-      return;
-    }
-
-    // Check if we need to forward this command
-    if (shouldForwardCommand(targetNode))
-    {
-      // Forward to specific node - control type 10 = reference illuminance
-      if (sendControlCommand(targetNode, 10, val))
-      {
-        Serial.println("ack");
-      }
-      else
-      {
-        Serial.println("err: CAN forwarding failed");
-      }
-      return;
-    }
-
-    // Handle broadcast case (targetNode = 0)
-    if (targetNode == 0)
-    {
-      if (sendControlCommand(CAN_ADDR_BROADCAST, 10, val))
-      {
-        // Also apply locally since broadcast includes this node
-        critical_section_enter_blocking(&commStateLock);
-        controlState.setpointLux = val;
-        critical_section_exit(&commStateLock);
-        Serial.println("ack");
-      }
-      else
-      {
-        Serial.println("err: CAN broadcast failed");
-      }
-      return;
-    }
-    
-    // Apply locally
-    critical_section_enter_blocking(&commStateLock);
-    controlState.setpointLux = val;
-    critical_section_exit(&commStateLock);
-    Serial.println("ack");
-    return;
-  }
-  // "h" => Print help information
-  else if (strcmp(tokens[0], "h") == 0)
-  {
-    printHelp();
-    return;
-  }
-
-  //-----------------------------------------------------------------------------
-  // DATA STREAMING COMMANDS
-  //-----------------------------------------------------------------------------
-
-  // "s <x> <i>" => start stream of real-time variable <x> for desk <i>
-  else if (strcmp(tokens[0], "s") == 0)
-  {
-    if (numTokens < 3)
-    {
-      Serial.println("err: Missing parameters");
-      return;
-    }
-
-    char var[TOKEN_MAX_LENGTH];
-    strcpy(var, tokens[1]); // Variable name is in tokens[1]
-    
-    int targetNode;
-    // Parse node ID with error checking
-    if (!parseIntParam(tokens[2], &targetNode) || targetNode < 0 || targetNode > 63) {
-      Serial.println("err: Invalid node ID");
-      return;
-    }
-
-    // Check if we need to forward this command
-    if (shouldForwardCommand(targetNode))
-    {
-      // Map variable names to numeric codes for CAN transmission
-      float varCode = 0; // Default for 'y' (lux)
-
-      if (strcmpIgnoreCase(var, "u") == 0)
-        varCode = 1; // Duty cycle
-      else if (strcmpIgnoreCase(var, "p") == 0)
-        varCode = 2; // Power percentage
-      else if (strcmpIgnoreCase(var, "o") == 0)
-        varCode = 3; // Occupancy
-      else if (strcmpIgnoreCase(var, "a") == 0)
-        varCode = 4; // Anti-windup
-      else if (strcmpIgnoreCase(var, "f") == 0)
-        varCode = 5; // Feedback control
-      else if (strcmpIgnoreCase(var, "r") == 0)
-        varCode = 6; // Reference illuminance
-      else if (strcmpIgnoreCase(var, "y") == 0)
-        varCode = 0; // Illuminance (lux)
-      else if (strcmpIgnoreCase(var, "v") == 0)
-        varCode = 7; // LDR voltage
-      else if (strcmpIgnoreCase(var, "d") == 0)
-        varCode = 8; // External illuminance
-      else if (strcmpIgnoreCase(var, "t") == 0)
-        varCode = 9; // Elapsed time
-      else if (strcmpIgnoreCase(var, "V") == 0)
-        varCode = 10; // Visibility error
-      else if (strcmpIgnoreCase(var, "F") == 0)
-        varCode = 11; // Flicker
-      else if (strcmpIgnoreCase(var, "E") == 0)
-        varCode = 12; // Energy
-      else {
-        Serial.println("err: Unknown variable");
-        return;
-      }
-
-      if (sendControlCommand(targetNode, 11, varCode))
-      {
-        Serial.println("ack");
-      }
-      else
-      {
-        Serial.println("err: CAN forwarding failed");
-      }
-      return;
-    }
-    
-    // Handle locally
-    startStream(var, targetNode);
-    Serial.println("ack");
-    return;
-  }
-
-  // "S <x> <i>" => stop stream of variable <x> for desk <i>
-  else if (strcmp(tokens[0], "S") == 0)
-  {
-    if (numTokens < 3)
-    {
-      Serial.println("err: Missing parameters");
-      return;
-    }
-
-    char var[TOKEN_MAX_LENGTH];
-    strcpy(var, tokens[1]); // Variable name is in tokens[1]
-    
-    int targetNode;
-    // Parse node ID with error checking
-    if (!parseIntParam(tokens[2], &targetNode) || targetNode < 0 || targetNode > 63) {
-      Serial.println("err: Invalid node ID");
-      return;
-    }
-
-    // Check if we need to forward this command
-    if (shouldForwardCommand(targetNode))
-    {
-      // Map variable names to numeric codes for CAN transmission
-      float varCode = 0; // Default for 'y' (lux)
-
-      if (strcmpIgnoreCase(var, "u") == 0)
-        varCode = 1; // Duty cycle
-      else if (strcmpIgnoreCase(var, "p") == 0)
-        varCode = 2; // Power percentage
-      else if (strcmpIgnoreCase(var, "o") == 0)
-        varCode = 3; // Occupancy
-      else if (strcmpIgnoreCase(var, "a") == 0)
-        varCode = 4; // Anti-windup
-      else if (strcmpIgnoreCase(var, "f") == 0)
-        varCode = 5; // Feedback control
-      else if (strcmpIgnoreCase(var, "r") == 0)
-        varCode = 6; // Reference illuminance
-      else if (strcmpIgnoreCase(var, "y") == 0)
-        varCode = 0; // Illuminance (lux)
-      else if (strcmpIgnoreCase(var, "v") == 0)
-        varCode = 7; // LDR voltage
-      else if (strcmpIgnoreCase(var, "d") == 0)
-        varCode = 8; // External illuminance
-      else if (strcmpIgnoreCase(var, "t") == 0)
-        varCode = 9; // Elapsed time
-      else if (strcmpIgnoreCase(var, "V") == 0)
-        varCode = 10; // Visibility error
-      else if (strcmpIgnoreCase(var, "F") == 0)
-        varCode = 11; // Flicker
-      else if (strcmpIgnoreCase(var, "E") == 0)
-        varCode = 12; // Energy
-      else {
-        Serial.println("err: Unknown variable");
-        return;
-      }
-
-      if (sendControlCommand(targetNode, 12, varCode))
-      {
-        Serial.println("ack");
-      }
-      else
-      {
-        Serial.println("err: CAN forwarding failed");
-      }
-      return;
-    }
-
-    // Handle locally
-    stopStream(var, targetNode);
-    Serial.println("ack");
-    return;
-  }
-
-  //-----------------------------------------------------------------------------
-  // METRICS AND DATA QUERY COMMANDS
-  //-----------------------------------------------------------------------------
-
-  // "g <var> <i>" => Get value of variable <var> from node <i>
-  else if (strcmp(tokens[0], "g") == 0)
-  {
-    if (numTokens < 3)
-    {
-      Serial.println("err: Missing parameters");
-      return;
-    }
-
-    char subCommand[TOKEN_MAX_LENGTH];
-    char originalCase[TOKEN_MAX_LENGTH];
-    char idx[TOKEN_MAX_LENGTH];
-    strcpy(subCommand, tokens[1]);
-    strcpy(originalCase, tokens[1]);
-    strcpy(idx, tokens[2]);
-
-    int targetNode;
-    // Parse node ID with error checking
-    if (!parseIntParam(tokens[2], &targetNode) || targetNode < 0 || targetNode > 63) {
-      Serial.println("err: Invalid node ID");
-      return;
-    }
-
-    // Check if we need to forward this command
-    if (shouldForwardCommand(targetNode))
-    {
-      // Map the get command to a CAN query message type (using code 20-32)
-      uint8_t queryType = 20; // Default query type
-
-      // Map variable types to query codes
-      if (strcmp(originalCase, "V") == 0)
-        queryType = 20; // Visibility error
-      else if (strcmp(originalCase, "F") == 0)
-        queryType = 21; // Flicker
-      else if (strcmp(originalCase, "E") == 0)
-        queryType = 22; // Energy
-      else if (strcmp(subCommand, "u") == 0)
-        queryType = 23; // Duty cycle
-      else if (strcmp(subCommand, "o") == 0)
-        queryType = 24; // Occupancy
-      else if (strcmp(subCommand, "a") == 0)
-        queryType = 25; // Anti-windup
-      else if (strcmp(subCommand, "f") == 0)
-        queryType = 26; // Feedback control
-      else if (strcmp(subCommand, "r") == 0)
-        queryType = 27; // Reference illuminance
-      else if (strcmp(subCommand, "y") == 0)
-        queryType = 28; // Current illuminance
-      else if (strcmp(subCommand, "p") == 0)
-        queryType = 29; // Power consumption
-      else if (strcmp(subCommand, "t") == 0)
-        queryType = 30; // Elapsed time
-      else if (strcmp(subCommand, "v") == 0)
-        queryType = 31; // LDR voltage
-      else if (strcmp(subCommand, "d") == 0)
-        queryType = 32; // External illuminance
-      else
-      {
-        Serial.println("err: Unsupported remote variable query");
-        return;
-      }
-
-      if (sendControlCommand(targetNode, queryType, 0.0f))
-      {
-        Serial.print("Query sent to node ");
-        Serial.println(targetNode);
-
-        // Instead of waiting in a blocking loop, store the query details
-        if (!addPendingQuery(targetNode, queryType, originalCase[0] == 'V' || originalCase[0] == 'F' || originalCase[0] == 'E' ? originalCase : subCommand, idx))
-        {
-          Serial.println("err: Too many pending queries");
-        }
-        return;
-      }
-      else
-      {
-        Serial.print("err: Failed to send query to node ");
-        Serial.println(targetNode);
-        return;
-      }
-
-      if (!responseReceived)
-      {
-        Serial.print("err: No response from node ");
-        Serial.println(targetNode);
-      }
-      return;
-    }
-
-    // Handle local metric queries
-
-    // Quality metrics
-    // "g V <i>" => "V <i> <val>" (Visibility error metric)
-    if (strcmp(originalCase, "V") == 0)
-    {
+/**
+* Handle a local query (non-forwarded)
+* 
+* @param subCommand The query command
+* @param originalCase Original case-preserved command
+* @param idx Node index string
+* @param numTokens Total number of tokens
+* @param tokens Full token array
+*/
+static void handleLocalQuery(const char* subCommand, const char* originalCase, const char* idx, int numTokens, char tokens[][TOKEN_MAX_LENGTH]) {
+  // Quality metrics
+  if (strcmp(originalCase, "V") == 0) {
       float V = computeVisibilityErrorFromBuffer();
       Serial.print("V ");
       Serial.print(idx);
       Serial.print(" ");
       Serial.println(V, 2);
-      return;
-    }
-    // "g F <i>" => "F <i> <val>" (Flicker metric)
-    else if (strcmp(originalCase, "F") == 0)
-    {
+  }
+  else if (strcmp(originalCase, "F") == 0) {
       float F = computeFlickerFromBuffer();
       Serial.print("F ");
       Serial.print(idx);
       Serial.print(" ");
       Serial.println(F, 4);
-      return;
-    }
-    // "g E <i>" => "E <i> <val>" (Energy metric)
-    else if (strcmp(originalCase, "E") == 0)
-    {
+  }
+  else if (strcmp(originalCase, "E") == 0) {
       float E = computeEnergyFromBuffer();
       Serial.print("E ");
       Serial.print(idx);
       Serial.print(" ");
       Serial.println(E, 4);
-      return;
-    }
-
-    // Control system variables
-    // "g u <i>" => "u <i> <val>" (duty cycle)
-    if (strcmp(subCommand, "u") == 0)
-    {
+  }
+  // Control system variables
+  else if (strcmp(subCommand, "u") == 0) {
       Serial.print("u ");
       Serial.print(idx);
       Serial.print(" ");
       critical_section_enter_blocking(&commStateLock);
       Serial.println(controlState.dutyCycle, 4);
       critical_section_exit(&commStateLock);
-      return;
-    }
-    // "g o <i>" => "o <i> <val>" (occupancy)
-    else if (strcmp(subCommand, "o") == 0)
-    {
+  }
+  else if (strcmp(subCommand, "o") == 0) {
       critical_section_enter_blocking(&commStateLock);
       int occVal = static_cast<int>(controlState.luminaireState);
       critical_section_exit(&commStateLock);
@@ -1177,735 +523,550 @@ static void processCommandLine(const char *cmdLine)
       Serial.print(idx);
       Serial.print(" ");
       Serial.println(occVal);
-      return;
-    }
-    // "g a <i>" => "a <i> <val>" (anti-windup)
-    else if (strcmp(subCommand, "a") == 0)
-    {
-      critical_section_enter_blocking(&commStateLock);
-      int awVal = controlState.antiWindup ? 1 : 0;
-      critical_section_exit(&commStateLock);
-      Serial.print("a ");
-      Serial.print(idx);
-      Serial.print(" ");
-      Serial.println(awVal);
-      return;
-    }
-    // "g f <i>" => "f <i> <val>" (feedback control)
-    else if (strcmp(subCommand, "f") == 0)
-    {
-      critical_section_enter_blocking(&commStateLock);
-      int fbVal = controlState.feedbackControl ? 1 : 0;
-      critical_section_exit(&commStateLock);
-      Serial.print("f ");
-      Serial.print(idx);
-      Serial.print(" ");
-      Serial.println(fbVal);
-      return;
-    }
-    // "g r <i>" => "r <i> <val>" (reference illuminance)
-    else if (strcmp(subCommand, "r") == 0)
-    {
-      Serial.print("r ");
-      Serial.print(idx);
-      Serial.print(" ");
-      critical_section_enter_blocking(&commStateLock);
-      Serial.println(controlState.setpointLux, 4);
-      critical_section_exit(&commStateLock);
-      return;
-    }
-    // "g y <i>" => "y <i> <val>" (current illuminance)
-    else if (strcmp(subCommand, "y") == 0)
-    {
-      float lux = readLux();
-      Serial.print("y ");
-      Serial.print(idx);
-      Serial.print(" ");
-      Serial.println(lux, 2);
-      return;
-    }
-
-    // Sensor measurements
-    // "g v <i>" => measure voltage level at LDR => "v <i> <val>"
-    else if (strcmp(subCommand, "v") == 0)
-    {
-      float vLdr = getVoltageAtLDR();
-      Serial.print("v ");
-      Serial.print(idx);
-      Serial.print(" ");
-      Serial.println(vLdr, 3);
-      return;
-    }
-    // "g d <i>" => external illuminance => "d <i> <val>"
-    else if (strcmp(subCommand, "d") == 0)
-    {
-      float dVal = getExternalIlluminance();
-      Serial.print("d ");
-      Serial.print(idx);
-      Serial.print(" ");
-      Serial.println(dVal, 2);
-      return;
-    }
-    // "g p <i>" => instantaneous power => "p <i> <val>"
-    else if (strcmp(subCommand, "p") == 0)
-    {
-      float pVal = getPowerConsumption();
-      Serial.print("p ");
-      Serial.print(idx);
-      Serial.print(" ");
-      Serial.println(pVal, 2);
-      return;
-    }
-    // "g t <i>" => elapsed time => "t <i> <val>"
-    else if (strcmp(subCommand, "t") == 0)
-    {
-      unsigned long sec = getElapsedTime();
-      Serial.print("t ");
-      Serial.print(idx);
-      Serial.print(" ");
-      Serial.println(sec);
-      return;
-    }
-
-    // Historical data buffer
-    // "g b <x> <i>" => "b <x> <i> <val1>,<val2>..."
-    else if (strcmp(subCommand, "b") == 0)
-    {
-      if (numTokens < 4)
-      {
-        Serial.println("err");
-        return;
-      }
-      char xVar[TOKEN_MAX_LENGTH];
-      strcpy(xVar, tokens[2]);
-      int iDesk = atoi(tokens[3]);
-      char bufferData[1024]; // Adjust size as needed
-      getLastMinuteBuffer(xVar, iDesk, bufferData, sizeof(bufferData));
-      Serial.print("b ");
-      Serial.print(xVar);
-      Serial.print(" ");
-      Serial.print(iDesk);
-      Serial.print(" ");
-      Serial.println(bufferData);
-      return;
-    }
-    else if (strcmp(subCommand, "bigdump") == 0)
-    {
-      int iDesk = atoi(tokens[2]);
-
-      // Get the log buffer and count
-      LogEntry *logBuffer = getLogBuffer();
-      int count = getLogCount();
-      if (count == 0)
-      {
-        Serial.println("No data in buffer");
-        return;
-      }
-
-      // Calculate starting index
-      int startIndex = isBufferFull() ? getCurrentIndex() : 0;
-
-      // Dump time values
-      Serial.print("Time: ");
-      for (int i = 0; i < count; i++)
-      {
-        int realIndex = (startIndex + i) % LOG_SIZE;
-        Serial.print(logBuffer[realIndex].timestamp);
-        if (i < count - 1)
-          Serial.print(",");
-      }
-      Serial.println();
-
-      // Dump measured lux values
-      Serial.print("MeasuredLux: ");
-      for (int i = 0; i < count; i++)
-      {
-        int realIndex = (startIndex + i) % LOG_SIZE;
-        Serial.print(logBuffer[realIndex].lux, 2);
-        if (i < count - 1)
-          Serial.print(",");
-      }
-      Serial.println();
-
-      // Dump duty cycle values
-      Serial.print("DutyCycle: ");
-      for (int i = 0; i < count; i++)
-      {
-        int realIndex = (startIndex + i) % LOG_SIZE;
-        Serial.print(logBuffer[realIndex].duty, 4);
-        if (i < count - 1)
-          Serial.print(",");
-      }
-      Serial.println();
-
-      Serial.print("SetpointLux: ");
-      for (int i = 0; i < count; i++)
-      {
-        int realIndex = (startIndex + i) % LOG_SIZE;
-        Serial.print(logBuffer[realIndex].setpoint, 2);
-        if (i < count - 1)
-          Serial.print(",");
-      }
-      Serial.println();
-
-      // Confirmation
-      Serial.println("Data dump complete");
-      return;
-    }
-    else if (strcmp(subCommand, "mdump") == 0)
-    {
-      int count = getLogCount();
-      if (count == 0)
-      {
-        Serial.println("No data available for metrics");
-        return;
-      }
-
-      // Get access to the log buffer
-      LogEntry *buffer = getLogBuffer();
-      int startIndex = isBufferFull() ? getCurrentIndex() : 0;
-
-      // Print Time row
-      Serial.print("Time: ");
-      for (int i = 0; i < count; i++)
-      {
-        int idx = (startIndex + i) % LOG_SIZE;
-        Serial.print(buffer[idx].timestamp);
-        if (i < count - 1)
-          Serial.print(",");
-      }
-      Serial.println();
-
-      // Measured Lux row
-      Serial.print("MeasuredLux: ");
-      for (int i = 0; i < count; i++)
-      {
-        int idx = (startIndex + i) % LOG_SIZE;
-        Serial.print(buffer[idx].lux, 2);
-        if (i < count - 1)
-          Serial.print(",");
-      }
-      Serial.println();
-
-      // DutyCycle row
-      Serial.print("DutyCycle: ");
-      for (int i = 0; i < count; i++)
-      {
-        int idx = (startIndex + i) % LOG_SIZE;
-        Serial.print(buffer[idx].duty, 4);
-        if (i < count - 1)
-          Serial.print(",");
-      }
-      Serial.println();
-
-      // Setpoint row
-      Serial.print("SetpointLux: ");
-      for (int i = 0; i < count; i++)
-      {
-        int idx = (startIndex + i) % LOG_SIZE;
-        Serial.print(buffer[idx].setpoint, 2);
-        if (i < count - 1)
-          Serial.print(",");
-      }
-      Serial.println();
-
-      // Flicker row (instantaneous flicker error)
-      Serial.print("Flicker: ");
-      for (int i = 0; i < count; i++)
-      {
-        int idx = (startIndex + i) % LOG_SIZE;
-        Serial.print(buffer[idx].flicker, 6);
-        if (i < count - 1)
-          Serial.print(",");
-      }
-      Serial.println();
-
-      // Accumulated energy row
-      Serial.print("Energy: ");
-      float energySum = 0.0f;
-      for (int i = 0; i < count; i++)
-      {
-        int idx = (startIndex + i) % LOG_SIZE;
-        // Calculate time step (dt) in seconds
-        float dt = 0.0f;
-        if (i > 0)
-        {
-          int prevIdx = (startIndex + i - 1) % LOG_SIZE;
-          dt = (buffer[idx].timestamp - buffer[prevIdx].timestamp) / 1000.0f;
-        }
-        // Power = MAX_POWER_WATTS * duty
-        float power = MAX_POWER_WATTS * buffer[idx].duty;
-        energySum += power * dt;
-        Serial.print(energySum, 4);
-        if (i < count - 1)
-          Serial.print(",");
-      }
-      Serial.println();
-
-      // Accumulated visibility error row
-      Serial.print("VisibilityError: ");
-      float visSum = 0.0f;
-      for (int i = 0; i < count; i++)
-      {
-        int idx = (startIndex + i) % LOG_SIZE;
-        float dt = 0.0f;
-        if (i > 0)
-        {
-          int prevIdx = (startIndex + i - 1) % LOG_SIZE;
-          dt = (buffer[idx].timestamp - buffer[prevIdx].timestamp) / 1000.0f;
-        }
-        // Only add error when measured < setpoint
-        float err = 0.0f;
-        if (buffer[idx].lux < buffer[idx].setpoint)
-        {
-          err = (buffer[idx].setpoint - buffer[idx].lux) * dt;
-        }
-        visSum += err;
-        Serial.print(visSum, 2);
-        if (i < count - 1)
-          Serial.print(",");
-      }
-      Serial.println();
-
-      // Jitter row (in microseconds)
-      // -------------------------------------------------------------------------
-      Serial.print("Jitter_us: ");
-      for (int i = 0; i < count; i++)
-      {
-        int idx = (startIndex + i) % LOG_SIZE;
-        Serial.print(buffer[idx].jitter / 1000, 4); // e.g. 4 decimals
-        if (i < count - 1)
-          Serial.print(",");
-      }
-      Serial.println();
-
-      // External Illuminance row
-      Serial.print("ExternalLux: ");
-      for (int i = 0; i < count; i++)
-      {
-        int idx = (startIndex + i) % LOG_SIZE;
-        Serial.print(buffer[idx].extLux, 2);
-        if (i < count - 1)
-          Serial.print(",");
-      }
-      Serial.println();
-
-      Serial.println("Data dump complete (mdump, transposed).");
-      return;
-    }
-    else
-    {
-      Serial.println("err: Unknown metric or variable");
-      return;
-    }
   }
-  //-----------------------------------------------------------------------------
-  // CONTROLLER PARAMETER COMMANDS
-  //-----------------------------------------------------------------------------
+  // Additional query handlers for other variables
+  else if (strcmp(subCommand, "b") == 0 || strcmp(subCommand, "bigdump") == 0 || 
+           strcmp(subCommand, "mdump") == 0) {
+      handleDataBufferQuery(subCommand, numTokens, tokens);
+  }
+  else {
+      // Handle remaining variable queries
+      handleBasicVariableQuery(subCommand, idx);
+  }
+}
 
-  // "k <i> <param> <value>" => set controller parameter
-  else if (strcmp(tokens[0], "k") == 0)
-  {
-    if (numTokens < 4)
-    {
-      Serial.println("err: Missing parameters");
-      return;
-    }
+//==========================================================================================================================================================
+// COMMAND CATEGORY HANDLERS
+//==========================================================================================================================================================
 
-    int targetNode;
-    float value;
-    
-    // Parse node ID
-    if (!parseIntParam(tokens[1], &targetNode) || targetNode < 0 || targetNode > 63) {
-      Serial.println("err: Invalid node ID");
-      return;
-    }
-    
-    char param[TOKEN_MAX_LENGTH];
-    strcpy(param, tokens[2]);
-    
-    // Parse parameter value
-    if (!parseFloatParam(tokens[3], &value)) {
-      Serial.println("err: Invalid parameter value");
-      return;
-    }
-
-    // Check if we need to forward this command
-    if (shouldForwardCommand(targetNode))
-    {
-      // Map parameter to control code for CAN
-      uint8_t paramCode = 0;
-      if (strcmp(param, "b") == 0)
-        paramCode = 15;
-      else if (strcmp(param, "k") == 0)
-        paramCode = 16;
-      else
-      {
-        Serial.println("err: Unknown parameter (must be 'b' or 'k')");
-        return;
+/**
+ * Handle LED control commands (u, p, w)
+ * 
+ * @param tokens Command tokens
+ * @param numTokens Number of tokens
+ * @return true if command was handled, false otherwise
+ */
+static bool handleLEDCommands(char tokens[][TOKEN_MAX_LENGTH], int numTokens) {
+  if (strcmp(tokens[0], "u") == 0) {
+      // Duty cycle command
+      if (numTokens < 3) {
+          Serial.println("err: Missing parameters");
+          return true;
       }
-
-      if (sendControlCommand(targetNode, paramCode, value))
-      {
-        Serial.println("ack");
+      
+      int targetNode;
+      float val;
+      
+      // Parse node ID
+      if (!parseIntParam(tokens[1], &targetNode) || targetNode < 0 || targetNode > 63) {
+          Serial.println("err: Invalid node ID");
+          return true;
       }
-      else
-      {
-        Serial.println("err: CAN forwarding failed");
+      
+      // Parse duty cycle value
+      if (!parseFloatParam(tokens[2], &val) || !isInRange(val, 0.0f, 1.0f)) {
+          Serial.println("err: Invalid duty cycle (must be between 0.0 and 1.0)");
+          return true;
       }
-      return;
-    }
-
-    // Handle locally
-    if (strcmp(param, "b") == 0)
-    {
-      if (!isInRange(value, 0.0f, 1.0f)) {
-        Serial.println("err: Beta must be between 0.0 and 1.0");
-        return;
+      
+      // Process command based on target
+      if (handleTargetedCommand(targetNode, 4, val)) {
+          return true;
       }
-      pid.setWeighting(value);
-      Serial.println("ack");
-    }
-    else if (strcmp(param, "k") == 0)
-    {
-      // Set both gains to the same value
-      pid.setGains(value, value);
-      Serial.println("ack");
-    }
-    else
-    {
-      Serial.println("err: Unknown parameter (must be 'b' or 'k')");
-    }
-    return;
+  } 
+  else if (strcmp(tokens[0], "p") == 0) {
+      // Percentage command
+      if (numTokens < 3) {
+          Serial.println("err: Missing parameters");
+          return true;
+      }
+      
+      int targetNode;
+      float val;
+      
+      // Parse node ID
+      if (!parseIntParam(tokens[1], &targetNode) || targetNode < 0 || targetNode > 63) {
+          Serial.println("err: Invalid node ID");
+          return true;
+      }
+      
+      // Parse percentage value
+      if (!parseFloatParam(tokens[2], &val) || !isInRange(val, 0.0f, 100.0f)) {
+          Serial.println("err: Invalid percentage (must be between 0.0 and 100.0)");
+          return true;
+      }
+      
+      // Process command based on target
+      if (handleTargetedCommand(targetNode, 5, val)) {
+          return true;
+      }
+  }
+  else if (strcmp(tokens[0], "w") == 0) {
+      // Power in watts command
+      if (numTokens < 3) {
+          Serial.println("err: Missing parameters");
+          return true;
+      }
+      
+      int targetNode;
+      float val;
+      
+      // Parse node ID
+      if (!parseIntParam(tokens[1], &targetNode) || targetNode < 0 || targetNode > 63) {
+          Serial.println("err: Invalid node ID");
+          return true;
+      }
+      
+      // Parse power value
+      if (!parseFloatParam(tokens[2], &val) || !isInRange(val, 0.0f, MAX_POWER_WATTS)) {
+          Serial.println("err: Invalid power (must be between 0.0 and MAX_POWER_WATTS)");
+          return true;
+      }
+      
+      // Process command based on target
+      if (handleTargetedCommand(targetNode, 6, val)) {
+          return true;
+      }
+  }
+  else {
+      return false; // Not an LED command
   }
 
-  //-----------------------------------------------------------------------------
-  // CAN NETWORK COMMANDS
-  //-----------------------------------------------------------------------------
+  return true;
+}
 
-  // "c <subcommand> [params]" => CAN-related commands
-  else if (strcmp(tokens[0], "c") == 0)
-  {
-    // "c m <0|1>" => Enable/disable CAN message monitoring
-    if (strcmp(tokens[1], "m") == 0)
-    {
-      if (numTokens < 3)
-      {
-        Serial.println("err: Missing parameters");
-        return;
+/**
+* Handle system state control commands (o, a, fi, f, r, st)
+* 
+* @param tokens Command tokens
+* @param numTokens Number of tokens
+* @return true if command was handled, false otherwise
+*/
+static bool handleSystemStateCommands(char tokens[][TOKEN_MAX_LENGTH], int numTokens) {
+  if (strcmp(tokens[0], "o") == 0) {
+      // Occupancy command
+      if (numTokens < 3) {
+          Serial.println("err: Missing parameters");
+          return true;
       }
-
+      
+      int targetNode;
       int val;
-      if (!parseIntParam(tokens[2], &val) || !isInRange(val, 0, 1)) {
-        Serial.println("err: Invalid monitoring value (must be 0=off or 1=on)");
-        return;
+      
+      // Parse node ID
+      if (!parseIntParam(tokens[1], &targetNode) || targetNode < 0 || targetNode > 63) {
+          Serial.println("err: Invalid node ID");
+          return true;
       }
-
-      canMonitorEnabled = (val == 1);
-
-      Serial.print("CAN monitoring ");
-      Serial.println(canMonitorEnabled ? "enabled" : "disabled");
-      Serial.println("ack");
-      return;
-    }
-
-    // "c st" => Display CAN communication statistics
-    else if (strcmp(tokens[1], "st") == 0)
-    {
-      uint32_t sent, received, errors;
-      float avgLatency;
-      getCANStats(sent, received, errors, avgLatency);
-
-      Serial.println("CAN Statistics:");
-      Serial.print("  Node ID: ");
-      Serial.println(nodeID);
-      Serial.print("  Messages sent: ");
-      Serial.println(sent);
-      Serial.print("  Messages received: ");
-      Serial.println(received);
-      Serial.print("  Errors: ");
-      Serial.println(errors);
-      Serial.print("  Avg. latency: ");
-      Serial.print(avgLatency);
-      Serial.println(" us");
-      Serial.println("ack");
-      return;
-    }
-
-    // "c r" => Reset CAN statistics counters
-    else if (strcmp(tokens[1], "r") == 0)
-    {
-      resetCANStats();
-      Serial.println("CAN statistics reset");
-      Serial.println("ack");
-      return;
-    }
-
-    // "c sc" => Scan for active nodes on the CAN network
-    else if (strcmp(tokens[1], "sc") == 0)
-    {
-      Serial.println("Scanning for active CAN nodes...");
-
-      // Track which nodes respond
-      bool nodeFound[64] = {false};
-      int foundCount = 0;
-
-      // Send ping messages to all possible node addresses
-      for (uint8_t node = 1; node < 64; node++)
-      {
-        // Send a special ping message (control type 3 = discovery)
-        if (sendControlCommand(node, 3, 0))
-        {
-          // Give some time for node to respond
-          delay(50);
-
-          // Process any responses that came in
-          for (int i = 0; i < 5; i++)
-          {
-            can_frame frame;
-            if (readCANMessage(&frame) == MCP2515::ERROR_OK)
-            {
-              uint8_t msgType, srcAddr;
-              parseCANId(frame.can_id, msgType, srcAddr);
-
-              if (!nodeFound[srcAddr])
-              {
-                nodeFound[srcAddr] = true;
-                foundCount++;
-              }
-            }
-            delay(10);
-          }
-        }
+      
+      // Parse state value
+      if (!parseIntParam(tokens[2], &val) || !isInRange(val, 0, 2)) {
+          Serial.println("err: Invalid state (must be 0=off, 1=unoccupied, or 2=occupied)");
+          return true;
       }
-
-      // Now send a broadcast message to catch any we missed
-      sendControlCommand(CAN_ADDR_BROADCAST, 3, 0);
-      delay(200);
-
-      // Process any additional responses
-      for (int i = 0; i < 20; i++)
-      {
-        can_frame frame;
-        if (readCANMessage(&frame) == MCP2515::ERROR_OK)
-        {
-          uint8_t msgType, srcAddr;
-          parseCANId(frame.can_id, msgType, srcAddr);
-
-          if (!nodeFound[srcAddr])
-          {
-            nodeFound[srcAddr] = true;
-            foundCount++;
-          }
-        }
-        delay(10);
+      
+      // Process command based on target
+      if (handleTargetedCommand(targetNode, 7, val)) {
+          return true;
       }
-
-      // Display results
-      Serial.print("Found ");
-      Serial.print(foundCount);
-      Serial.println(" active nodes:");
-
-      for (uint8_t node = 1; node < 64; node++)
-      {
-        if (nodeFound[node])
-        {
-          Serial.print("  Node ");
-          Serial.println(node);
-        }
-      }
-
-      Serial.println("Network scan complete");
-      Serial.println("ack");
-      return;
-    }
-
-    // For the "c l" command (latency test):
-    else if (strcmp(tokens[1], "l") == 0)
-    {
-      if (numTokens < 4)
-      {
-        Serial.println("err: Missing parameters");
-        return;
-      }
-
-      int destNode;
-      if (!parseIntParam(tokens[2], &destNode) || destNode < 1 || destNode > 63) {
-        Serial.println("err: Invalid destination node ID");
-        return;
-      }
-
-      int count;
-      if (!parseIntParam(tokens[3], &count) || count < 1) {
-        Serial.println("err: Invalid sample count (must be >= 1)");
-        return;
-      }
-
-      Serial.print("Measuring round-trip latency to node ");
-      Serial.print(destNode);
-      Serial.print(" (");
-      Serial.print(count);
-      Serial.println(" samples)");
-
-      unsigned long totalLatency = 0;
-      int successCount = 0;
-
-      for (int i = 0; i < count; i++)
-      {
-        unsigned long startTime = micros();
-
-        // Send echo request (using control message type 2 = echo)
-        if (sendControlCommand(destNode, 2, startTime))
-        {
-          // Wait for response with timeout
-          unsigned long timeout = millis() + 500; // 500ms timeout
-          bool responseReceived = false;
-
-          while (millis() < timeout && !responseReceived)
-          {
-            can_frame frame;
-            if (readCANMessage(&frame) == MCP2515::ERROR_OK)
-            {
-              // Check if it's an echo response
-              uint8_t msgType, srcAddr;
-              parseCANId(frame.can_id, msgType, srcAddr);
-
-              if (msgType == CAN_TYPE_RESPONSE && srcAddr == destNode)
-              {
-                unsigned long endTime = micros();
-                unsigned long latency = endTime - startTime;
-                totalLatency += latency;
-                successCount++;
-                responseReceived = true;
-
-                Serial.print("Sample ");
-                Serial.print(i + 1);
-                Serial.print(": ");
-                Serial.print(latency);
-                Serial.println(" us");
-              }
-            }
-          }
-
-          if (!responseReceived)
-          {
-            Serial.print("Sample ");
-            Serial.print(i + 1);
-            Serial.println(": Timeout");
-          }
-        }
-        else
-        {
-          Serial.print("Sample ");
-          Serial.print(i + 1);
-          Serial.println(": Send failed");
-        }
-
-        delay(100); // Wait between samples
-      }
-
-      Serial.println("Latency measurement complete");
-      if (successCount > 0)
-      {
-        float avgLatency = (float)totalLatency / successCount;
-        Serial.print("Average round-trip latency: ");
-        Serial.print(avgLatency, 2);
-        Serial.println(" us");
-      }
-      else
-      {
-        Serial.println("No successful measurements");
-      }
-      Serial.println("ack");
-      return;
-    }
   }
-
-  //-----------------------------------------------------------------------------
-  // LUMINAIRE STATE COMMANDS
-  //-----------------------------------------------------------------------------
-
-  // "st <i> <state>" => set luminaire state (off/unoccupied/occupied)
-  else if (strcmp(tokens[0], "st") == 0)
-  {
-    if (numTokens < 3)
-    {
-      Serial.println("err: Missing parameters");
-      return;
-    }
-    
-    char stateStr[TOKEN_MAX_LENGTH];
-    strcpy(stateStr, tokens[2]);
-    
-    int targetNode;
-    if (!parseIntParam(tokens[1], &targetNode) || targetNode < 0 || targetNode > 63) {
-      Serial.println("err: Invalid node ID");
-      return;
-    }
-
-    // Convert state string to value for CAN transmission
-    int stateVal = -1; // Invalid by default
-    if (strcmp(stateStr, "off") == 0)
-      stateVal = 0;
-    else if (strcmp(stateStr, "unoccupied") == 0)
-      stateVal = 1;
-    else if (strcmp(stateStr, "occupied") == 0)
-      stateVal = 2;
-    else
-    {
-      Serial.println("err: Invalid state (must be 'off', 'unoccupied', or 'occupied')");
-      return;
-    }
-
-    // Check if we need to forward this command
-    if (shouldForwardCommand(targetNode))
-    {
-      // Forward to specific node - control type 13 = luminaire state
-      if (sendControlCommand(targetNode, 13, stateVal))
-      {
-        Serial.println("ack");
+  // Similar implementations for a, fi, f, r commands
+  else if (strcmp(tokens[0], "st") == 0) {
+      // Set luminaire state by name
+      if (numTokens < 3) {
+          Serial.println("err: Missing parameters");
+          return true;
       }
-      else
-      {
-        Serial.println("err: CAN forwarding failed");
+      
+      int targetNode;
+      if (!parseIntParam(tokens[1], &targetNode) || targetNode < 0 || targetNode > 63) {
+          Serial.println("err: Invalid node ID");
+          return true;
       }
-      return;
-    }
-
-    // Handle broadcast case (targetNode = 0)
-    if (targetNode == 0)
-    {
-      if (sendControlCommand(CAN_ADDR_BROADCAST, 13, stateVal))
-      {
-        // Also apply locally since broadcast includes this node
-        if (strcmp(stateStr, "off") == 0)
+      
+      char stateStr[TOKEN_MAX_LENGTH];
+      strcpy(stateStr, tokens[2]);
+      
+      // Convert state string to value for CAN transmission
+      int stateVal = -1; // Invalid by default
+      if (strcmp(stateStr, "off") == 0)
+          stateVal = 0;
+      else if (strcmp(stateStr, "unoccupied") == 0)
+          stateVal = 1;
+      else if (strcmp(stateStr, "occupied") == 0)
+          stateVal = 2;
+      else {
+          Serial.println("err: Invalid state (must be 'off', 'unoccupied', or 'occupied')");
+          return true;
+      }
+      
+      // Check if we need to forward this command
+      if (shouldForwardCommand(targetNode)) {
+          // Forward to specific node - control type 13 = luminaire state
+          if (sendControlCommand(targetNode, 13, stateVal)) {
+              Serial.println("ack");
+          } else {
+              Serial.println("err: CAN forwarding failed");
+          }
+          return true;
+      }
+      
+      // Handle broadcast case (targetNode = 0)
+      if (targetNode == 0) {
+          if (sendControlCommand(CAN_ADDR_BROADCAST, 13, stateVal)) {
+              // Also apply locally since broadcast includes this node
+              if (strcmp(stateStr, "off") == 0)
+                  changeState(STATE_OFF);
+              else if (strcmp(stateStr, "unoccupied") == 0)
+                  changeState(STATE_UNOCCUPIED);
+              else if (strcmp(stateStr, "occupied") == 0)
+                  changeState(STATE_OCCUPIED);
+              Serial.println("ack");
+          } else {
+              Serial.println("err: CAN broadcast failed");
+          }
+          return true;
+      }
+      
+      // Apply locally
+      if (strcmp(stateStr, "off") == 0)
           changeState(STATE_OFF);
-        else if (strcmp(stateStr, "unoccupied") == 0)
+      else if (strcmp(stateStr, "unoccupied") == 0)
           changeState(STATE_UNOCCUPIED);
-        else if (strcmp(stateStr, "occupied") == 0)
+      else if (strcmp(stateStr, "occupied") == 0)
           changeState(STATE_OCCUPIED);
-        Serial.println("ack");
-      }
-      else
-      {
-        Serial.println("err: CAN broadcast failed");
-      }
-      return;
-    }
-
-    // Apply locally
-    if (strcmp(stateStr, "off") == 0)
-      changeState(STATE_OFF);
-    else if (strcmp(stateStr, "unoccupied") == 0)
-      changeState(STATE_UNOCCUPIED);
-    else if (strcmp(stateStr, "occupied") == 0)
-      changeState(STATE_OCCUPIED);
-    Serial.println("ack");
-    return;
+      Serial.println("ack");
+      return true;
   }
-  // Default response for unrecognized commands
-  Serial.println("ack");
-  return;
+  else {
+      return false; // Not a system state command
+  }
+  
+  return true;
+}
+
+/**
+ * Handle data query commands (g)
+ * 
+ * @param tokens Command tokens
+ * @param numTokens Number of tokens
+ * @return true if command was handled, false otherwise
+ */
+static bool handleDataQueryCommands(char tokens[][TOKEN_MAX_LENGTH], int numTokens) {
+  if (strcmp(tokens[0], "g") == 0) {
+      if (numTokens < 3) {
+          Serial.println("err: Missing parameters");
+          return true;
+      }
+
+      char subCommand[TOKEN_MAX_LENGTH];
+      char originalCase[TOKEN_MAX_LENGTH];
+      char idx[TOKEN_MAX_LENGTH];
+      strcpy(subCommand, tokens[1]);
+      strcpy(originalCase, tokens[1]);
+      strcpy(idx, tokens[2]);
+
+      int targetNode;
+      // Parse node ID with error checking
+      if (!parseIntParam(tokens[2], &targetNode) || targetNode < 0 || targetNode > 63) {
+          Serial.println("err: Invalid node ID");
+          return true;
+      }
+
+      // Check if we need to forward this command
+      if (shouldForwardCommand(targetNode)) {
+          // Map the get command to a CAN query message type (using code 20-32)
+          uint8_t queryType = 20; // Default query type
+
+          // Map variable types to query codes
+          if (strcmp(originalCase, "V") == 0)
+              queryType = 20; // Visibility error
+          else if (strcmp(originalCase, "F") == 0)
+              queryType = 21; // Flicker
+          else if (strcmp(originalCase, "E") == 0)
+              queryType = 22; // Energy
+          else if (strcmp(subCommand, "u") == 0)
+              queryType = 23; // Duty cycle
+          else if (strcmp(subCommand, "o") == 0)
+              queryType = 24; // Occupancy
+          else if (strcmp(subCommand, "a") == 0)
+              queryType = 25; // Anti-windup
+          else if (strcmp(subCommand, "f") == 0)
+              queryType = 26; // Feedback control
+          else if (strcmp(subCommand, "r") == 0)
+              queryType = 27; // Reference illuminance
+          else if (strcmp(subCommand, "y") == 0)
+              queryType = 28; // Current illuminance
+          else if (strcmp(subCommand, "p") == 0)
+              queryType = 29; // Power consumption
+          else if (strcmp(subCommand, "t") == 0)
+              queryType = 30; // Elapsed time
+          else if (strcmp(subCommand, "v") == 0)
+              queryType = 31; // LDR voltage
+          else if (strcmp(subCommand, "d") == 0)
+              queryType = 32; // External illuminance
+          else {
+              Serial.println("err: Unsupported remote variable query");
+              return true;
+          }
+
+          if (sendControlCommand(targetNode, queryType, 0.0f)) {
+              Serial.print("Query sent to node ");
+              Serial.println(targetNode);
+
+              // Instead of waiting in a blocking loop, store the query details
+              if (!addPendingQuery(targetNode, queryType, originalCase[0] == 'V' || originalCase[0] == 'F' || originalCase[0] == 'E' ? originalCase : subCommand, idx)) {
+                  Serial.println("err: Too many pending queries");
+              }
+              return true;
+          } else {
+              Serial.print("err: Failed to send query to node ");
+              Serial.println(targetNode);
+              return true;
+          }
+      }
+
+      // Handle local queries
+      handleLocalQuery(subCommand, originalCase, idx, numTokens, tokens);
+      return true;
+  }
+  return false;
+}
+
+/**
+* Handle streaming commands (s, S)
+* 
+* @param tokens Command tokens
+* @param numTokens Number of tokens
+* @return true if command was handled, false otherwise
+*/
+static bool handleStreamingCommands(char tokens[][TOKEN_MAX_LENGTH], int numTokens) {
+  if (strcmp(tokens[0], "s") == 0 || strcmp(tokens[0], "S") == 0) {
+      if (numTokens < 3) {
+          Serial.println("err: Missing parameters");
+          return true;
+      }
+
+      char var[TOKEN_MAX_LENGTH];
+      strcpy(var, tokens[1]); // Variable name
+      
+      int targetNode;
+      if (!parseIntParam(tokens[2], &targetNode) || targetNode < 0 || targetNode > 63) {
+          Serial.println("err: Invalid node ID");
+          return true;
+      }
+
+      // Check if we need to forward this command
+      if (shouldForwardCommand(targetNode)) {
+          // Map variable names to numeric codes for CAN transmission
+          float varCode = 0; // Default for 'y' (lux)
+          mapVariableToCode(var, &varCode);
+
+          // Control type: 11 = start stream, 12 = stop stream
+          uint8_t controlType = (tokens[0][0] == 's') ? 11 : 12;
+          
+          if (sendControlCommand(targetNode, controlType, varCode)) {
+              Serial.println("ack");
+          } else {
+              Serial.println("err: CAN forwarding failed");
+          }
+          return true;
+      }
+      
+      // Handle locally
+      if (tokens[0][0] == 's') {
+          startStream(var, targetNode);
+      } else {
+          stopStream(var, targetNode);
+      }
+      Serial.println("ack");
+      return true;
+  }
+  return false;
+}
+
+/**
+* Handle CAN network commands (c)
+* 
+* @param tokens Command tokens
+* @param numTokens Number of tokens
+* @return true if command was handled, false otherwise
+*/
+static bool handleCANNetworkCommands(char tokens[][TOKEN_MAX_LENGTH], int numTokens) {
+  if (strcmp(tokens[0], "c") == 0) {
+      if (numTokens < 2) {
+          Serial.println("err: Missing subcommand");
+          return true;
+      }
+      
+      if (strcmp(tokens[1], "m") == 0) {
+          // CAN monitoring
+          if (numTokens < 3) {
+              Serial.println("err: Missing parameters");
+              return true;
+          }
+          
+          int val;
+          if (!parseIntParam(tokens[2], &val) || !isInRange(val, 0, 1)) {
+              Serial.println("err: Invalid monitoring value (must be 0=off or 1=on)");
+              return true;
+          }
+          
+          canMonitorEnabled = (val == 1);
+          Serial.print("CAN monitoring ");
+          Serial.println(canMonitorEnabled ? "enabled" : "disabled");
+          Serial.println("ack");
+      }
+      else if (strcmp(tokens[1], "st") == 0) {
+          // CAN statistics
+          displayCANStatistics();
+      }
+      else if (strcmp(tokens[1], "r") == 0) {
+          // Reset CAN statistics
+          resetCANStats();
+          Serial.println("CAN statistics reset");
+          Serial.println("ack");
+      }
+      else if (strcmp(tokens[1], "sc") == 0) {
+          // Scan for CAN nodes
+          scanCANNetwork();
+      }
+      else if (strcmp(tokens[1], "l") == 0) {
+          // Latency test
+          measureCANLatency(numTokens, tokens);
+      }
+      else {
+          Serial.println("err: Unknown CAN subcommand");
+      }
+      return true;
+  }
+  return false;
+}
+
+/**
+* Handle controller parameter commands (k)
+* 
+* @param tokens Command tokens
+* @param numTokens Number of tokens
+* @return true if command was handled, false otherwise
+*/
+static bool handleControllerParameterCommands(char tokens[][TOKEN_MAX_LENGTH], int numTokens) {
+  if (strcmp(tokens[0], "k") == 0) {
+      if (numTokens < 4) {
+          Serial.println("err: Missing parameters");
+          return true;
+      }
+      
+      int targetNode;
+      float value;
+      
+      if (!parseIntParam(tokens[1], &targetNode) || targetNode < 0 || targetNode > 63) {
+          Serial.println("err: Invalid node ID");
+          return true;
+      }
+      
+      char param[TOKEN_MAX_LENGTH];
+      strcpy(param, tokens[2]);
+      
+      if (!parseFloatParam(tokens[3], &value)) {
+          Serial.println("err: Invalid parameter value");
+          return true;
+      }
+      
+      // Check if we need to forward this command
+      if (shouldForwardCommand(targetNode)) {
+          // Map parameter to control code for CAN
+          uint8_t paramCode;
+          if (strcmp(param, "b") == 0)
+              paramCode = 15;
+          else if (strcmp(param, "k") == 0)
+              paramCode = 16;
+          else {
+              Serial.println("err: Unknown parameter (must be 'b' or 'k')");
+              return true;
+          }
+          
+          if (sendControlCommand(targetNode, paramCode, value)) {
+              Serial.println("ack");
+          } else {
+              Serial.println("err: CAN forwarding failed");
+          }
+          return true;
+      }
+      
+      // Handle locally
+      if (strcmp(param, "b") == 0) {
+          if (!isInRange(value, 0.0f, 1.0f)) {
+              Serial.println("err: Beta must be between 0.0 and 1.0");
+              return true;
+          }
+          pid.setWeighting(value);
+      }
+      else if (strcmp(param, "k") == 0) {
+          pid.setGains(value, value);
+      }
+      else {
+          Serial.println("err: Unknown parameter (must be 'b' or 'k')");
+          return true;
+      }
+      Serial.println("ack");
+      return true;
+  }
+  return false;
+}
+
+//==========================================================================================================================================================
+// COMMAND PROCESSING PIPELINE
+//==========================================================================================================================================================
+
+/**
+ * Process a single command line from Serial
+ * Parses and executes commands for control, metrics, and CAN operations
+ *
+ * @param cmdLine The command string to process
+ */
+static void processCommandLine(const char *cmdLine)
+{
+    char tokens[MAX_TOKENS][TOKEN_MAX_LENGTH];
+    int numTokens = prepareCommand(cmdLine, tokens);
+    
+    if (numTokens == 0) {
+        return;
+    }
+    
+    // Try each command category handler in sequence
+    if (handleLEDCommands(tokens, numTokens)) {
+        return;
+    }
+    
+    if (handleSystemStateCommands(tokens, numTokens)) {
+        return;
+    }
+    
+    if (handleDataQueryCommands(tokens, numTokens)) {
+        return;
+    }
+    
+    if (handleStreamingCommands(tokens, numTokens)) {
+        return;
+    }
+    
+    if (handleCANNetworkCommands(tokens, numTokens)) {
+        return;
+    }
+    
+    if (handleControllerParameterCommands(tokens, numTokens)) {
+        return;
+    }
+    
+    // Help command
+    if (strcmp(tokens[0], "h") == 0) {
+        printHelp();
+        return;
+    }
+    
+    // Default response for unrecognized commands
+    Serial.println("ack");
 }
 
 /**
@@ -1941,6 +1102,10 @@ void processSerialCommands()
     }
   }
 }
+
+//==========================================================================================================================================================
+// USER INTERFACE
+//==========================================================================================================================================================
 
 /**
  * Print a comprehensive list of all available commands
