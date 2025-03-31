@@ -7,9 +7,9 @@ extern float readLux();
 extern float getPowerConsumption();
 extern float getVoltageAtLDR();
 
-//-----------------------------------------------------------------------------
+//==========================================================================================================================================================
 // CONFIGURATION AND INITIALIZATION
-//-----------------------------------------------------------------------------
+//==========================================================================================================================================================
 
 // CAN controller pin configuration
 const int CAN_CS_PIN = 17;
@@ -65,9 +65,9 @@ void initCANComm()
   Serial.println(nodeID);
 }
 
-//-----------------------------------------------------------------------------
+//==========================================================================================================================================================
 // MESSAGE FORMATTING AND PARSING
-//-----------------------------------------------------------------------------
+//==========================================================================================================================================================
 
 /**
  * Create a CAN message ID from component fields
@@ -120,9 +120,34 @@ float bytesToFloat(const uint8_t *bytes)
   return value;
 }
 
-//-----------------------------------------------------------------------------
+//==========================================================================================================================================================
 // MESSAGE SENDING FUNCTIONS
-//-----------------------------------------------------------------------------
+//==========================================================================================================================================================
+
+/**
+ * Send a CAN message and track performance metrics
+ *
+ * @param frame CAN message to send
+ * @return Error code from CAN controller
+ */
+MCP2515::ERROR sendCANMessage(const can_frame &frame)
+{
+  // Record send time for latency measurement
+  lastLatencyMeasure = micros();
+
+  // Send the message
+  MCP2515::ERROR err = can0.sendMessage(&frame);
+
+  // Update latency statistics if successful
+  if (err == MCP2515::ERROR_OK)
+  {
+    unsigned long latency = micros() - lastLatencyMeasure;
+    totalLatency += latency;
+    latencySamples++;
+  }
+
+  return err;
+}
 
 /**
  * Send sensor reading to a specific node or broadcast
@@ -317,9 +342,9 @@ bool sendHeartbeat()
   }
 }
 
-//-----------------------------------------------------------------------------
+//==========================================================================================================================================================
 // MESSAGE PROCESSING
-//-----------------------------------------------------------------------------
+//==========================================================================================================================================================
 
 /**
  * Process an incoming CAN message
@@ -374,6 +399,7 @@ void processIncomingMessage(const can_frame &msg)
   // Process message based on type
   switch (msgType)
   {
+
   //-------------------------------------------------------------------------
   // SENSOR MESSAGE HANDLING
   //-------------------------------------------------------------------------
@@ -692,10 +718,6 @@ void processIncomingMessage(const can_frame &msg)
   }
 }
 
-//-----------------------------------------------------------------------------
-// COMMUNICATION LOOP AND UTILITY FUNCTIONS
-//-----------------------------------------------------------------------------
-
 /**
  * Main CAN communication processing loop
  * - Checks for incoming messages
@@ -723,31 +745,6 @@ void canCommLoop()
 }
 
 /**
- * Send a CAN message and track performance metrics
- *
- * @param frame CAN message to send
- * @return Error code from CAN controller
- */
-MCP2515::ERROR sendCANMessage(const can_frame &frame)
-{
-  // Record send time for latency measurement
-  lastLatencyMeasure = micros();
-
-  // Send the message
-  MCP2515::ERROR err = can0.sendMessage(&frame);
-
-  // Update latency statistics if successful
-  if (err == MCP2515::ERROR_OK)
-  {
-    unsigned long latency = micros() - lastLatencyMeasure;
-    totalLatency += latency;
-    latencySamples++;
-  }
-
-  return err;
-}
-
-/**
  * Read a CAN message directly from the controller
  *
  * @param frame Pointer to store the received message
@@ -767,6 +764,10 @@ void setCANMessageCallback(CANMessageCallback callback)
 {
   messageCallback = callback;
 }
+
+//==========================================================================================================================================================
+// UTILITY FUNCTIONS
+//==========================================================================================================================================================
 
 /**
  * Get communication statistics
