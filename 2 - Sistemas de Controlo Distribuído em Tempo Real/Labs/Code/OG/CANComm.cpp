@@ -31,6 +31,8 @@ static unsigned long lastLatencyMeasure = 0;
 static unsigned long totalLatency = 0;
 static uint32_t latencySamples = 0;
 
+extern bool canMonitorEnabled;
+
 /**
  * Initialize the CAN communication interface
  * - Sets up SPI
@@ -53,16 +55,10 @@ void initCANComm()
 
   Serial.println("CANComm: CAN initialized in normal mode");
 
-  // Generate unique node ID from board-specific identifier
-  // Uses last 6 bits of unique ID to create node addresses 1-63
-  pico_unique_board_id_t board_id;
-  pico_get_unique_board_id(&board_id);
-  nodeID = board_id.id[7] & 0x3F; // Use last 6 bits for node ID (1-63)
-  if (nodeID == 0)
-    nodeID = 1; // Avoid broadcast address (0)
-
   Serial.print("CANComm: Node ID assigned: ");
-  Serial.println(nodeID);
+  critical_section_enter_blocking(&commStateLock);
+  Serial.println(deviceConfig.nodeId);
+  critical_section_exit(&commStateLock);
 }
 
 //==========================================================================================================================================================
@@ -170,7 +166,9 @@ bool sendSensorReading(uint8_t destAddr, uint8_t sensorType, float value)
   // [1] = Sensor type
   // [2-5] = Float value (4 bytes)
   // [6-7] = Timestamp (16-bit milliseconds)
-  frame.data[0] = nodeID;
+  critical_section_enter_blocking(&commStateLock);
+  frame.data[0] = deviceConfig.nodeId;
+  critical_section_exit(&commStateLock);
   frame.data[1] = sensorType;
 
   floatToBytes(value, &frame.data[2]);
@@ -216,7 +214,9 @@ bool sendControlCommand(uint8_t destAddr, uint8_t controlType, float value)
   // [1] = Control type
   // [2-5] = Float value (4 bytes)
   // [6-7] = Sequence number (16-bit)
-  frame.data[0] = nodeID;
+  critical_section_enter_blocking(&commStateLock);
+  frame.data[0] = deviceConfig.nodeId;
+  critical_section_exit(&commStateLock);
   frame.data[1] = controlType;
 
   floatToBytes(value, &frame.data[2]);
@@ -262,7 +262,9 @@ bool sendQueryResponse(uint8_t destNode, float value)
   // [1] = Response type (2 = query response)
   // [2-5] = Float value (4 bytes)
   // [6-7] = Reserved (set to 0)
-  frame.data[0] = nodeID;
+  critical_section_enter_blocking(&commStateLock);
+  frame.data[0] = deviceConfig.nodeId;
+  critical_section_exit(&commStateLock);
   frame.data[1] = 2; // Type 2 = query response
 
   floatToBytes(value, &frame.data[2]);
@@ -279,57 +281,6 @@ bool sendQueryResponse(uint8_t destNode, float value)
   Serial.println(value);
 
   // Update statistics based on result
-  if (result == MCP2515::ERROR_OK)
-  {
-    msgSent++;
-    return true;
-  }
-  else
-  {
-    msgErrors++;
-    return false;
-  }
-}
-
-/**
- * Send heartbeat message to indicate node is active
- *
- * @return True if message sent successfully
- */
-bool sendHeartbeat()
-{
-  can_frame frame;
-
-  // Configure message ID for broadcast with low priority
-  frame.can_id = buildCANId(CAN_TYPE_HEARTBEAT, CAN_ADDR_BROADCAST);
-  frame.can_dlc = 6;
-
-  // Payload format:
-  // [0] = Source node ID
-  // [1] = Status flags (bit0=feedback, bit1=luminaireState)
-  // [2-5] = Node uptime in seconds (32-bit)
-  frame.data[0] = nodeID;
-
-  // Create status flags byte from control settings
-  uint8_t statusFlags = 0;
-  critical_section_enter_blocking(&commStateLock);
-  if (controlState.feedbackControl)
-    statusFlags |= 0x01;
-
-  // Encode luminaire state in bits 1-2 (uses 2 bits for the 3 possible states)
-  statusFlags |= (static_cast<uint8_t>(controlState.luminaireState) << 1);
-  critical_section_exit(&commStateLock);
-
-  // Include node uptime in seconds
-  uint32_t uptime = getElapsedTime();
-  frame.data[2] = uptime & 0xFF;
-  frame.data[3] = (uptime >> 8) & 0xFF;
-  frame.data[4] = (uptime >> 16) & 0xFF;
-  frame.data[5] = (uptime >> 24) & 0xFF;
-
-  // Send the message and update statistics
-  MCP2515::ERROR result = sendCANMessage(frame);
-
   if (result == MCP2515::ERROR_OK)
   {
     msgSent++;
@@ -361,8 +312,10 @@ void processIncomingMessage(const can_frame &msg)
   uint8_t sourceNodeID = msg.data[0];
 
   // Always print messages from other nodes (not just when monitoring is enabled)
-  if (sourceNodeID != nodeID)
+  critical_section_enter_blocking(&commStateLock);
+  if (sourceNodeID != deviceConfig.nodeId)
   {
+    critical_section_exit(&commStateLock);
     if (msgType == CAN_TYPE_SENSOR)
     {
       uint8_t sensorType = msg.data[1];
@@ -377,6 +330,10 @@ void processIncomingMessage(const can_frame &msg)
       Serial.println(sensorValue, 2);
     }
   }
+  else
+  {
+    critical_section_exit(&commStateLock);
+  }
 
   // Debug output if monitoring is enabled
   if (canMonitorEnabled)
@@ -388,9 +345,14 @@ void processIncomingMessage(const can_frame &msg)
   }
 
   // Check if message is addressed to this node or is broadcast
-  if (destAddr != nodeID && destAddr != CAN_ADDR_BROADCAST)
+  critical_section_enter_blocking(&commStateLock);
+  if (destAddr != deviceConfig.nodeId && destAddr != CAN_ADDR_BROADCAST)
   {
+    critical_section_exit(&commStateLock);
     return; // Message not for us, ignore
+  } else
+  {
+    critical_section_exit(&commStateLock);
   }
 
   // Extract source node ID from first byte of payload
@@ -487,7 +449,9 @@ void processIncomingMessage(const can_frame &msg)
       can_frame response;
       response.can_id = buildCANId(CAN_TYPE_RESPONSE, sourceNode);
       response.can_dlc = 8;
-      response.data[0] = nodeID;
+      critical_section_enter_blocking(&commStateLock);
+      response.data[0] = deviceConfig.nodeId;
+      critical_section_exit(&commStateLock);
       response.data[1] = 0;                   // Response type 0 = echo
       floatToBytes(value, &response.data[2]); // Echo back the same value
       response.data[6] = msg.data[6];         // Copy sequence numbers
@@ -500,7 +464,9 @@ void processIncomingMessage(const can_frame &msg)
       can_frame response;
       response.can_id = buildCANId(CAN_TYPE_RESPONSE, sourceNode);
       response.can_dlc = 8;
-      response.data[0] = nodeID;
+      critical_section_enter_blocking(&commStateLock);
+      response.data[0] = deviceConfig.nodeId;
+      critical_section_exit(&commStateLock);
       response.data[1] = 1; // Response type 1 = discovery
       floatToBytes(0, &response.data[2]);
       response.data[6] = 0;
@@ -578,11 +544,11 @@ void processIncomingMessage(const can_frame &msg)
       critical_section_enter_blocking(&commStateLock);
       controlState.setpointLux = value;
       critical_section_exit(&commStateLock);
-
       if (canMonitorEnabled)
       {
         Serial.print("CAN: Setting reference illuminance to ");
-        Serial.println(value);
+        Serial.print(value);
+        Serial.println(" lux");
       }
     }
     // Stream control commands
@@ -795,4 +761,211 @@ void resetCANStats()
   msgErrors = 0;
   totalLatency = 0;
   latencySamples = 0;
+}
+
+/**
+ * Display CAN communication statistics
+ * Shows message counts, error rates, and latency information
+ */
+void displayCANStatistics() {
+  uint32_t sent, received, errors;
+  float avgLatency;
+  
+  // Get the statistics
+  getCANStats(sent, received, errors, avgLatency);
+  
+  // Display statistics
+  Serial.println("CAN Bus Statistics:");
+  Serial.print("  Node ID: ");
+  critical_section_enter_blocking(&commStateLock);
+  Serial.println(deviceConfig.nodeId);
+  critical_section_exit(&commStateLock);
+  Serial.print("  Messages sent: ");
+  Serial.println(sent);
+  Serial.print("  Messages received: ");
+  Serial.println(received);
+  Serial.print("  Errors: ");
+  Serial.println(errors);
+  Serial.print("  Average latency: ");
+  Serial.print(avgLatency);
+  Serial.println(" µs");
+  
+  // Calculate error rate if messages were sent
+  if (sent > 0) {
+      float errorRate = (float)errors / (float)sent * 100.0f;
+      Serial.print("  Error rate: ");
+      Serial.print(errorRate, 2);
+      Serial.println("%");
+  }
+  
+  Serial.println("ack");
+}
+
+/**
+* Scan the CAN network for active nodes
+* Sends discovery messages and waits for responses
+*/
+void scanCANNetwork() {
+  Serial.println("Scanning CAN network for active nodes...");
+  
+  uint8_t foundNodes[64] = {0}; // Track which nodes responded
+  int foundCount = 0;
+  
+  // Send ping messages to all possible node addresses (1-63)
+  for (int node = 1; node < 64; node++) {
+      Serial.print("Pinging node ");
+      Serial.print(node);
+      Serial.print("... ");
+      
+      // Send ping (discovery) message
+      if (sendControlCommand(node, 3, 0.0f)) {
+          // Wait briefly for response
+          delay(10);
+          
+          // Check for response
+          can_frame frame;
+          bool received = false;
+          
+          // Try to read several times in case of multiple messages
+          for (int attempt = 0; attempt < 5; attempt++) {
+              if (readCANMessage(&frame) == MCP2515::ERROR_OK) {
+                  uint8_t msgType, destAddr;
+                  parseCANId(frame.can_id, msgType, destAddr);
+                  
+                  // Check if this is a response to our discovery
+                  if (msgType == CAN_TYPE_RESPONSE && frame.data[0] == node && frame.data[1] == 1) {
+                      foundNodes[node] = 1;
+                      foundCount++;
+                      received = true;
+                      Serial.println("FOUND");
+                      break;
+                  }
+              }
+              delay(1);
+          }
+          
+          if (!received) {
+              Serial.println("no response");
+          }
+      } else {
+          Serial.println("send failed");
+      }
+  }
+  
+  // Summary of found nodes
+  Serial.print("Found ");
+  Serial.print(foundCount);
+  Serial.println(" active nodes:");
+  
+  for (int i = 1; i < 64; i++) {
+      if (foundNodes[i]) {
+          Serial.print("  Node ");
+          Serial.println(i);
+      }
+  }
+  
+  Serial.println("Scan complete");
+  Serial.println("ack");
+}
+
+/**
+* Measure round-trip latency to a specific node
+* 
+* @param numTokens Number of tokens in command
+* @param tokens Command tokens (tokens[2] should contain node ID if present)
+*/
+void measureCANLatency(int numTokens, char tokens[][TOKEN_MAX_LENGTH]) {
+  // Default is to test current node
+  uint8_t targetNode = 1;
+  int samples = 10;
+  
+  // Parse target node if provided
+  if (numTokens >= 3) {
+      int node;
+      if (parseIntParam(tokens[2], &node) && node > 0 && node < 64) {
+          targetNode = (uint8_t)node;
+      }
+  }
+  
+  // Parse sample count if provided
+  if (numTokens >= 4) {
+      int count;
+      if (parseIntParam(tokens[3], &count) && count > 0 && count <= 100) {
+          samples = count;
+      }
+  }
+  
+  Serial.print("Measuring latency to node ");
+  Serial.print(targetNode);
+  Serial.print(" with ");
+  Serial.print(samples);
+  Serial.println(" samples...");
+  
+  float totalLatency = 0.0f;
+  int successCount = 0;
+  unsigned long startTime, endTime;
+  const float testValue = 12345.67f; // Unique value to identify our test
+  
+  for (int i = 0; i < samples; i++) {
+      Serial.print("  Sample ");
+      Serial.print(i+1);
+      Serial.print(": ");
+      
+      // Record time and send echo request
+      startTime = micros();
+      if (sendControlCommand(targetNode, 2, testValue)) {
+          bool validResponse = false;
+          
+          // Wait for response with timeout
+          for (int wait = 0; wait < 50; wait++) { // 50ms timeout
+              can_frame frame;
+              if (readCANMessage(&frame) == MCP2515::ERROR_OK) {
+                  uint8_t msgType, destAddr;
+                  parseCANId(frame.can_id, msgType, destAddr);
+                  
+                  if (msgType == CAN_TYPE_RESPONSE && frame.data[0] == targetNode && frame.data[1] == 0) {
+                      float value = bytesToFloat(&frame.data[2]);
+                      
+                      // Make sure it's a response to our test
+                      if (fabs(value - testValue) < 0.01f) {
+                          endTime = micros();
+                          unsigned long latency = endTime - startTime;
+                          totalLatency += latency;
+                          successCount++;
+                          validResponse = true;
+                          
+                          Serial.print(latency);
+                          Serial.println(" µs");
+                          break;
+                      }
+                  }
+              }
+              delay(1);
+          }
+          
+          if (!validResponse) {
+              Serial.println("timeout");
+          }
+      } else {
+          Serial.println("send failed");
+      }
+      
+      // Small delay between samples
+      delay(10);
+  }
+  
+  // Calculate and display results
+  if (successCount > 0) {
+      float avgLatency = totalLatency / successCount;
+      Serial.print("Average round-trip latency: ");
+      Serial.print(avgLatency);
+      Serial.println(" µs");
+      Serial.print("Success rate: ");
+      Serial.print((float)successCount / samples * 100.0f);
+      Serial.println("%");
+  } else {
+      Serial.println("No successful measurements");
+  }
+  
+  Serial.println("ack");
 }

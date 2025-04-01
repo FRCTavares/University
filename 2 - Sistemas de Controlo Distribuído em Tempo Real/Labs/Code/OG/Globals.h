@@ -5,9 +5,9 @@
 #include "pico/critical_section.h"
 #include <atomic>
 
-//=============================================================================
+//==========================================================================================================================================================
 // SYSTEM CONSTANTS
-//=============================================================================
+//==========================================================================================================================================================
 
 /**
  * Maximum supported illuminance level in lux
@@ -30,9 +30,9 @@ extern const float MAX_POWER_WATTS;
  */
 #define MAX_STREAM_REQUESTS 5
 
-//=============================================================================
+//==========================================================================================================================================================
 // SYSTEM STATE ENUMERATIONS
-//=============================================================================
+//==========================================================================================================================================================
 
 /**
  * Luminaire operating states
@@ -45,9 +45,41 @@ enum LuminaireState
   STATE_OCCUPIED = 2    // Full task lighting when workspace is in use
 };
 
-//=============================================================================
+//==========================================================================================================================================================
+// CAN MESSAGE TYPES
+//==========================================================================================================================================================
+
+/** Control messages (setpoints, modes) */
+#define CAN_TYPE_CONTROL 0x00
+
+/** Sensor data (illuminance, duty cycle) */
+#define CAN_TYPE_SENSOR 0x01
+
+/** Status information (power, mode) */
+#define CAN_TYPE_STATUS 0x02
+
+/** Configuration parameters */
+#define CAN_TYPE_CONFIG 0x03
+
+/** Error reports */
+#define CAN_TYPE_ERROR 0x04
+
+/** Data requests */
+#define CAN_TYPE_QUERY 0x05
+
+/** Responses to queries */
+#define CAN_TYPE_RESPONSE 0x06
+
+/** Node presence signals */
+#define CAN_TYPE_HEARTBEAT 0x07
+
+/** State change notifications */
+#define CAN_CTRL_STATE_CHANGE 0x10
+
+//==========================================================================================================================================================
 // STRUCTURE DEFINITIONS
-//=============================================================================
+//==========================================================================================================================================================
+
 
 /**
  * Structure to track a request to stream data to another node
@@ -105,21 +137,26 @@ struct ControlState
  */
 struct CommState
 {
-  bool streamingEnabled;        // Enable periodic streaming
-  char* streamingVar;           // Identifier of variable being streamed
-  int streamingIndex;           // Index of the node for streaming
-  unsigned long lastStreamTime; // Last time a stream was sent
+  // Streaming parameters
+  bool streamingEnabled;         // Enable periodic streaming
+  char* streamingVar;            // Identifier of variable being streamed
+  int streamingIndex;            // Index of the node for streaming
+  unsigned long lastStreamTime;  // Last time a stream was sent
   
   // Remote streaming requests from other nodes
   StreamRequest remoteStreamRequests[MAX_STREAM_REQUESTS]; 
   
   // Atomic flag to indicate new CAN messages are available
-  std::atomic_flag hasNewMessages; 
+  std::atomic_flag hasNewMessages;
+  
+  // CAN communication flags
+  bool periodicCANEnabled;       // Enable periodic CAN transmissions
+  bool canMonitorEnabled;        // Enable monitoring of CAN messages
 };
 
-//=============================================================================
+//==========================================================================================================================================================
 // GLOBAL VARIABLE DECLARATIONS
-//=============================================================================
+//==========================================================================================================================================================
 
 /**
  * Synchronization primitive for thread-safe access to shared data
@@ -156,64 +193,9 @@ extern CommState commState;
  */
 extern class PIController pid;
 
-/**
- * Current LED brightness as duty cycle [0.0-1.0]
- * Represents the proportion of time the LED is on during PWM cycle
- */
-extern float dutyCycle;
-
-/**
- * Enable periodic CAN transmission flag
- * When true, node regularly broadcasts its state
- */
-extern bool periodicCANEnabled;
-
-/**
- * CAN message monitoring flag
- * When true, all CAN messages are printed to serial
- */
-extern bool canMonitorEnabled;
-
-/**
- * This node's CAN ID
- * Unique identifier for this node on the CAN network
- */
-extern uint8_t nodeID;
-
-//-----------------------------------------------------------------------------
-// CAN Message Types
-//-----------------------------------------------------------------------------
-
-/** Control messages (setpoints, modes) */
-#define CAN_TYPE_CONTROL 0x00
-
-/** Sensor data (illuminance, duty cycle) */
-#define CAN_TYPE_SENSOR 0x01
-
-/** Status information (power, mode) */
-#define CAN_TYPE_STATUS 0x02
-
-/** Configuration parameters */
-#define CAN_TYPE_CONFIG 0x03
-
-/** Error reports */
-#define CAN_TYPE_ERROR 0x04
-
-/** Data requests */
-#define CAN_TYPE_QUERY 0x05
-
-/** Responses to queries */
-#define CAN_TYPE_RESPONSE 0x06
-
-/** Node presence signals */
-#define CAN_TYPE_HEARTBEAT 0x07
-
-/** State change notifications */
-#define CAN_CTRL_STATE_CHANGE 0x10
-
-//=============================================================================
+//==========================================================================================================================================================
 // FUNCTION DECLARATIONS
-//=============================================================================
+//==========================================================================================================================================================
 
 /**
  * Get estimated external illuminance (without LED contribution)

@@ -83,7 +83,7 @@ PIController pid(Kp, Ki, BETA, DT); // Create pid controller with initial values
 //-----------------------------------------------------------------------------
 // Power Consumption Model
 //-----------------------------------------------------------------------------
-const float MAX_POWER_WATTS = 1.0; // Maximum power consumption at 100% duty
+const float MAX_POWER_WATTS = 0.08755; // Maximum power consumption at 100% duty
 
 //=============================================================================
 // GLOBAL SYSTEM STATE
@@ -114,12 +114,9 @@ const float EXTERNAL_LIGHT_CHANGE_THRESHOLD = 1.0f; // Minimum lux change to tri
 //-----------------------------------------------------------------------------
 // CAN Communication State
 //-----------------------------------------------------------------------------
-bool periodicCANEnabled = false;        // Enable periodic transmissions
 bool canMonitorEnabled = false;         // Display received messages
 uint8_t nodeID = 0;                     // Node ID (set during initialization)
 unsigned long lastCANSend = 0;          // Last transmission timestamp
-unsigned long lastHeartbeat = 0;        // Last heartbeat timestamp
-unsigned long heartbeatInterval = 5000; // Heartbeat interval (ms)
 
 //-----------------------------------------------------------------------------
 // Neighbor Management
@@ -1089,6 +1086,7 @@ void getLastMinuteBuffer(const char* var, int index, char* buffer, size_t buffer
 void setup()
 {
   Serial.begin(115200);
+  delay(100); 
 
   // Configure hardware
   analogReadResolution(12);
@@ -1119,6 +1117,9 @@ void setup()
 
   // Configure device based on unique ID
   configureDeviceFromID();
+
+  Serial.print("Device ID: ");
+  Serial.println(nodeID);
 
   // Calibrate the system
   deviceConfig.ledGain = calibrateSystem(1.0);
@@ -1212,30 +1213,56 @@ void configureDeviceFromID()
   // Read hardware ID
   pico_unique_board_id_t board_id;
   pico_get_unique_board_id(&board_id);
+  
+  // Generate unique node ID from the last byte (1-63)
+  uint8_t nodeId = board_id.id[7] & 0x3F; // Use last 6 bits for node ID (0-63)
+  
+  // Avoid broadcast address (0)
+  if (nodeId == 0)
+    nodeId = 1;
+    
+  // Print full board ID for debugging
+  Serial.print("Board ID: ");
+  for (int i = 0; i < 8; i++) {
+    if (board_id.id[i] < 16) Serial.print("0");
+    Serial.print(board_id.id[i], HEX);
+    if (i < 7) Serial.print(":");
+  }
+  Serial.print(" -> NodeID: ");
+  Serial.println(nodeId);
 
-  // Last byte of ID determines device type
-  uint8_t deviceType = board_id.id[7] % 3; // 0, 1, or 2
+  // Determine device type (0, 1, or 2) based on a hash of the full board ID
+  uint32_t idHash = 0;
+  for (int i = 0; i < 8; i++) {
+    idHash = ((idHash << 5) + idHash) + board_id.id[i]; // Simple hash function
+  }
+  uint8_t deviceType = idHash % 3; // Still 0, 1, or 2 for PID configuration
+  
+  Serial.print("Device Type: ");
+  Serial.println(deviceType);
 
+  // Start with default configuration
   DeviceConfig config;
-
+  
+  // IMPORTANT: Always use the unique node ID
+  config.nodeId = nodeId;
+  
+  // Apply device-type specific PID parameters
   switch (deviceType)
   {
-  case 0: // First device
-    config.nodeId = 1;
+  case 0: // First device type
     config.pidKp = 20.0;
     config.pidKi = 400.0;
     config.pidBeta = 0.8;
     break;
 
-  case 1: // Second device
-    config.nodeId = 2;
+  case 1: // Second device type
     config.pidKp = 25.0;
     config.pidKi = 350.0;
     config.pidBeta = 0.75;
     break;
 
-  case 2: // Third device
-    config.nodeId = 3;
+  case 2: // Third device type
     config.pidKp = 22.0;
     config.pidKi = 380.0;
     config.pidBeta = 0.82;
@@ -1245,6 +1272,7 @@ void configureDeviceFromID()
   // Apply the configuration
   applyDeviceConfig(config);
 }
+
 // Core 0: CAN Communication
 void core0_main()
 {
@@ -1252,7 +1280,6 @@ void core0_main()
   {
     // Process CAN messages
     canCommLoop();
-    unsigned long now = millis();
     CoreMessage msg;
     if (queue_try_remove(&core1to0queue, &msg))
     {
@@ -1269,32 +1296,6 @@ void core0_main()
         break;
       }
     }
-
-    // Send periodic CAN updates if enabled
-    if (periodicCANEnabled && (now - lastCANSend >= 1000))
-    {
-      lastCANSend = now;
-
-      critical_section_enter_blocking(&commStateLock);
-      float lux = sensorState.filteredLux;
-      float duty = controlState.dutyCycle;
-      LuminaireState state = controlState.luminaireState;
-      critical_section_exit(&commStateLock);
-
-      // Send sensor data to the network
-      sendSensorReading(CAN_ADDR_BROADCAST, 0, lux);
-      sendSensorReading(CAN_ADDR_BROADCAST, 1, duty);
-      sendSensorReading(CAN_ADDR_BROADCAST, 2, (float)state);
-      sendSensorReading(CAN_ADDR_BROADCAST, 3, getExternalIlluminance());
-    }
-
-    // Send heartbeat periodically
-    if (now - lastHeartbeat >= heartbeatInterval)
-    {
-      lastHeartbeat = now;
-      sendHeartbeat();
-    }
-
     // Brief delay to prevent core hogging
     sleep_ms(1);
   }

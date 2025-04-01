@@ -3,9 +3,13 @@
 #include <Arduino.h>
 #include <math.h>
 
-//-----------------------------------------------------------------------------
-// CONFIGURATION AND VARIABLES
-//-----------------------------------------------------------------------------
+/******************************************************************************************************************************************************************************************************************************************************************************** */
+// PI CONTROLLER IMPLEMENTATION
+/******************************************************************************************************************************************************************************************************************************************************************************** */
+
+//==========================================================================================================================================================
+// CONFIGURATION AND CONSTANTS
+//==========================================================================================================================================================
 
 // Control constants
 const float ANTI_WINDUP_GAIN = 0.1f;       // Anti-windup correction strength
@@ -23,9 +27,9 @@ const int ANIMATION_UPDATE_INTERVAL_MS = 20; // Interval for animation updates
 // Numeric comparison thresholds
 const float FLOAT_COMPARISON_THRESHOLD = 0.001f; // For float equality comparisons
 
-//=============================================================================
+//==========================================================================================================================================================
 // CONSTRUCTOR AND INITIALIZATION
-//=============================================================================
+//==========================================================================================================================================================
 
 /**
  * PI Controller Constructor
@@ -45,24 +49,18 @@ PIController::PIController(float kp, float ki, float beta, float samplingTime)
   // All variables are initialized in the initializer list
 }
 
-//=============================================================================
+//==========================================================================================================================================================
 // CONTROL COMPUTATION
-//=============================================================================
+//==========================================================================================================================================================
 
 /**
  * Compute PI control action for the current sample
- *
- * Implements a discretized PI controller with setpoint weighting:
- * u(t) = Kp·(β·r(t) - y(t)) + Ki·∫e(t)dt
- *
- * Features:
- * - Setpoint weighting to reduce overshoot
- * - Back-calculation anti-windup for saturation handling
- * - Support for setpoint coordination through internal target
- *
- * @param setpoint Desired target value (setpoint)
- * @param measurement Current process value (feedback)
- * @return Control action value (typically PWM value)
+ * 
+ * Core control algorithm implementing:
+ * - Setpoint weighting
+ * - Anti-windup
+ * - Feedforward for improved step response
+ * - Input saturation handling
  */
 float PIController::compute(float setpoint, float measurement)
 {
@@ -152,9 +150,9 @@ float PIController::compute(float setpoint, float measurement)
   return u_sat;
 }
 
-//=============================================================================
+//==========================================================================================================================================================
 // CONTROLLER MANAGEMENT FUNCTIONS
-//=============================================================================
+//==========================================================================================================================================================
 
 /**
  * Reset controller state
@@ -267,12 +265,12 @@ void PIController::enableFeedforward(bool enable, float ffGain)
 }
 
 /******************************************************************************************************************************************************************************************************************************************************************************** */
-// CIRCULAR BUFFER SECTION
+// CIRCULAR BUFFER IMPLEMENTATION
 /******************************************************************************************************************************************************************************************************************************************************************************** */
 
-//=============================================================================
-// CIRCULAR BUFFER DATA STORAGE
-//=============================================================================
+//==========================================================================================================================================================
+// BUFFER CONFIGURATION AND VARIABLES
+//==========================================================================================================================================================
 
 // Circular buffer for storing time-series data
 LogEntry logBuffer[LOG_SIZE];
@@ -286,23 +284,23 @@ bool bufferFull = false;
 // Sample counter for downsampling
 unsigned int sampleCounter = 0;
 
+// Timestamp tracking for jitter calculation
 static unsigned long lastSampleMicros = 0;
 
 // Downsampling rate - only store every Nth sample
 const unsigned int DOWNSAMPLE_RATE = 10;
 
+// Flicker calculation variables
 extern float calculateFlickerValue(float d0, float d1, float d2);
 static float lastDuty = -1.0; // -1.0 indicates that no previous value exists yet
-
-// Track previous duty cycles for flicker calculation
 static float prevDuty1 = 0.0;
 static float prevDuty2 = 0.0;
 static bool enoughSamplesForFlicker = false;
 static float cumulativeFlicker = 0.0; // Track the running sum of flicker values
 
-//=============================================================================
-// INITIALIZATION FUNCTIONS
-//=============================================================================
+//==========================================================================================================================================================
+// BUFFER INITIALIZATION
+//==========================================================================================================================================================
 
 /**
  * Initialize the storage system
@@ -317,11 +315,14 @@ void initStorage()
   lastDuty = -1.0;
 }
 
-//=============================================================================
-// DATA LOGGING FUNCTIONS
-//=============================================================================
+//==========================================================================================================================================================
+// DATA LOGGING AND ACCESS
+//==========================================================================================================================================================
 
-// This function is called at every loop iteration or at some periodic rate
+/**
+ * Log a data point to the circular buffer
+ * Stores timestamp, illuminance, duty cycle, and calculated metrics
+ */
 void logData(unsigned long timestampMs, float lux, float duty)
 {
   // Validate
@@ -383,7 +384,9 @@ void logData(unsigned long timestampMs, float lux, float duty)
   }
 }
 
-// Example “mdump” or “dumpBufferToSerial” function
+/**
+ * Output all logged data as CSV to the serial port
+ */
 void dumpBufferToSerial()
 {
   // Print CSV header with new jitter column
@@ -411,10 +414,6 @@ void dumpBufferToSerial()
   }
   Serial.println("End of mdump.\n");
 }
-
-//=============================================================================
-// DATA ACCESS FUNCTIONS
-//=============================================================================
 
 /**
  * Get direct access to the log buffer array
@@ -456,10 +455,6 @@ int getCurrentIndex()
 {
   return logIndex;
 }
-
-//=============================================================================
-// ADDITIONAL UTILITY FUNCTIONS
-//=============================================================================
 
 /**
  * Clear all data in the buffer
@@ -570,20 +565,21 @@ int findClosestEntry(unsigned long timestamp)
 
   return closestIndex;
 }
+
 /******************************************************************************************************************************************************************************************************************************************************************************** */
-// PERFORMANCE METRICS SECTION
+// PERFORMANCE METRICS IMPLEMENTATION
 /******************************************************************************************************************************************************************************************************************************************************************************** */
 
-//=============================================================================
-// PERFORMANCE METRICS CONFIGURATION
-//=============================================================================
+//==========================================================================================================================================================
+// METRICS CONFIGURATION
+//==========================================================================================================================================================
 
 // Power consumption parameters
 const float Pmax = 0.08755; // Maximum LED power in Watts
 
-//=============================================================================
-// METRICS COMPUTATION AND REPORTING
-//=============================================================================
+//==========================================================================================================================================================
+// METRICS CALCULATION FUNCTIONS
+//==========================================================================================================================================================
 
 /**
  * Compute and display all lighting quality metrics
@@ -605,6 +601,7 @@ void computeAndPrintMetrics()
   Serial.println(F, 4);
   Serial.println("----------------------------------------\n");
 }
+
 
 //-----------------------------------------------------------------------------
 // Energy Consumption Metric
@@ -799,76 +796,3 @@ float calculateFlickerValue(float d0, float d1, float d2)
   return 0.0;
 }
 
-//=============================================================================
-// ADDITIONAL METRICS
-//=============================================================================
-
-/**
- * Calculate the duty cycle stability metric
- * Measures how stable the duty cycle remains over time
- * Lower values indicate better stability
- *
- * @return Standard deviation of duty cycle
- */
-float computeDutyStabilityFromBuffer()
-{
-  int count = getLogCount();
-  if (count < 2)
-    return 0.0;
-
-  // Get access to the log buffer
-  LogEntry *logBuffer = getLogBuffer();
-  int startIndex = isBufferFull() ? getCurrentIndex() : 0;
-
-  // First pass: calculate mean
-  float sum = 0.0;
-  for (int i = 0; i < count; i++)
-  {
-    int realIndex = (startIndex + i) % LOG_SIZE;
-    sum += logBuffer[realIndex].duty;
-  }
-  float mean = sum / count;
-
-  // Second pass: calculate variance
-  float variance = 0.0;
-  for (int i = 0; i < count; i++)
-  {
-    int realIndex = (startIndex + i) % LOG_SIZE;
-    float diff = logBuffer[realIndex].duty - mean;
-    variance += diff * diff;
-  }
-  variance /= count;
-
-  // Return standard deviation
-  return sqrt(variance);
-}
-
-/**
- * Calculate overall lighting quality index
- * Combines energy, visibility error, and flicker into a single metric
- * Higher values indicate better overall performance
- *
- * @return Quality index from 0 (worst) to 100 (best)
- */
-float computeQualityIndex()
-{
-  // Get individual metrics
-  float energy = computeEnergyFromBuffer();
-  float visibilityError = computeVisibilityErrorFromBuffer();
-  float flicker = computeFlickerFromBuffer();
-
-  // Normalize energy (lower is better)
-  // Assuming typical range of 0-10 joules for a minute of operation
-  float energyScore = 100 * (1.0 - constrain(energy / 10.0, 0.0, 1.0));
-
-  // Normalize visibility error (lower is better)
-  // Assuming typical range of 0-10 lux error
-  float visibilityScore = 100 * (1.0 - constrain(visibilityError / 10.0, 0.0, 1.0));
-
-  // Normalize flicker (lower is better)
-  // Assuming typical range of 0-0.2 flicker
-  float flickerScore = 100 * (1.0 - constrain(flicker / 0.2, 0.0, 1.0));
-
-  // Weighted average (prioritize visibility, then flicker, then energy)
-  return (0.5 * visibilityScore + 0.3 * flickerScore + 0.2 * energyScore);
-}

@@ -37,6 +37,12 @@
  */
 #define CAN_ADDR_BROADCAST 0
 
+/**
+ * Maximum length of a command token
+ * Used for parsing command strings
+ */
+#define TOKEN_MAX_LENGTH 16
+
 //=============================================================================
 // TYPE DEFINITIONS
 //=============================================================================
@@ -92,6 +98,15 @@ uint32_t buildCANId(uint8_t msgType, uint8_t destAddr);
  * @param destAddr Output parameter for destination address
  */
 void parseCANId(uint32_t canId, uint8_t &msgType, uint8_t &destAddr);
+
+/**
+ * Parse a string to an integer with error checking
+ * 
+ * @param str String to parse
+ * @param result Output parameter for the parsed integer value
+ * @return true if parsing was successful, false otherwise
+ */
+bool parseIntParam(const char *str, int *result);
 
 //=============================================================================
 // DATA CONVERSION UTILITIES
@@ -239,6 +254,26 @@ void setCANMessageCallback(CANMessageCallback callback);
 //=============================================================================
 // STATISTICS AND DIAGNOSTICS
 //=============================================================================
+
+/**
+ * Display CAN communication statistics
+ * Shows message counts, error rates, and latency information
+ */
+void displayCANStatistics();
+
+/**
+ * Scan the CAN network for active nodes
+ * Sends discovery messages and waits for responses
+ */
+void scanCANNetwork();
+
+/**
+ * Measure round-trip latency to a specific node
+ * 
+ * @param numTokens Number of tokens in command
+ * @param tokens Command tokens (tokens[2] should contain node ID if present)
+ */
+void measureCANLatency(int numTokens, char tokens[][TOKEN_MAX_LENGTH]);
 
 /**
  * Get communication statistics

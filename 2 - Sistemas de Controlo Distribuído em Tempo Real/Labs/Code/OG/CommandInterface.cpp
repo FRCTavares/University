@@ -25,6 +25,10 @@ extern float getExternalIlluminance();
 extern float getPowerConsumption();
 extern unsigned long getElapsedTime();
 extern bool responseReceived;
+extern bool canMonitorEnabled;
+
+static void handleDataBufferQuery(const char* subCommand, int numTokens, char tokens[][TOKEN_MAX_LENGTH]);
+static void handleBasicVariableQuery(const char* subCommand, const char* idx);
 
 //==========================================================================================================================================================
 // DATA STRUCTURES
@@ -121,11 +125,12 @@ static void processPendingQueries()
         uint8_t senderNodeID = frame.data[0];
 
         // Check if this is a response for our query
+        critical_section_enter_blocking(&commStateLock);
         if (msgType == CAN_TYPE_RESPONSE &&
             senderNodeID == pendingQueries[i].targetNode &&
-            (destAddr == nodeID || destAddr == CAN_ADDR_BROADCAST))
+            (destAddr == deviceConfig.nodeId || destAddr == CAN_ADDR_BROADCAST))
         {
-
+            critical_section_exit(&commStateLock);
           // Extract the float value
           float value = bytesToFloat(&frame.data[2]);
 
@@ -173,6 +178,7 @@ static void processPendingQueries()
           // Mark this query as handled
           pendingQueries[i].active = false;
         }
+        critical_section_exit(&commStateLock);
       }
     }
   }
@@ -189,7 +195,7 @@ static void processPendingQueries()
  * @param result Output parameter for the parsed integer value
  * @return true if parsing was successful, false otherwise
  */
-static bool parseIntParam(const char *str, int *result)
+bool parseIntParam(const char *str, int *result)
 {
   if (str == NULL || result == NULL) {
     return false;
@@ -375,6 +381,118 @@ static int prepareCommand(const char *cmdLine, char tokens[][TOKEN_MAX_LENGTH]) 
 //==========================================================================================================================================================
 
 /**
+ * Map variable name to numeric code for CAN transmission
+ * 
+ * @param var Variable name string (e.g., "y", "u", "p")
+ * @param varCode Output parameter to store the resulting code
+ * @return true if mapping successful, false if variable not recognized
+ */
+static bool mapVariableToCode(const char* var, float* varCode) {
+    if (strcmp(var, "y") == 0) {
+        *varCode = 0.0f;  // Illuminance
+    } 
+    else if (strcmp(var, "u") == 0) {
+        *varCode = 1.0f;  // Duty cycle
+    }
+    else if (strcmp(var, "p") == 0) {
+        *varCode = 2.0f;  // Power
+    }
+    else if (strcmp(var, "d") == 0) {
+        *varCode = 3.0f;  // External illuminance
+    }
+    else if (strcmp(var, "r") == 0) {
+        *varCode = 4.0f;  // Reference illuminance
+    }
+    else if (strcmp(var, "o") == 0) {
+        *varCode = 5.0f;  // Occupancy state
+    }
+    else if (strcmp(var, "a") == 0) {
+        *varCode = 6.0f;  // Anti-windup state
+    }
+    else if (strcmp(var, "f") == 0) {
+        *varCode = 7.0f;  // Feedback control state
+    }
+    else if (strcmp(var, "v") == 0) {
+        *varCode = 8.0f;  // LDR voltage
+    }
+    else if (strcmp(var, "t") == 0) {
+        *varCode = 9.0f;  // Elapsed time
+    }
+    else if (strcmp(var, "V") == 0) {
+        *varCode = 10.0f; // Visibility error
+    }
+    else if (strcmp(var, "F") == 0) {
+        *varCode = 11.0f; // Flicker
+    }
+    else if (strcmp(var, "E") == 0) {
+        *varCode = 12.0f; // Energy
+    }
+    else {
+        // Default to illuminance if not recognized
+        *varCode = 0.0f;
+        return false;
+    }
+    
+    return true;
+}
+
+/**
+* Apply a command locally based on control type
+* 
+* @param controlType CAN control type code
+* @param value Command value
+*/
+void applyLocalCommand(uint8_t controlType, float value) {
+    switch (controlType) {
+        case 4:
+            // Set duty cycle directly
+            setLEDDutyCycle(value);
+            break;
+        case 5:
+            // Set LED percentage
+            setLEDPercentage(value);
+            break;
+        case 6:
+            // Set LED power in watts
+            setLEDPower(value);
+            break;
+        case 7:
+            // Set luminaire state
+            if (value >= 0 && value <= 2) {
+                changeState((LuminaireState)((int)value));
+            }
+            break;
+        case 8:
+            // Set anti-windup
+            critical_section_enter_blocking(&commStateLock);
+            controlState.antiWindup = (value != 0.0f);
+            critical_section_exit(&commStateLock);
+            break;
+        case 9:
+            // Set feedback control
+            critical_section_enter_blocking(&commStateLock);
+            controlState.feedbackControl = (value != 0.0f);
+            critical_section_exit(&commStateLock);
+            break;
+        case 10:
+            // Properly update the setpoint and provide feedback
+            critical_section_enter_blocking(&commStateLock);
+            controlState.setpointLux = value;
+            critical_section_exit(&commStateLock);
+            Serial.print("Reference illuminance set to ");
+            Serial.print(value);
+            Serial.println(" lux");
+            break;
+        case 14:
+            // Set filter enable/disable
+            critical_section_enter_blocking(&commStateLock);
+            sensorState.filterEnabled = (value != 0.0f);
+            critical_section_exit(&commStateLock);
+            break;
+    }
+}
+  
+/**
  * Determine if a command should be executed locally or forwarded to another node
  *
  * @param targetNode The node ID specified in the command
@@ -383,11 +501,14 @@ static int prepareCommand(const char *cmdLine, char tokens[][TOKEN_MAX_LENGTH]) 
 static bool shouldForwardCommand(uint8_t targetNode)
 {
   // If target is broadcast (0) or matches this node, process locally
-  if (targetNode == 0 || targetNode == nodeID)
+  critical_section_enter_blocking(&commStateLock);
+  if (targetNode == 0 || targetNode == deviceConfig.nodeId)
   {
+    critical_section_exit(&commStateLock);
     return false;
   }
   // Otherwise, forward to target node
+  critical_section_exit(&commStateLock);
   return true;
 }
 
@@ -427,51 +548,6 @@ static bool handleTargetedCommand(uint8_t targetNode, uint8_t controlType, float
   applyLocalCommand(controlType, value);
   Serial.println("ack");
   return true;
-}
-
-/**
-* Apply a command locally based on control type
-* 
-* @param controlType CAN control type code
-* @param value Command value
-*/
-static void applyLocalCommand(uint8_t controlType, float value) {
-  switch (controlType) {
-      case 4: // Duty cycle
-          setLEDDutyCycle(value);
-          break;
-      case 5: // Percentage
-          setLEDPercentage(value);
-          break;
-      case 6: // Power in watts
-          setLEDPower(value);
-          break;
-      case 7: // Luminaire state
-          critical_section_enter_blocking(&commStateLock);
-          controlState.luminaireState = static_cast<LuminaireState>((int)value);
-          critical_section_exit(&commStateLock);
-          break;
-      case 8: // Anti-windup
-          critical_section_enter_blocking(&commStateLock);
-          controlState.antiWindup = (value == 1);
-          critical_section_exit(&commStateLock);
-          break;
-      case 9: // Feedback control
-          critical_section_enter_blocking(&commStateLock);
-          controlState.feedbackControl = (value == 1);
-          critical_section_exit(&commStateLock);
-          break;
-      case 10: // Reference illuminance
-          critical_section_enter_blocking(&commStateLock);
-          controlState.setpointLux = value;
-          critical_section_exit(&commStateLock);
-          break;
-      case 14: // Filter enable/disable
-          critical_section_enter_blocking(&commStateLock);
-          sensorState.filterEnabled = (value == 1);
-          critical_section_exit(&commStateLock);
-          break;
-  }
 }
 
 /**
@@ -538,6 +614,116 @@ static void handleLocalQuery(const char* subCommand, const char* originalCase, c
 //==========================================================================================================================================================
 // COMMAND CATEGORY HANDLERS
 //==========================================================================================================================================================
+
+/**
+ * Handle queries related to data buffer operations
+ * Processes buffer commands like dump, export, etc.
+ * 
+ * @param subCommand The specific buffer operation requested
+ * @param numTokens Number of tokens in the command
+ * @param tokens Full token array
+ */
+static void handleDataBufferQuery(const char* subCommand, int numTokens, char tokens[][TOKEN_MAX_LENGTH]) {
+    if (strcmp(subCommand, "b") == 0 || strcmp(subCommand, "bigdump") == 0) {
+        // Full data dump to serial
+        dumpBufferToSerial();
+        Serial.println("ack");
+    }
+    else if (strcmp(subCommand, "mdump") == 0) {
+        // Clear the buffer
+        clearBuffer();
+        Serial.println("Buffer cleared");
+        Serial.println("ack");
+    }
+    else {
+        Serial.println("err: Unknown buffer command");
+    }
+}
+
+/**
+ * Handle basic variable query operations
+ * Responds with the current value of the requested variable
+ * 
+ * @param subCommand The variable to query
+ * @param idx Node index to display in the response
+ */
+static void handleBasicVariableQuery(const char* subCommand, const char* idx) {
+    if (strcmp(subCommand, "y") == 0) {
+        // Current illuminance
+        float lux = readLux();
+        Serial.print("y ");
+        Serial.print(idx);
+        Serial.print(" ");
+        Serial.println(lux, 2);
+    }
+    else if (strcmp(subCommand, "p") == 0) {
+        // Power consumption
+        float power = getPowerConsumption();
+        Serial.print("p ");
+        Serial.print(idx);
+        Serial.print(" ");
+        Serial.println(power, 2);
+    }
+    else if (strcmp(subCommand, "t") == 0) {
+        // Elapsed time
+        unsigned long time = getElapsedTime();
+        Serial.print("t ");
+        Serial.print(idx);
+        Serial.print(" ");
+        Serial.println(time);
+    }
+    else if (strcmp(subCommand, "v") == 0) {
+        // LDR voltage
+        float voltage = getVoltageAtLDR();
+        Serial.print("v ");
+        Serial.print(idx);
+        Serial.print(" ");
+        Serial.println(voltage, 3);
+    }
+    else if (strcmp(subCommand, "d") == 0) {
+        // External illuminance
+        float extLux = getExternalIlluminance();
+        Serial.print("d ");
+        Serial.print(idx);
+        Serial.print(" ");
+        Serial.println(extLux, 2);
+    }
+    else if (strcmp(subCommand, "a") == 0) {
+        // Anti-windup state
+        critical_section_enter_blocking(&commStateLock);
+        int antiWindup = controlState.antiWindup ? 1 : 0;
+        critical_section_exit(&commStateLock);
+        Serial.print("a ");
+        Serial.print(idx);
+        Serial.print(" ");
+        Serial.println(antiWindup);
+    }
+    else if (strcmp(subCommand, "f") == 0) {
+        // Feedback control state
+        critical_section_enter_blocking(&commStateLock);
+        int feedback = controlState.feedbackControl ? 1 : 0;
+        critical_section_exit(&commStateLock);
+        Serial.print("f ");
+        Serial.print(idx);
+        Serial.print(" ");
+        Serial.println(feedback);
+    }
+    else if (strcmp(subCommand, "r") == 0) {
+        // Reference illuminance (setpoint)
+        critical_section_enter_blocking(&commStateLock);
+        float setpoint = controlState.setpointLux;
+        critical_section_exit(&commStateLock);
+        Serial.print("r ");
+        Serial.print(idx);
+        Serial.print(" ");
+        Serial.println(setpoint, 1);
+    }
+    else {
+        Serial.print("err: Unknown variable '");
+        Serial.print(subCommand);
+        Serial.println("'");
+    }
+}
 
 /**
  * Handle LED control commands (u, p, w)
@@ -643,100 +829,208 @@ static bool handleLEDCommands(char tokens[][TOKEN_MAX_LENGTH], int numTokens) {
 * @return true if command was handled, false otherwise
 */
 static bool handleSystemStateCommands(char tokens[][TOKEN_MAX_LENGTH], int numTokens) {
-  if (strcmp(tokens[0], "o") == 0) {
-      // Occupancy command
-      if (numTokens < 3) {
-          Serial.println("err: Missing parameters");
-          return true;
-      }
-      
-      int targetNode;
-      int val;
-      
-      // Parse node ID
-      if (!parseIntParam(tokens[1], &targetNode) || targetNode < 0 || targetNode > 63) {
-          Serial.println("err: Invalid node ID");
-          return true;
-      }
-      
-      // Parse state value
-      if (!parseIntParam(tokens[2], &val) || !isInRange(val, 0, 2)) {
-          Serial.println("err: Invalid state (must be 0=off, 1=unoccupied, or 2=occupied)");
-          return true;
-      }
-      
-      // Process command based on target
-      if (handleTargetedCommand(targetNode, 7, val)) {
-          return true;
-      }
-  }
+    if (strcmp(tokens[0], "o") == 0) {
+        // Occupancy command
+        if (numTokens < 3) {
+            Serial.println("err: Missing parameters");
+            return true;
+        }
+        
+        int targetNode;
+        int val;
+        
+        // Parse node ID
+        if (!parseIntParam(tokens[1], &targetNode) || targetNode < 0 || targetNode > 63) {
+            Serial.println("err: Invalid node ID");
+            return true;
+        }
+        
+        // Parse state value
+        if (!parseIntParam(tokens[2], &val) || !isInRange(val, 0, 2)) {
+            Serial.println("err: Invalid state (must be 0=off, 1=unoccupied, or 2=occupied)");
+            return true;
+        }
+        
+        // Process command based on target
+        if (handleTargetedCommand(targetNode, 7, val)) {
+            return true;
+        }
+    }
+    else if (strcmp(tokens[0], "a") == 0) {
+        // Anti-windup command
+        if (numTokens < 3) {
+            Serial.println("err: Missing parameters");
+            return true;
+        }
+        
+        int targetNode;
+        int val;
+        
+        // Parse node ID
+        if (!parseIntParam(tokens[1], &targetNode) || targetNode < 0 || targetNode > 63) {
+            Serial.println("err: Invalid node ID");
+            return true;
+        }
+        
+        // Parse anti-windup value (0=off, 1=on)
+        if (!parseIntParam(tokens[2], &val) || !isInRange(val, 0, 1)) {
+            Serial.println("err: Invalid anti-windup value (must be 0 or 1)");
+            return true;
+        }
+        
+        // Process command based on target
+        if (handleTargetedCommand(targetNode, 8, val)) {
+            return true;
+        }
+    }
+    else if (strcmp(tokens[0], "f") == 0) {
+        // Feedback control command
+        if (numTokens < 3) {
+            Serial.println("err: Missing parameters");
+            return true;
+        }
+        
+        int targetNode;
+        int val;
+        
+        // Parse node ID
+        if (!parseIntParam(tokens[1], &targetNode) || targetNode < 0 || targetNode > 63) {
+            Serial.println("err: Invalid node ID");
+            return true;
+        }
+        
+        // Parse feedback control value (0=off, 1=on)
+        if (!parseIntParam(tokens[2], &val) || !isInRange(val, 0, 1)) {
+            Serial.println("err: Invalid feedback control value (must be 0 or 1)");
+            return true;
+        }
+        
+        // Process command based on target
+        if (handleTargetedCommand(targetNode, 9, val)) {
+            return true;
+        }
+    }
+    else if (strcmp(tokens[0], "fi") == 0) {
+        // Filter enable/disable command
+        if (numTokens < 3) {
+            Serial.println("err: Missing parameters");
+            return true;
+        }
+        
+        int targetNode;
+        int val;
+        
+        // Parse node ID
+        if (!parseIntParam(tokens[1], &targetNode) || targetNode < 0 || targetNode > 63) {
+            Serial.println("err: Invalid node ID");
+            return true;
+        }
+        
+        // Parse filter enable value (0=off, 1=on)
+        if (!parseIntParam(tokens[2], &val) || !isInRange(val, 0, 1)) {
+            Serial.println("err: Invalid filter value (must be 0 or 1)");
+            return true;
+        }
+        
+        // Process command based on target
+        if (handleTargetedCommand(targetNode, 14, val)) {
+            return true;
+        }
+    }
+  else if (strcmp(tokens[0], "r") == 0) {
+        // Reference illuminance command
+        if (numTokens < 3) {
+            Serial.println("err: Missing parameters");
+            return true;
+        }
+        
+        int targetNode;
+        float val;
+        
+        // Parse node ID
+        if (!parseIntParam(tokens[1], &targetNode) || targetNode < 0 || targetNode > 63) {
+            Serial.println("err: Invalid node ID");
+            return true;
+        }
+        
+        // Parse reference value
+        if (!parseFloatParam(tokens[2], &val) || val < 0.0f) {
+            Serial.println("err: Invalid reference value (must be >= 0.0)");
+            return true;
+        }
+        
+        // Process command based on target
+        if (handleTargetedCommand(targetNode, 10, val)) {
+            return true;
+        }
+    }
   // Similar implementations for a, fi, f, r commands
-  else if (strcmp(tokens[0], "st") == 0) {
-      // Set luminaire state by name
-      if (numTokens < 3) {
-          Serial.println("err: Missing parameters");
-          return true;
-      }
+    else if (strcmp(tokens[0], "st") == 0) {
+        // Set luminaire state by name
+        if (numTokens < 3) {
+            Serial.println("err: Missing parameters");
+            return true;
+        }
+        
+        int targetNode;
+        if (!parseIntParam(tokens[1], &targetNode) || targetNode < 0 || targetNode > 63) {
+            Serial.println("err: Invalid node ID");
+            return true;
+        }
       
-      int targetNode;
-      if (!parseIntParam(tokens[1], &targetNode) || targetNode < 0 || targetNode > 63) {
-          Serial.println("err: Invalid node ID");
-          return true;
-      }
+        char stateStr[TOKEN_MAX_LENGTH];
+        strcpy(stateStr, tokens[2]);
+        
+        // Convert state string to value for CAN transmission
+        int stateVal = -1; // Invalid by default
+        if (strcmp(stateStr, "off") == 0)
+            stateVal = 0;
+        else if (strcmp(stateStr, "unoccupied") == 0)
+            stateVal = 1;
+        else if (strcmp(stateStr, "occupied") == 0)
+            stateVal = 2;
+        else {
+            Serial.println("err: Invalid state (must be 'off', 'unoccupied', or 'occupied')");
+            return true;
+        }
       
-      char stateStr[TOKEN_MAX_LENGTH];
-      strcpy(stateStr, tokens[2]);
-      
-      // Convert state string to value for CAN transmission
-      int stateVal = -1; // Invalid by default
-      if (strcmp(stateStr, "off") == 0)
-          stateVal = 0;
-      else if (strcmp(stateStr, "unoccupied") == 0)
-          stateVal = 1;
-      else if (strcmp(stateStr, "occupied") == 0)
-          stateVal = 2;
-      else {
-          Serial.println("err: Invalid state (must be 'off', 'unoccupied', or 'occupied')");
-          return true;
-      }
-      
-      // Check if we need to forward this command
-      if (shouldForwardCommand(targetNode)) {
-          // Forward to specific node - control type 13 = luminaire state
-          if (sendControlCommand(targetNode, 13, stateVal)) {
-              Serial.println("ack");
-          } else {
-              Serial.println("err: CAN forwarding failed");
-          }
-          return true;
-      }
-      
-      // Handle broadcast case (targetNode = 0)
-      if (targetNode == 0) {
-          if (sendControlCommand(CAN_ADDR_BROADCAST, 13, stateVal)) {
-              // Also apply locally since broadcast includes this node
-              if (strcmp(stateStr, "off") == 0)
-                  changeState(STATE_OFF);
-              else if (strcmp(stateStr, "unoccupied") == 0)
-                  changeState(STATE_UNOCCUPIED);
-              else if (strcmp(stateStr, "occupied") == 0)
-                  changeState(STATE_OCCUPIED);
-              Serial.println("ack");
-          } else {
-              Serial.println("err: CAN broadcast failed");
-          }
-          return true;
-      }
-      
-      // Apply locally
-      if (strcmp(stateStr, "off") == 0)
-          changeState(STATE_OFF);
-      else if (strcmp(stateStr, "unoccupied") == 0)
-          changeState(STATE_UNOCCUPIED);
-      else if (strcmp(stateStr, "occupied") == 0)
-          changeState(STATE_OCCUPIED);
-      Serial.println("ack");
-      return true;
+        // Check if we need to forward this command
+        if (shouldForwardCommand(targetNode)) {
+            // Forward to specific node - control type 13 = luminaire state
+            if (sendControlCommand(targetNode, 13, stateVal)) {
+                Serial.println("ack");
+            } else {
+                Serial.println("err: CAN forwarding failed");
+            }
+            return true;
+        }
+        
+        // Handle broadcast case (targetNode = 0)
+        if (targetNode == 0) {
+            if (sendControlCommand(CAN_ADDR_BROADCAST, 13, stateVal)) {
+                // Also apply locally since broadcast includes this node
+                if (strcmp(stateStr, "off") == 0)
+                    changeState(STATE_OFF);
+                else if (strcmp(stateStr, "unoccupied") == 0)
+                    changeState(STATE_UNOCCUPIED);
+                else if (strcmp(stateStr, "occupied") == 0)
+                    changeState(STATE_OCCUPIED);
+                Serial.println("ack");
+            } else {
+                Serial.println("err: CAN broadcast failed");
+            }
+            return true;
+        }
+        
+    // Apply locally
+    if (strcmp(stateStr, "off") == 0)
+        changeState(STATE_OFF);
+    else if (strcmp(stateStr, "unoccupied") == 0)
+        changeState(STATE_UNOCCUPIED);
+    else if (strcmp(stateStr, "occupied") == 0)
+        changeState(STATE_OCCUPIED);
+    Serial.println("ack");
+    return true;
   }
   else {
       return false; // Not a system state command
