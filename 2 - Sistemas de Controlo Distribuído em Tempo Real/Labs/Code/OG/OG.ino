@@ -131,6 +131,25 @@ struct NeighborInfo
   bool isActive;            // Is node currently active
 };
 
+//-----------------------------------------------------------------------------
+// Network Discovery and Calibration
+//-----------------------------------------------------------------------------
+
+// Network discovery and calibration variables
+NetworkState currentNetworkState = NET_STATE_BOOT;
+bool discoveredNodes[64] = {false};      // Tracks which nodes have been discovered
+uint8_t discoveredCount = 0;             // Count of discovered nodes
+bool readyNodes[64] = {false};           // Tracks which nodes are ready for calibration
+uint8_t readyCount = 0;                  // Count of ready nodes
+uint8_t calibrationNodeSequence = 0;     // Current node in calibration sequence
+uint8_t calibrationStep = 0;             // Current step in calibration process
+unsigned long lastNetworkActionTime = 0; // Timestamp of last network action
+bool isCalibrationComplete = false;      // Flag indicating if calibration is complete
+
+// Light coupling measurement data
+float selfGain = 0.0;                    // Luminaire's effect on its own sensor
+float crossGains[64] = {0};              // Effect of other luminaires on this sensor
+
 const int MAX_NEIGHBORS = 5;           // Maximum tracked neighbors
 NeighborInfo neighbors[MAX_NEIGHBORS]; // Neighbor state array
 
@@ -702,6 +721,554 @@ float calibrateSystem(float referenceValue)
   return gain;
 }
 
+
+// NEW FUNCTIONALITY STILL TO BE VALIDATED
+//=============================================================================
+// NETWORK DISCOVERY HELPER FUNCTIONS
+//=============================================================================
+
+/**
+ * Broadcast a discovery message to the network
+ * Announces this node's presence to other nodes in the network
+ * Uses a minimal CAN message to maximize network bandwidth efficiency
+ * 
+ * @return true if message was sent successfully
+ */
+bool broadcastDiscoveryMessage() {
+  // Add a static counter with proper initialization
+  static uint16_t broadcastCount = 0;
+  
+  // For discovery, we only need to send our node ID
+  uint8_t myNodeId;
+  critical_section_enter_blocking(&commStateLock);
+  myNodeId = deviceConfig.nodeId;
+  critical_section_exit(&commStateLock);
+
+  // Increment counter BEFORE checking condition
+  broadcastCount++;
+  
+  // Only print message every 100 broadcasts, avoiding the first broadcast
+  if (broadcastCount % 100 == 0 && broadcastCount > 0) {
+    Serial.print("Network: Broadcasting discovery message from node ");
+    Serial.println(myNodeId);
+  }
+  
+  // Use the value field to carry our node ID
+  return sendControlCommand(CAN_ADDR_BROADCAST, CAN_DISC_HELLO, (float)myNodeId);
+}
+/**
+ * Broadcast a ready message to the network
+ * Indicates this node is ready for the calibration sequence
+ * Sent after all expected nodes have been discovered
+ * 
+ * @return true if message was sent successfully
+ */
+bool broadcastReadyMessage() {
+  // Get our node ID
+  uint8_t myNodeId;
+  critical_section_enter_blocking(&commStateLock);
+  myNodeId = deviceConfig.nodeId;
+  critical_section_exit(&commStateLock);
+  
+  Serial.print("Network: Broadcasting ready message from node ");
+  Serial.println(myNodeId);
+  
+  // Pack node ID as the value so receivers know which node is ready
+  // CAN_DISC_READY (0x31) is the message type for ready state indication
+  return sendControlCommand(CAN_ADDR_BROADCAST, CAN_DISC_READY, (float)myNodeId);
+}
+
+/**
+ * Broadcast a calibration message to the network
+ * Controls the calibration sequence across nodes
+ * Indicates which node should perform calibration next
+ * 
+ * @param sequenceIndex Index of the node that should perform calibration next
+ * @return true if message was sent successfully
+ */
+bool broadcastCalibrationMessage(uint8_t sequenceIndex) {
+  Serial.print("Network: Broadcasting calibration message, active node: ");
+  Serial.println(sequenceIndex);
+  
+  // Send the sequence index so nodes know whose turn it is
+  // CAN_DISC_CALIBRATION (0x32) is the message type for calibration coordination
+  return sendControlCommand(CAN_ADDR_BROADCAST, CAN_DISC_CALIBRATION, (float)sequenceIndex);
+}
+
+/**
+ * Initialize the network discovery and calibration system
+ * Resets all network state variables and prepares for node discovery
+ * Called during system startup to prepare for network coordination
+ */
+void initNetworkSystem() {
+  // Set initial network state to boot mode
+  NetworkState currentNetworkState = NET_STATE_BOOT;
+  
+  Serial.println("Network System: Initializing discovery and calibration subsystem...");
+  
+  // Reset discovered nodes tracking
+  memset(discoveredNodes, 0, sizeof(discoveredNodes));
+  discoveredCount = 0;
+  Serial.println("Network System: Reset discovered nodes array");
+  
+  // Reset ready nodes tracking
+  memset(readyNodes, 0, sizeof(readyNodes));
+  readyCount = 0;
+  Serial.println("Network System: Reset ready nodes array");
+  
+  // Reset calibration sequence counter and step
+  calibrationNodeSequence = 0;
+  calibrationStep = 0;
+  Serial.println("Network System: Reset calibration sequence and step counters");
+  
+  // Record the current time as the starting point for state machine timing
+  lastNetworkActionTime = millis();
+  Serial.println("Network System: Recorded start time for state machine");
+  
+  // Mark calibration as incomplete to trigger the calibration process later
+  isCalibrationComplete = false;
+  Serial.println("Network System: Calibration marked as incomplete");
+  
+  // Ensure LED is off during initialization
+  setLEDDutyCycle(0.0);
+  Serial.println("Network System: LED turned off for initialization");
+  
+  // Mark our own node as discovered to include in count
+  uint8_t myNodeId;
+  critical_section_enter_blocking(&commStateLock);
+  myNodeId = deviceConfig.nodeId;
+  readyNodes[myNodeId] = false;  // Not ready yet
+  discoveredNodes[myNodeId] = true;  // We know about ourselves
+  critical_section_exit(&commStateLock);
+  discoveredCount = 1;  // Start with just ourselves
+  
+  Serial.print("Network System: Initialized in state ");
+  Serial.println("BOOT");
+  Serial.println("Network System: Ready to begin discovery process");
+}
+
+/**
+ * Process the network state machine
+ * Handles network discovery, node coordination, and calibration
+ */
+void processNetworkStateMachine() {
+  // Define the expected number of nodes in the network
+  const uint8_t EXPECTED_NODES = 3;
+  
+  // Use global state for consistent tracking across function calls
+  static NetworkState currentNetworkState = NET_STATE_BOOT;
+  static unsigned long discoveryStartTime = 0;   // When we started discovery
+  static unsigned long readyStartTime = 0;       // When node became ready
+  static unsigned long lastBroadcastTime = 0;    // Last time we sent discovery message
+  static bool hasSetNodeReady = false;           // Flag to track if we marked ourselves ready
+  
+  // Get current time for timing operations
+  unsigned long currentTime = millis();
+  
+  // Get our node ID for logging and state management
+  uint8_t myNodeId;
+  critical_section_enter_blocking(&commStateLock);
+  myNodeId = deviceConfig.nodeId;
+  critical_section_exit(&commStateLock);
+  
+  // Process based on current network state
+  switch (currentNetworkState) {
+      //-------------------------------------------------------------------------
+      // BOOT STATE
+      //-------------------------------------------------------------------------
+      case NET_STATE_BOOT:
+          Serial.println("Network: Transitioning from BOOT to DISCOVERY state");
+          
+          // Mark our own node as discovered
+          discoveredNodes[myNodeId] = true;
+          discoveredCount = 1;  // Start with ourselves
+          
+          // Initialize discovery state variables
+          discoveryStartTime = currentTime;
+          lastBroadcastTime = 0;
+          hasSetNodeReady = false;
+          
+          // Move to discovery state
+          currentNetworkState = NET_STATE_DISCOVERY;
+          lastNetworkActionTime = currentTime;
+          break;
+          
+      //-------------------------------------------------------------------------
+      // DISCOVERY STATE
+      //-------------------------------------------------------------------------
+      case NET_STATE_DISCOVERY: {
+          // Periodically broadcast discovery (with rate limiting)
+          // Add jitter (±50ms) to reduce collision probability
+          if (currentTime - lastBroadcastTime > (500 + random(-50, 50))) {
+              lastBroadcastTime = currentTime;
+              
+              // Static variables to track previous discovery state for change detection
+              static uint8_t prevDiscoveredCount = 0;
+              
+              // Only log when the count changes to reduce serial spam
+              if (prevDiscoveredCount != discoveredCount) {
+                  Serial.print("Network: Broadcasting discovery, found ");
+                  Serial.print(discoveredCount);
+                  Serial.print(" of ");
+                  Serial.print(EXPECTED_NODES);
+                  Serial.println(" expected nodes");
+                  
+                  // Print known nodes
+                  Serial.print("Network: Known nodes: ");
+                  for (int i = 0; i < 64; i++) {
+                      if (discoveredNodes[i]) {
+                          Serial.print(i);
+                          Serial.print(" ");
+                      }
+                  }
+                  Serial.println();
+                  
+                  prevDiscoveredCount = discoveredCount;
+                  
+                  // Reset our overall state machine timer when progress is made
+                  lastNetworkActionTime = currentTime;
+              }
+              
+              // Send discovery broadcast
+              broadcastDiscoveryMessage();
+          }
+          
+          // Get our readiness status - check if we've already marked ourselves ready
+          critical_section_enter_blocking(&commStateLock);
+          bool nodeReadyStatus = readyNodes[myNodeId];
+          critical_section_exit(&commStateLock);
+          
+          // Time-based checks for transitioning to ready state
+          bool isDiscoveryTimedOut = (currentTime - discoveryStartTime) > 30000; // 30 seconds timeout
+          bool foundAllNodes = (discoveredCount >= EXPECTED_NODES);
+          
+          // Conditions for marking ourselves ready:
+          // 1. We found all expected nodes, OR
+          // 2. Discovery has timed out (30 seconds)
+          // 3. AND we haven't already marked ourselves ready
+          if ((foundAllNodes || isDiscoveryTimedOut) && !hasSetNodeReady) {
+              // Mark ourselves as ready
+              readyNodes[myNodeId] = true;
+              readyCount++;
+              hasSetNodeReady = true;
+              readyStartTime = currentTime;
+              
+              // Broadcast ready message to network
+              broadcastReadyMessage();
+              
+              Serial.print("Network: Node ");
+              Serial.print(myNodeId);
+              Serial.println(" marked as ready for calibration");
+              
+              // If discovery timed out, log it clearly
+              if (isDiscoveryTimedOut && !foundAllNodes) {
+                  Serial.print("Network: Discovery timed out after 30 seconds. Found ");
+                  Serial.print(discoveredCount);
+                  Serial.print(" of ");
+                  Serial.print(EXPECTED_NODES);
+                  Serial.println(" expected nodes.");
+              }
+          }
+          
+          // Transition to READY state if:
+          // 1. All nodes are ready, OR
+          // 2. We've been in ready state for at least 10 seconds (transition timeout)
+          if (readyCount >= EXPECTED_NODES || 
+              (hasSetNodeReady && (currentTime - readyStartTime > 10000))) {
+              Serial.println("Network: All nodes ready or timeout reached, transitioning to READY state");
+              currentNetworkState = NET_STATE_READY;
+              lastNetworkActionTime = currentTime;
+          }
+          break;
+      }
+          
+      //-------------------------------------------------------------------------
+      // READY STATE
+      //-------------------------------------------------------------------------
+      case NET_STATE_READY:
+          // Wait a short time before starting calibration (5 seconds after entering READY)
+          if (currentTime - lastNetworkActionTime > 5000) {
+              Serial.println("Network: Ready timer expired, starting calibration sequence");
+              
+              // Call our function to start calibration
+              startCalibration();
+              
+              // Transition to calibration state
+              currentNetworkState = NET_STATE_CALIBRATION;
+              Serial.println("Network: Transitioned to CALIBRATION state");
+          }
+          break;
+          
+      //-------------------------------------------------------------------------
+      // CALIBRATION STATE
+      //-------------------------------------------------------------------------
+      case NET_STATE_CALIBRATION:
+          // Call separate function to handle the calibration process
+          processCalibration();
+          
+          // Check if calibration is complete
+          if (isCalibrationComplete) {
+              Serial.println("Network: Calibration complete, transitioning back to READY state");
+              // Transition back to READY state
+              currentNetworkState = NET_STATE_READY;
+              lastNetworkActionTime = currentTime;
+          }
+          break;
+          
+      default:
+          // Invalid state - reset to boot
+          Serial.println("Network: Invalid state detected, resetting to BOOT");
+          currentNetworkState = NET_STATE_BOOT;
+          break;
+  }
+}
+
+/**
+ * Process the sequential LED calibration
+ * Each node takes turns turning its LED on and all nodes measure the effect
+ * 
+ * Calibration Steps for Each Node:
+ * 0: Turn all LEDs off
+ * 1: Measure baseline illuminance
+ * 2: Current node turns its LED on
+ * 3: All nodes measure the effect (self-gain or cross-gain)
+ * 4: Move to next node in sequence
+ */
+void processCalibration() {
+  // Calibration timing constants
+  const unsigned long STABILIZE_TIME = 2000;    // Time for readings to stabilize (ms)
+  const unsigned long MEASURE_TIME = 3000;      // Time to take measurements (ms)
+  const unsigned long LED_ON_TIME = 5000;       // Time to keep LED on (ms)
+  const unsigned long TRANSITION_TIME = 1000;   // Time between nodes (ms)
+  
+  // Get current time
+  unsigned long currentTime = millis();
+  
+  // Static variable to track illuminance measurements across function calls
+  static float baselineLux = 0.0;      // Illuminance with all LEDs off
+  static unsigned long stepStartTime = 0; // When the current step started
+  static unsigned long currentStepDuration = 0; // Duration of current step
+  static bool stepInitialized = false; // Flag to track step initialization
+  
+  // Get our node ID for comparison
+  uint8_t myNodeId;
+  critical_section_enter_blocking(&commStateLock);
+  myNodeId = deviceConfig.nodeId;
+  critical_section_exit(&commStateLock);
+  
+  // Map sequence index to actual nodeId
+  static uint8_t nodeIdSequence[64]; // Array to store the actual node IDs in sequence
+  static bool sequenceInitialized = false;
+  
+  if (!sequenceInitialized) {
+    // Build the sequence of actual node IDs from discoveredNodes
+    int seqIndex = 0;
+    for (int i = 0; i < 64; i++) {
+      if (discoveredNodes[i]) {
+        nodeIdSequence[seqIndex++] = i;
+      }
+    }
+    sequenceInitialized = true;
+  }
+  
+  // Get the actual node ID for current sequence position
+  uint8_t activeNodeId = nodeIdSequence[calibrationNodeSequence];
+  
+  // Initialize step if needed
+  if (!stepInitialized) {
+    stepStartTime = currentTime;
+    
+    // Set appropriate duration for each step
+    switch (calibrationStep) {
+      case 0: // Turn LEDs off
+        currentStepDuration = TRANSITION_TIME;
+        Serial.println("Calibration: Turning all LEDs off to establish baseline");
+        break;
+      case 1: // Measure baseline
+        currentStepDuration = MEASURE_TIME;
+        Serial.println("Calibration: Moving to step 1 - Measure baseline");
+        break;
+      case 2: // Turn active node LED on
+        currentStepDuration = LED_ON_TIME;
+        Serial.println("Calibration: Moving to step 2 - Active node turns LED on");
+        if (myNodeId == activeNodeId) {
+          Serial.println("Calibration: This node is active, turning LED on");
+          setLEDDutyCycle(1.0);
+        } else {
+          Serial.print("Calibration: Waiting for Node ");
+          Serial.print(activeNodeId);
+          Serial.println(" to turn on its LED");
+        }
+        break;
+      case 3: // Measure effect
+        currentStepDuration = MEASURE_TIME;
+        Serial.println("Calibration: Moving to step 3 - Measure effect");
+        break;
+      case 4: // Move to next node
+        currentStepDuration = TRANSITION_TIME;
+        Serial.println("Calibration: Moving to step 4 - Advance to next node");
+        break;
+    }
+    
+    stepInitialized = true;
+  }
+  
+  // Check if it's time to move to the next step
+  if (currentTime - stepStartTime > currentStepDuration) {
+    // Process the current step
+    switch (calibrationStep) {
+      case 0: // Turn LEDs off
+        // All nodes turn LED off
+        setLEDDutyCycle(0.0);
+        calibrationStep = 1; // Advance to next step
+        break;
+        
+      case 1: { // Measure baseline
+        // All nodes measure baseline illuminance
+        const int SAMPLES = 5;  // Number of samples to average
+        float totalLux = 0.0;
+        
+        for (int i = 0; i < SAMPLES; i++) {
+          totalLux += readLux();
+          delay(50); // Short delay between samples
+        }
+        baselineLux = totalLux / SAMPLES;
+        
+        Serial.print("Calibration: Baseline lux (ambient light): ");
+        Serial.println(baselineLux, 2);
+        
+        // Send baseline to all nodes using sensor type 0 (illuminance)
+        sendSensorReading(CAN_ADDR_BROADCAST, 0, baselineLux);
+        
+        calibrationStep = 2; // Advance to next step
+        break;
+      }
+        
+      case 2: // Turn active node LED on
+        // Nothing to do at end of step - LED should already be on or off
+        calibrationStep = 3; // Advance to next step
+        break;
+        
+      case 3: { // Measure effect
+        // All nodes measure illuminance with active LED on
+        const int SAMPLES = 5;
+        float totalLux = 0.0;
+        
+        for (int i = 0; i < SAMPLES; i++) {
+          totalLux += readLux();
+          delay(50);
+        }
+        float measuredLux = totalLux / SAMPLES;
+        
+        Serial.print("Calibration: Measured illuminance with LED: ");
+        Serial.println(measuredLux, 2);
+        
+        // Calculate gain (current - baseline)
+        float gainValue = measuredLux - baselineLux;
+        
+        // If this is our own node, it's self-gain
+        if (myNodeId == activeNodeId) {
+          selfGain = gainValue;
+          Serial.print("Calibration: Self-gain for node ");
+          Serial.print(myNodeId);
+          Serial.print(": ");
+          Serial.println(selfGain, 2);
+          
+          // Store in device config (for future use)
+          critical_section_enter_blocking(&commStateLock);
+          deviceConfig.ledGain = selfGain;
+          critical_section_exit(&commStateLock);
+        } else {
+          // Otherwise it's cross-gain
+          crossGains[activeNodeId] = gainValue;
+          Serial.print("Calibration: Cross-gain from node ");
+          Serial.print(activeNodeId);
+          Serial.print(" to node ");
+          Serial.print(myNodeId);
+          Serial.print(": ");
+          Serial.println(gainValue, 2);
+          
+          // Send this cross-gain to the active node using sensor type 10
+          // (using type 10 specifically for cross-gain reporting)
+          sendSensorReading(activeNodeId, 10, gainValue);
+        }
+        
+        calibrationStep = 4; // Advance to next step
+        break;
+      }
+        
+      case 4: // Move to next node
+        // Turn off LED regardless of which node we are
+        setLEDDutyCycle(0.0);
+        
+        // Broadcast calibration message for next node
+        if (myNodeId == activeNodeId) {
+          // Only the active node advances the sequence
+          // Increment to next node
+          calibrationNodeSequence++;
+          
+          if (calibrationNodeSequence >= discoveredCount) {
+            // We've processed all nodes, calibration is complete
+            isCalibrationComplete = true;
+            Serial.println("Calibration: Completed for all nodes!");
+            
+            // Ensure LED is off at the end
+            setLEDDutyCycle(0.0);
+          } else {
+            // Move to the next node in sequence
+            uint8_t nextNodeId = nodeIdSequence[calibrationNodeSequence];
+            Serial.print("Calibration: Moving to node ");
+            Serial.println(calibrationNodeSequence);
+            
+            // Broadcast to coordinate all nodes
+            broadcastCalibrationMessage(calibrationNodeSequence);
+            
+            Serial.print("Calibration: Preparing for calibration of node ");
+            Serial.println(nextNodeId);
+          }
+        }
+        
+        // Reset to step 0 for next node (all nodes do this)
+        calibrationStep = 0;
+        break;
+    }
+    
+    // Reset step initialization flag for the new step
+    stepInitialized = false;
+  }
+}
+
+/**
+ * Initiate the network-wide calibration sequence
+ * Transitions the network state to calibration mode and starts the process
+ * Coordinates all nodes to take turns measuring light contribution
+ */
+void startCalibration() {
+  // Reset calibration variables
+  calibrationNodeSequence = 0; // Start with the first node (node 0)
+  calibrationStep = 0; // Reset step to beginning (turn all LEDs off)
+  isCalibrationComplete = false;
+  
+  // Store current time for timing operations
+  lastNetworkActionTime = millis();
+  
+  Serial.println("Network: Starting calibration sequence");
+  
+  // Broadcast the initial calibration message to synchronize all nodes
+  // This tells node 0 to start its calibration turn
+  broadcastCalibrationMessage(0);
+  
+  // Reset all LED states to ensure a consistent starting point
+  setLEDDutyCycle(0.0);
+  
+  // Set global variable to make currentNetworkState accessible
+  extern NetworkState currentNetworkState;
+  
+  Serial.println("Network: Calibration initiated, waiting for steps to complete");
+}
+
+// END OF NETWORK DISCOVERY HELPER FUNCTIONS IMPLEMENTATION TO BE VALIDATED
+
 /******************************************************************************************************************************************************************************************************************************************************************************** */
 // LED DRIVER SECTION
 /******************************************************************************************************************************************************************************************************************************************************************************** */
@@ -962,8 +1529,8 @@ void setup()
   sensorState.filterEnabled = true;
   sensorState.lastFilteredLux = -1.0;
 
-  controlState.setpointLux = SETPOINT_UNOCCUPIED;
-  controlState.luminaireState = STATE_UNOCCUPIED;
+  controlState.setpointLux = SETPOINT_OFF;
+  controlState.luminaireState = STATE_OFF;
   controlState.feedbackControl = true;
   controlState.antiWindup = true;
   controlState.dutyCycle = 0.0; 
@@ -972,9 +1539,6 @@ void setup()
 
   // Configure device based on unique ID
   configureDeviceFromID();
-
-  Serial.print("Device ID: ");
-  Serial.println(nodeID);
 
   // Calibrate the system
   deviceConfig.ledGain = calibrateSystem(1.0);
@@ -996,18 +1560,18 @@ void loop()
   // (A) Process incoming serial commands
   processSerialCommands();
 
+  // Process network discovery and calibration state machine
+  processNetworkStateMachine();
+
   // (B) Handle streaming
   handleStreaming();
   handleRemoteStreamRequests();
 
   // (C) Read sensor data safely
   float lux = readLux();
+
   critical_section_enter_blocking(&commStateLock);
   sensorState.filteredLux = lux;
-  critical_section_exit(&commStateLock);
-
-  // (D) Control system
-  critical_section_enter_blocking(&commStateLock);
   LuminaireState state = controlState.luminaireState;
   bool feedback = controlState.feedbackControl;
   float setpoint = controlState.setpointLux;

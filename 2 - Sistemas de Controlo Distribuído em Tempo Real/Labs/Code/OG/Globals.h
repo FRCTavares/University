@@ -45,6 +45,7 @@ enum LuminaireState
   STATE_OCCUPIED = 2    // Full task lighting when workspace is in use
 };
 
+
 //==========================================================================================================================================================
 // CAN MESSAGE TYPES
 //==========================================================================================================================================================
@@ -75,6 +76,11 @@ enum LuminaireState
 
 /** State change notifications */
 #define CAN_CTRL_STATE_CHANGE 0x10
+
+/** Network discovery protocol message types */
+#define CAN_DISC_HELLO 0x30       // Node announcing itself to the network
+#define CAN_DISC_READY 0x31       // Node ready for calibration
+#define CAN_DISC_CALIBRATION 0x32 // Calibration sequence coordination
 
 //==========================================================================================================================================================
 // STRUCTURE DEFINITIONS
@@ -154,6 +160,18 @@ struct CommState
   bool canMonitorEnabled;        // Enable monitoring of CAN messages
 };
 
+/**
+ * Network operating states
+ * Defines the possible states of the network discovery and calibration process
+ */
+enum NetworkState
+{
+  NET_STATE_BOOT = 0,        // Initial startup
+  NET_STATE_DISCOVERY = 1,    // Discovering other nodes
+  NET_STATE_READY = 2,        // All nodes discovered, ready for calibration
+  NET_STATE_CALIBRATION = 3   // Performing sequential calibration
+};
+
 //==========================================================================================================================================================
 // GLOBAL VARIABLE DECLARATIONS
 //==========================================================================================================================================================
@@ -192,6 +210,23 @@ extern CommState commState;
  * Handles feedback control of illuminance
  */
 extern class PIController pid;
+
+/**
+ * Network discovery and calibration variables
+ * Used to manage the network start-up process
+ */
+extern bool discoveredNodes[64];           // Tracks which nodes have been discovered
+extern uint8_t discoveredCount;            // Count of discovered nodes
+extern bool readyNodes[64];                // Tracks which nodes are ready for calibration
+extern uint8_t readyCount;                 // Count of ready nodes
+extern uint8_t calibrationNodeSequence;    // Current node in calibration sequence
+extern uint8_t calibrationStep;            // Current step in calibration process
+extern unsigned long lastNetworkActionTime; // Timestamp of last network action
+extern bool isCalibrationComplete;         // Flag indicating if calibration is complete
+
+// Add these declarations for light coupling measurements
+extern float selfGain;                     // Luminaire's effect on its own sensor
+extern float crossGains[64];               // Effect of other luminaires on this sensor
 
 //==========================================================================================================================================================
 // FUNCTION DECLARATIONS
@@ -232,5 +267,6 @@ void setLEDPower(float powerWatts);
  * @param newState New operating state to set
  */
 void changeState(LuminaireState newState);
+
 
 #endif // GLOBALS_H

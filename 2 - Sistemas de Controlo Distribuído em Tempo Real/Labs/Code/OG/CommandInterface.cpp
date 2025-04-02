@@ -805,6 +805,7 @@ void handleStreaming()
         Serial.println(computeEnergyFromBuffer(), 2);
       }
     }
+    
   } else {
     // For remote nodes, we don't generate data locally.
     // Remote values should come through CAN messages.
@@ -1586,6 +1587,58 @@ static bool handleControllerParameterCommands(char tokens[][TOKEN_MAX_LENGTH], i
   return false;
 }
 
+/**
+* Handle node disable command
+* 
+* @param tokens Command tokens
+* @param numTokens Number of tokens
+* @return true if command was handled, false otherwise
+*/
+static bool handleDisableCommand(char tokens[][TOKEN_MAX_LENGTH], int numTokens) {
+    if (strcmp(tokens[0], "disable") == 0) {
+      if (numTokens < 2) {
+        Serial.println("err: Expected node ID");
+        return true;
+      }
+      
+      int targetNode;
+      if (!parseIntParam(tokens[1], &targetNode) || targetNode < 0 || targetNode > 63) {
+        Serial.println("err: Invalid node ID");
+        return true;
+      }
+      
+      // Define a special control code for disable command (15)
+      const uint8_t CONTROL_TYPE_DISABLE = 15;
+      
+      if (shouldForwardCommand(targetNode)) {
+        // Forward to specific node
+        if (sendControlCommand(targetNode, CONTROL_TYPE_DISABLE, 0.0f)) {
+          Serial.println("ack: Node disable command sent");
+        } else {
+          Serial.println("err: CAN forwarding failed");
+        }
+        return true;
+      }
+      
+      // Handle locally
+      critical_section_enter_blocking(&commStateLock);
+      // Set setpoint to zero
+      controlState.setpointLux = 0.0f;
+      // Set luminaire state to OFF
+      controlState.luminaireState = STATE_OFF;
+      // Disable CAN communication
+      commState.periodicCANEnabled = false;
+      critical_section_exit(&commStateLock);
+      
+      // Turn off LED
+      setLEDDutyCycle(0.0f);
+      
+      Serial.println("ack: Node disabled");
+      return true;
+    }
+    return false;
+  }
+
 //==========================================================================================================================================================
 // COMMAND PROCESSING PIPELINE
 //==========================================================================================================================================================
@@ -1610,30 +1663,37 @@ static void processCommandLine(const char *cmdLine)
         return;
     }
     
-    if (handleSystemStateCommands(tokens, numTokens)) {
+    else if (handleSystemStateCommands(tokens, numTokens)) {
         return;
     }
     
-    if (handleDataQueryCommands(tokens, numTokens)) {
+    else if (handleDataQueryCommands(tokens, numTokens)) {
         return;
     }
     
-    if (handleStreamingCommands(tokens, numTokens)) {
+    else if (handleStreamingCommands(tokens, numTokens)) {
         return;
     }
     
-    if (handleCANNetworkCommands(tokens, numTokens)) {
+    else if (handleCANNetworkCommands(tokens, numTokens)) {
         return;
     }
     
-    if (handleControllerParameterCommands(tokens, numTokens)) {
+    else if (handleControllerParameterCommands(tokens, numTokens)) {
         return;
     }
-    
+    else if (handleDisableCommand(tokens, numTokens)) {
+        return;
+    }
     // Help command
-    if (strcmp(tokens[0], "h") == 0) {
+    else if (strcmp(tokens[0], "h") == 0) {
         printHelp();
         return;
+    }
+    else {
+        Serial.print("err: Unknown command '");
+        Serial.print(tokens[0]);
+        Serial.println("'");
     }
     
     // Default response for unrecognized commands

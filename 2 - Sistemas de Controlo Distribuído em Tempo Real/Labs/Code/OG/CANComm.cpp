@@ -649,6 +649,21 @@ void processIncomingMessage(const can_frame &msg)
         Serial.println(sensorState.filterEnabled ? "enabled" : "disabled");
       }
     }
+    else if (controlType == 15) { // DISABLE command
+      // Disable the node
+      critical_section_enter_blocking(&commStateLock);
+      controlState.setpointLux = 0.0f;
+      controlState.luminaireState = STATE_OFF;
+      commState.periodicCANEnabled = false;
+      critical_section_exit(&commStateLock);
+      
+      // Turn off LED
+      setLEDDutyCycle(0.0f);
+      
+      if (canMonitorEnabled) {
+        Serial.println("DEBUG: Node disabled by remote command");
+      }
+    }
     // Query commands (types 20-32)
     else if (controlType >= 20 && controlType <= 32)
     {
@@ -714,6 +729,58 @@ void processIncomingMessage(const can_frame &msg)
       // Send response with requested value
       sendQueryResponse(sourceNode, responseValue);
     }
+    // Network discovery protocol messages
+    else if (controlType == CAN_DISC_HELLO) { // Node announcing itself
+      // Extract the node ID from the value field (not the source field)
+      uint8_t announcedNodeId = (uint8_t)value;
+      
+      // Store sender in discovered nodes array and increment count
+      if (!discoveredNodes[announcedNodeId]) {
+          discoveredNodes[announcedNodeId] = true;
+          discoveredCount++;
+          
+        if (canMonitorEnabled) {
+            Serial.print("Network: Discovered node ");
+            Serial.print(announcedNodeId);
+            Serial.print(", total nodes: ");
+            Serial.println(discoveredCount);
+        }
+      }
+    }
+    else if (controlType == CAN_DISC_READY) { // Node ready for calibration
+      // Mark the sender as ready
+      if (!readyNodes[sourceNode]) {
+        readyNodes[sourceNode] = true;
+        readyCount++;
+        
+        if (canMonitorEnabled) {
+          Serial.print("Network: Node ");
+          Serial.print(sourceNode);
+          Serial.println(" is ready for calibration");
+        }
+      }
+    }
+    else if (controlType == CAN_DISC_CALIBRATION) { // Calibration sequence coordination
+      // Extract the sequence index from the value field
+      uint8_t sequenceIndex = (uint8_t)value;
+      
+      // Update calibration state
+      calibrationNodeSequence = sequenceIndex;
+      lastNetworkActionTime = millis();
+      
+      if (canMonitorEnabled) {
+          Serial.print("Network: Received calibration message, active node: ");
+          Serial.println(calibrationNodeSequence);
+      }
+  
+      // Use a pointer to access the network state defined in processNetworkStateMachine
+      // This is a proper way to handle the transition to calibration state
+      extern NetworkState currentNetworkState;
+      if (currentNetworkState == NET_STATE_READY) {
+          currentNetworkState = NET_STATE_CALIBRATION;
+          Serial.println("Network: Transitioning to CALIBRATION state due to calibration message");
+      }
+  }
     break;
   }
 
@@ -742,6 +809,7 @@ void processIncomingMessage(const can_frame &msg)
       break;
   }
   }
+
 }
 
 /**
