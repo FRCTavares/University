@@ -84,4 +84,16 @@ void printHelp();
  */
 void initPendingQueries();
 
+/**
+ * Process streaming in main loop
+ * Sends requested variable at regular intervals
+ */
+void handleStreaming();
+
+/**
+ * Process remote stream requests from other nodes
+ * Sends requested sensor values to remote nodes at regular intervals
+ */
+void handleRemoteStreamRequests();
+
 #endif // COMMANDINTERFACE_H

@@ -30,6 +30,9 @@ static uint32_t msgErrors = 0;
 static unsigned long lastLatencyMeasure = 0;
 static unsigned long totalLatency = 0;
 static uint32_t latencySamples = 0;
+bool responseReceived = false;
+uint8_t responseSourceNode = 0;
+float responseValue = 0.0f;
 
 extern bool canMonitorEnabled;
 
@@ -311,17 +314,77 @@ void processIncomingMessage(const can_frame &msg)
   // Extract sender node ID from first byte
   uint8_t sourceNodeID = msg.data[0];
 
-  // Always print messages from other nodes (not just when monitoring is enabled)
-  critical_section_enter_blocking(&commStateLock);
-  if (sourceNodeID != deviceConfig.nodeId)
-  {
-    critical_section_exit(&commStateLock);
-    if (msgType == CAN_TYPE_SENSOR)
-    {
-      uint8_t sensorType = msg.data[1];
-      float sensorValue = bytesToFloat(&msg.data[2]);
+  // Validate the source node ID to prevent displaying data from non-existent nodes
+  if (sourceNodeID == 0 || sourceNodeID > 63) {
+    if (canMonitorEnabled) {
+      Serial.print("WARNING: Invalid source node ID: ");
+      Serial.println(sourceNodeID);
+    }
+    return; // Skip processing invalid messages
+  }
 
-      // Print regardless of monitor state when it's from another node
+  // Process messages from other nodes
+  critical_section_enter_blocking(&commStateLock);
+  bool isOurNode = (sourceNodeID == deviceConfig.nodeId);
+  critical_section_exit(&commStateLock);
+  
+  if (!isOurNode && msgType == CAN_TYPE_SENSOR)
+  {
+    uint8_t sensorType = msg.data[1];
+    float sensorValue = bytesToFloat(&msg.data[2]);
+
+    // Check if this is part of a streaming request
+    bool isPartOfStream = false;
+    const char* varName = nullptr;
+    
+    critical_section_enter_blocking(&commStateLock);
+    if (commState.streamingEnabled && commState.streamingVar != nullptr && 
+        commState.streamingIndex == sourceNodeID) {
+      
+      // Map sensor type to variable name for output formatting
+      if ((strcmp(commState.streamingVar, "y") == 0 && sensorType == 0) ||
+          (strcmp(commState.streamingVar, "u") == 0 && sensorType == 1) ||
+          (strcmp(commState.streamingVar, "p") == 0 && sensorType == 2) ||
+          (strcmp(commState.streamingVar, "d") == 0 && sensorType == 3)) {
+        isPartOfStream = true;
+        varName = commState.streamingVar;
+      }
+    }
+    critical_section_exit(&commStateLock);
+    
+    // Also check REMOTE stream requests
+    for (int i = 0; i < MAX_STREAM_REQUESTS; i++) {
+      critical_section_enter_blocking(&commStateLock);
+      bool isActiveRequest = commState.remoteStreamRequests[i].active && 
+                             commState.remoteStreamRequests[i].requesterNode == deviceConfig.nodeId &&
+                             commState.remoteStreamRequests[i].variableType == sensorType;
+      critical_section_exit(&commStateLock);
+      
+      if (isActiveRequest) {
+        isPartOfStream = true;  // SET THE FLAG!
+        
+        // Map sensor type to variable name
+        switch(sensorType) {
+          case 0: varName = "y"; break;
+          case 1: varName = "u"; break;
+          case 2: varName = "p"; break;
+          case 3: varName = "d"; break;
+          default: varName = "?";
+        }
+        break;
+      }
+    }
+    
+    // If this is part of a stream, format and print in streaming format
+    if (isPartOfStream && varName != nullptr) {
+      Serial.print(varName);
+      Serial.print(" ");
+      Serial.print(sourceNodeID);
+      Serial.print(" ");
+      Serial.println(sensorValue, 2);
+    }
+    // Otherwise print standard format if monitoring enabled or not part of stream
+    else if (!isPartOfStream || canMonitorEnabled) {
       Serial.print("Node ");
       Serial.print(sourceNodeID);
       Serial.print(" sent sensor type ");
@@ -330,10 +393,6 @@ void processIncomingMessage(const can_frame &msg)
       Serial.println(sensorValue, 2);
     }
   }
-  else
-  {
-    critical_section_exit(&commStateLock);
-  }
 
   // Debug output if monitoring is enabled
   if (canMonitorEnabled)
@@ -341,7 +400,7 @@ void processIncomingMessage(const can_frame &msg)
     Serial.print("DEBUG: Received CAN message, type ");
     Serial.print(msgType);
     Serial.print(", source ");
-    Serial.print(msg.data[0]);
+    Serial.println(msg.data[0]);
   }
 
   // Check if message is addressed to this node or is broadcast
@@ -383,30 +442,6 @@ void processIncomingMessage(const can_frame &msg)
       Serial.print(" (ts: ");
       Serial.print(timestamp);
       Serial.println(")");
-    }
-    break;
-  }
-
-  //-------------------------------------------------------------------------
-  // HEARTBEAT MESSAGE HANDLING
-  //-------------------------------------------------------------------------
-  case CAN_TYPE_HEARTBEAT:
-  {
-    uint8_t statusFlags = msg.data[1];
-    uint32_t uptime = ((uint32_t)msg.data[5] << 24) |
-                      ((uint32_t)msg.data[4] << 16) |
-                      ((uint32_t)msg.data[3] << 8) |
-                      msg.data[2];
-
-    // Output debug info if monitoring enabled
-    if (canMonitorEnabled)
-    {
-      Serial.print("CAN: Node ");
-      Serial.print(sourceNode);
-      Serial.print(" heartbeat, uptime ");
-      Serial.print(uptime);
-      Serial.print("s, flags: ");
-      Serial.println(statusFlags, BIN);
     }
     break;
   }
@@ -680,6 +715,31 @@ void processIncomingMessage(const can_frame &msg)
       sendQueryResponse(sourceNode, responseValue);
     }
     break;
+  }
+
+  //-------------------------------------------------------------------------
+  // RESPONSE MESSAGE HANDLING
+  //-------------------------------------------------------------------------
+
+  case CAN_TYPE_RESPONSE:
+  {
+      uint8_t responseType = msg.data[1];
+      float value = bytesToFloat(&msg.data[2]);
+      
+      if (responseType == 2) // Type 2 = query response
+      {
+          // Print response for monitoring
+          Serial.print("CAN: Received query response from node ");
+          Serial.print(sourceNode);
+          Serial.print(", value: ");
+          Serial.println(value);
+          
+          // Set global flag that we got a response
+          responseReceived = true;
+          responseSourceNode = sourceNode;
+          responseValue = value;
+      }
+      break;
   }
   }
 }

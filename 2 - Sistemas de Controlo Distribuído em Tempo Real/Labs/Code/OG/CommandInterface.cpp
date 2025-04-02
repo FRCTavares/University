@@ -26,9 +26,12 @@ extern float getPowerConsumption();
 extern unsigned long getElapsedTime();
 extern bool responseReceived;
 extern bool canMonitorEnabled;
+extern float flickerWithFilter;
 
 static void handleDataBufferQuery(const char* subCommand, int numTokens, char tokens[][TOKEN_MAX_LENGTH]);
 static void handleBasicVariableQuery(const char* subCommand, const char* idx);
+extern float computeVisibilityErrorFromBuffer();
+extern float computeEnergyFromBuffer();
 
 //==========================================================================================================================================================
 // DATA STRUCTURES
@@ -75,23 +78,32 @@ void initPendingQueries()
  */
 static bool addPendingQuery(uint8_t targetNode, uint8_t queryType, const char *cmd, const char *index)
 {
-  // Find an empty slot
-  for (int i = 0; i < MAX_PENDING_QUERIES; i++)
-  {
-    if (!pendingQueries[i].active)
-    {
-      pendingQueries[i].active = true;
-      pendingQueries[i].targetNode = targetNode;
-      pendingQueries[i].queryType = queryType;
-      strncpy(pendingQueries[i].originalCommand, cmd, sizeof(pendingQueries[i].originalCommand) - 1);
-      pendingQueries[i].originalCommand[sizeof(pendingQueries[i].originalCommand) - 1] = '\0';
-      strncpy(pendingQueries[i].displayIndex, index, sizeof(pendingQueries[i].displayIndex) - 1);
-      pendingQueries[i].displayIndex[sizeof(pendingQueries[i].displayIndex) - 1] = '\0';
-      pendingQueries[i].timeoutTime = millis() + 500; // 500ms timeout
-      return true;
+    // Find an inactive slot
+    int slot = -1;
+    for (int i = 0; i < MAX_PENDING_QUERIES; i++) {
+        if (!pendingQueries[i].active) {
+            slot = i;  // Save the slot index we found
+            break;
+        }
     }
-  }
-  return false; // No slots available
+    
+    if (slot == -1) {
+        return false; // No free slots
+    }
+    
+    // Set up the pending query
+    pendingQueries[slot].active = true;
+    pendingQueries[slot].targetNode = targetNode;
+    pendingQueries[slot].queryType = queryType;
+    strncpy(pendingQueries[slot].originalCommand, cmd, sizeof(pendingQueries[slot].originalCommand) - 1);
+    pendingQueries[slot].originalCommand[sizeof(pendingQueries[slot].originalCommand) - 1] = '\0';
+    strncpy(pendingQueries[slot].displayIndex, index, sizeof(pendingQueries[slot].displayIndex) - 1);
+    pendingQueries[slot].displayIndex[sizeof(pendingQueries[slot].displayIndex) - 1] = '\0';
+    
+    // Increase timeout from default 1000ms to 2000ms for more reliable response capture
+    pendingQueries[slot].timeoutTime = millis() + 2000; 
+    
+    return true;
 }
 
 /**
@@ -101,87 +113,174 @@ static bool addPendingQuery(uint8_t targetNode, uint8_t queryType, const char *c
  */
 static void processPendingQueries()
 {
-  // Check each active query
-  for (int i = 0; i < MAX_PENDING_QUERIES; i++)
-  {
-    if (pendingQueries[i].active)
-    {
-      // Check for timeout
-      if (millis() > pendingQueries[i].timeoutTime)
-      {
-        Serial.print("err: No response from node ");
-        Serial.println(pendingQueries[i].targetNode);
-        pendingQueries[i].active = false;
-        continue;
-      }
-
-      // Check for a response
-      can_frame frame;
-      if (readCANMessage(&frame) == MCP2515::ERROR_OK)
-      {
-        // Parse message details
-        uint8_t msgType, destAddr;
-        parseCANId(frame.can_id, msgType, destAddr);
-        uint8_t senderNodeID = frame.data[0];
-
-        // Check if this is a response for our query
-        critical_section_enter_blocking(&commStateLock);
-        if (msgType == CAN_TYPE_RESPONSE &&
-            senderNodeID == pendingQueries[i].targetNode &&
-            (destAddr == deviceConfig.nodeId || destAddr == CAN_ADDR_BROADCAST))
-        {
-            critical_section_exit(&commStateLock);
-          // Extract the float value
-          float value = bytesToFloat(&frame.data[2]);
-
-          // Format the command and send response
-          if (isupper(pendingQueries[i].originalCommand[0]))
-          {
-            // Handle upper case commands (V, F, E)
-            Serial.print(pendingQueries[i].originalCommand);
-          }
-          else
-          {
-            // Handle lower case commands
-            Serial.print(pendingQueries[i].originalCommand);
-          }
-
-          Serial.print(" ");
-          Serial.print(pendingQueries[i].displayIndex);
-          Serial.print(" ");
-
-          // Format the value based on command type
-          const char *cmd = pendingQueries[i].originalCommand;
-          if (strcmp(cmd, "u") == 0 || strcmp(cmd, "F") == 0 || strcmp(cmd, "E") == 0)
-          {
-            Serial.println(value, 4); // 4 decimal places
-          }
-          else if (strcmp(cmd, "V") == 0 || strcmp(cmd, "y") == 0 ||
-                   strcmp(cmd, "p") == 0 || strcmp(cmd, "d") == 0)
-          {
-            Serial.println(value, 2); // 2 decimal places
-          }
-          else if (strcmp(cmd, "v") == 0)
-          {
-            Serial.println(value, 3); // 3 decimal places
-          }
-          else if (strcmp(cmd, "o") == 0 || strcmp(cmd, "a") == 0 ||
-                   strcmp(cmd, "f") == 0 || strcmp(cmd, "t") == 0)
-          {
-            Serial.println((int)value); // Integer values
-          }
-          else
-          {
-            Serial.println(value); // Default format
-          }
-
-          // Mark this query as handled
-          pendingQueries[i].active = false;
+    // Check if we received any responses
+    extern bool responseReceived;
+    extern uint8_t responseSourceNode;
+    extern float responseValue;
+    can_frame frame;
+    uint8_t msgType, destAddr;
+    bool messageProcessed = false;
+    
+    // First check if we have a pending response in the global variables
+    if (responseReceived) {
+        // Debug info for diagnostics
+        Serial.print("CAN: Processing flagged response from node ");
+        Serial.print(responseSourceNode);
+        Serial.print(", value: ");
+        Serial.println(responseValue);
+        
+        // Try to match this response to one of our pending queries
+        for (int i = 0; i < MAX_PENDING_QUERIES; i++) {
+            if (pendingQueries[i].active && pendingQueries[i].targetNode == responseSourceNode) {
+                // We have a matching query!
+                Serial.print("CAN: Matched response to pending query ");
+                Serial.println(i);
+                
+                // Format the command and send response
+                if (isupper(pendingQueries[i].originalCommand[0])) {
+                    // Handle upper case commands (V, F, E)
+                    Serial.print(pendingQueries[i].originalCommand);
+                } else {
+                    // Handle lower case commands
+                    Serial.print(pendingQueries[i].originalCommand);
+                }
+                
+                Serial.print(" ");
+                Serial.print(pendingQueries[i].displayIndex);
+                Serial.print(" ");
+                
+                // Format the value based on command type (same formatting as before)
+                const char *cmd = pendingQueries[i].originalCommand;
+                if (strcmp(cmd, "u") == 0 || strcmp(cmd, "F") == 0 || strcmp(cmd, "E") == 0) {
+                    Serial.println(responseValue, 4); // 4 decimal places
+                } else if (strcmp(cmd, "V") == 0 || strcmp(cmd, "y") == 0 ||
+                          strcmp(cmd, "p") == 0 || strcmp(cmd, "d") == 0) {
+                    Serial.println(responseValue, 2); // 2 decimal places
+                } else if (strcmp(cmd, "v") == 0) {
+                    Serial.println(responseValue, 3); // 3 decimal places
+                } else if (strcmp(cmd, "o") == 0 || strcmp(cmd, "a") == 0 ||
+                          strcmp(cmd, "f") == 0 || strcmp(cmd, "t") == 0) {
+                    Serial.println((int)responseValue); // Integer values
+                } else {
+                    Serial.println(responseValue); // Default format
+                }
+                
+                // Mark this query as handled
+                pendingQueries[i].active = false;
+                messageProcessed = true;
+                
+                // Add success acknowledgment
+                Serial.println("ack");
+                break;
+            }
         }
-        critical_section_exit(&commStateLock);
-      }
+        
+        // If we didn't find a matching query, still reset the flag
+        responseReceived = false;
     }
-  }
+    
+    // Check for direct CAN messages - Try multiple reads to clear buffer
+    int msgCount = 0;
+    while (msgCount < 5 && readCANMessage(&frame) == MCP2515::ERROR_OK) {
+        msgCount++;
+        
+        parseCANId(frame.can_id, msgType, destAddr);
+        critical_section_enter_blocking(&commStateLock);
+        uint8_t myNodeId = deviceConfig.nodeId;
+        critical_section_exit(&commStateLock);
+        
+        // Only process response messages addressed to this node or broadcast
+        if (msgType == CAN_TYPE_RESPONSE && 
+            (destAddr == myNodeId || destAddr == CAN_ADDR_BROADCAST)) {
+            
+            uint8_t senderNodeID = frame.data[0];
+            uint8_t responseType = frame.data[1];
+            
+            // Debug info for diagnostics
+            Serial.print("CAN: Received response from node ");
+            Serial.print(senderNodeID);
+            Serial.print(", type: ");
+            Serial.print(responseType);
+            
+            // Check if it's a query response (type 2)
+            if (responseType == 2) {
+                float value = bytesToFloat(&frame.data[2]);
+                Serial.print(", value: ");
+                Serial.println(value);
+                
+                // Find matching query
+                for (int i = 0; i < MAX_PENDING_QUERIES; i++) {
+                    if (pendingQueries[i].active && pendingQueries[i].targetNode == senderNodeID) {
+                        // Format the command and send response
+                        if (isupper(pendingQueries[i].originalCommand[0])) {
+                            Serial.print(pendingQueries[i].originalCommand);
+                        } else {
+                            Serial.print(pendingQueries[i].originalCommand);
+                        }
+                        
+                        Serial.print(" ");
+                        Serial.print(pendingQueries[i].displayIndex);
+                        Serial.print(" ");
+                        
+                        // Format the value based on command type (same formatting as before)
+                        const char *cmd = pendingQueries[i].originalCommand;
+                        if (strcmp(cmd, "u") == 0 || strcmp(cmd, "F") == 0 || strcmp(cmd, "E") == 0) {
+                            Serial.println(value, 4); // 4 decimal places
+                        } else if (strcmp(cmd, "V") == 0 || strcmp(cmd, "y") == 0 ||
+                                  strcmp(cmd, "p") == 0 || strcmp(cmd, "d") == 0) {
+                            Serial.println(value, 2); // 2 decimal places
+                        } else if (strcmp(cmd, "v") == 0) {
+                            Serial.println(value, 3); // 3 decimal places
+                        } else if (strcmp(cmd, "o") == 0 || strcmp(cmd, "a") == 0 ||
+                                  strcmp(cmd, "f") == 0 || strcmp(cmd, "t") == 0) {
+                            Serial.println((int)value); // Integer values
+                        } else {
+                            Serial.println(value); // Default format
+                        }
+                        
+                        // Mark this query as handled
+                        pendingQueries[i].active = false;
+                        messageProcessed = true;
+                        
+                        break;
+                    }
+                }
+            } else {
+                Serial.println(" (not a query response)");
+            }
+        }
+    }
+    
+    // Check for timeouts on all active queries
+    unsigned long currentTime = millis();
+    for (int i = 0; i < MAX_PENDING_QUERIES; i++) {
+        if (pendingQueries[i].active) {
+            if (currentTime > pendingQueries[i].timeoutTime) {
+                Serial.print("err: No response from node ");
+                Serial.println(pendingQueries[i].targetNode);
+                
+                // Consider retrying the query once before giving up
+                // This is helpful for intermittent communication issues
+                if (pendingQueries[i].timeoutTime > 0) {  // Check if not already retried
+                    Serial.print("Retrying query to node ");
+                    Serial.println(pendingQueries[i].targetNode);
+                    
+                    // Send the query again with the same parameters
+                    if (sendControlCommand(pendingQueries[i].targetNode, 
+                                          pendingQueries[i].queryType, 0.0f)) {
+                        // Set a shorter timeout for the retry
+                        pendingQueries[i].timeoutTime = currentTime + 1500;
+                    } else {
+                        // If retry failed, mark as inactive
+                        pendingQueries[i].active = false;
+                    }
+                } else {
+                    // Already retried or couldn't retry, mark as inactive
+                    pendingQueries[i].active = false;
+                }
+            }
+        }
+    }
 }
 
 //==========================================================================================================================================================
@@ -610,6 +709,175 @@ static void handleLocalQuery(const char* subCommand, const char* originalCase, c
       handleBasicVariableQuery(subCommand, idx);
   }
 }
+
+//=============================================================================
+// DATA STREAMING SUBSYSTEM
+//=============================================================================
+
+void startStream(const char* var, int index)
+{
+  
+  commState.streamingEnabled = true;
+  // Allocate memory for streaming variable if needed
+  if (commState.streamingVar == nullptr) {
+    commState.streamingVar = (char*)malloc(16); // Allocate space for the variable name
+  }
+  strncpy(commState.streamingVar, var, 15);
+  commState.streamingVar[15] = '\0'; // Ensure null termination
+  commState.streamingIndex = index;
+  commState.lastStreamTime = millis();
+  
+}
+
+void stopStream(const char* var, int index)
+{
+  critical_section_enter_blocking(&commStateLock);
+  // Only stop streaming if we're tracking the specified node and variable
+  if (commState.streamingEnabled && 
+      commState.streamingIndex == index && 
+      commState.streamingVar != nullptr &&
+      strcmp(commState.streamingVar, var) == 0) {
+    commState.streamingEnabled = false;
+    if (commState.streamingVar != nullptr) {
+      commState.streamingVar[0] = '\0';
+    }
+  }
+  critical_section_exit(&commStateLock);
+}
+
+/**
+ * Process streaming in main loop
+ * Sends requested variable at regular intervals
+ */
+void handleStreaming()
+{
+  critical_section_enter_blocking(&commStateLock);
+  if (!commState.streamingEnabled || (millis() - commState.lastStreamTime < 500))
+  {
+    critical_section_exit(&commStateLock);
+    return;
+  }
+  
+  char* var = commState.streamingVar;
+  int index = commState.streamingIndex;
+  uint8_t myNodeId = deviceConfig.nodeId;
+  commState.lastStreamTime = millis();
+  critical_section_exit(&commStateLock);
+  
+  if (var == nullptr || var[0] == '\0') return;
+  
+  // Only generate and print values if we're streaming our own data
+  // Otherwise, remote values will come through CAN messages
+  if (index == myNodeId) {
+    // This is local streaming - get data from local sensors
+    if (strcmp(var, "y") == 0)
+    {
+      float lux = readLux();
+      Serial.print("y ");
+      Serial.print(index);
+      Serial.print(" ");
+      Serial.println(lux, 2);
+    }
+    else if (strcmp(var, "u") == 0)
+    {
+      Serial.print("u ");
+      Serial.print(index);
+      Serial.print(" ");
+      critical_section_enter_blocking(&commStateLock);
+      Serial.println(controlState.dutyCycle, 4);
+      critical_section_exit(&commStateLock);
+    }
+    else if (strcmp(var, "p") == 0 || strcmp(var, "V") == 0 || 
+             strcmp(var, "F") == 0 || strcmp(var, "E") == 0)
+    {
+      float power = getPowerConsumption();
+      Serial.print(var);
+      Serial.print(" ");
+      Serial.print(index);
+      Serial.print(" ");
+      if (strcmp(var, "p") == 0) {
+        Serial.println(power, 2);
+      } else if (strcmp(var, "F") == 0) { //flicker
+        Serial.println(flickerWithFilter, 2);
+      } else if (strcmp(var, "V") == 0) { //Visibility
+        Serial.println(computeVisibilityErrorFromBuffer(), 2);
+      } else if (strcmp(var, "E") == 0) { //Energy
+        Serial.println(computeEnergyFromBuffer(), 2);
+      }
+    }
+  } else {
+    // For remote nodes, we don't generate data locally.
+    // Remote values should come through CAN messages.
+    // We can refresh the request occasionally to ensure data keeps flowing.
+    float varCode;
+    if (mapVariableToCode(var, &varCode)) {
+      // Every 2 seconds (4 cycles of 500ms), send a refresh request
+      static unsigned long lastRefreshTime = 0;
+      unsigned long now = millis();
+      if (now - lastRefreshTime > 2000) {
+        lastRefreshTime = now;
+        sendControlCommand(index, 11, varCode); // 11 = start streaming
+      }
+    }
+  }
+}
+
+void handleRemoteStreamRequests()
+{
+  unsigned long now = millis();
+
+  // Check if it's time to send data (every 500ms)
+  critical_section_enter_blocking(&commStateLock);
+  StreamRequest *requests = commState.remoteStreamRequests;
+  critical_section_exit(&commStateLock);
+
+  for (int i = 0; i < MAX_STREAM_REQUESTS; i++)
+  {
+    critical_section_enter_blocking(&commStateLock);
+    if (!requests[i].active)
+    {
+      critical_section_exit(&commStateLock);
+      continue;
+    }
+
+    if (now - requests[i].lastSent >= 500)
+    {
+      critical_section_exit(&commStateLock);
+      float value = 0.0;
+
+      switch (requests[i].variableType)
+      {
+      case 0: // y = illuminance
+        value = readLux();
+        break;
+      case 1: // u = duty cycle
+        critical_section_enter_blocking(&commStateLock);
+        value = controlState.dutyCycle;
+        critical_section_exit(&commStateLock);
+        break;
+      case 2: // p = power
+        value = getPowerConsumption();
+        break;
+      default:
+        value = 0.0;
+      }
+
+      // Send the value to the requesting node
+      sendSensorReading(requests[i].requesterNode,
+                        requests[i].variableType,
+                        value);
+
+      critical_section_enter_blocking(&commStateLock);
+      requests[i].lastSent = now;
+      critical_section_exit(&commStateLock);
+    }
+    else
+    {
+      critical_section_exit(&commStateLock);
+    }
+  }
+}
+
 
 //==========================================================================================================================================================
 // COMMAND CATEGORY HANDLERS
@@ -1135,48 +1403,57 @@ static bool handleDataQueryCommands(char tokens[][TOKEN_MAX_LENGTH], int numToke
 * @return true if command was handled, false otherwise
 */
 static bool handleStreamingCommands(char tokens[][TOKEN_MAX_LENGTH], int numTokens) {
-  if (strcmp(tokens[0], "s") == 0 || strcmp(tokens[0], "S") == 0) {
-      if (numTokens < 3) {
-          Serial.println("err: Missing parameters");
-          return true;
-      }
-
-      char var[TOKEN_MAX_LENGTH];
-      strcpy(var, tokens[1]); // Variable name
-      
-      int targetNode;
-      if (!parseIntParam(tokens[2], &targetNode) || targetNode < 0 || targetNode > 63) {
-          Serial.println("err: Invalid node ID");
-          return true;
-      }
-
-      // Check if we need to forward this command
-      if (shouldForwardCommand(targetNode)) {
-          // Map variable names to numeric codes for CAN transmission
-          float varCode = 0; // Default for 'y' (lux)
-          mapVariableToCode(var, &varCode);
-
-          // Control type: 11 = start stream, 12 = stop stream
-          uint8_t controlType = (tokens[0][0] == 's') ? 11 : 12;
-          
-          if (sendControlCommand(targetNode, controlType, varCode)) {
-              Serial.println("ack");
-          } else {
-              Serial.println("err: CAN forwarding failed");
-          }
-          return true;
-      }
-      
-      // Handle locally
-      if (tokens[0][0] == 's') {
-          startStream(var, targetNode);
-      } else {
-          stopStream(var, targetNode);
-      }
-      Serial.println("ack");
-      return true;
-  }
-  return false;
+    if (strcmp(tokens[0], "s") == 0 || strcmp(tokens[0], "S") == 0) {
+        if (numTokens < 3) {
+            Serial.println("Error: Invalid streaming command format");
+            Serial.println("Usage: s variable_name node_index");
+            return true;
+        }
+        
+        int targetNode;
+        if (!parseIntParam(tokens[2], &targetNode) || targetNode < 0 || targetNode > 63) {
+            Serial.println("Error: Invalid node index");
+            return true;
+        }
+        
+        const char* varName = tokens[1];
+        float varCode;
+        if (!mapVariableToCode(varName, &varCode)) {
+            Serial.println("Error: Unknown variable name");
+            return true;
+        }
+        
+        Serial.print("Streaming command for var: ");
+        Serial.print(varName);
+        Serial.print(", node: ");
+        Serial.println(targetNode);
+        
+        uint8_t controlType = (tokens[0][0] == 's') ? 11 : 12; // 11=start, 12=stop
+        bool isLocalNode = (targetNode == deviceConfig.nodeId);
+        bool isStopCommand = (tokens[0][0] == 'S');
+        
+        // First update local tracking state
+        if (isStopCommand) {
+            stopStream(varName, targetNode);
+            Serial.println("Local tracking stopped");
+        } else {
+            startStream(varName, targetNode);
+            Serial.println("Local tracking started");
+        }
+        
+        // Then handle remote node if needed
+        if (!isLocalNode) {
+            Serial.println(isStopCommand ? "Stopping remote stream" : "Starting remote stream");
+            if (sendControlCommand(targetNode, controlType, varCode)) {
+                Serial.println("Remote command sent successfully");
+            } else {
+                Serial.println("Error sending remote command");
+            }
+        }
+        
+        return true;
+    }
+    return false;
 }
 
 /**
