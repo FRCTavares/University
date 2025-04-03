@@ -58,11 +58,14 @@ def find_pico_devices():
     # List all COM ports
     ports = list(serial.tools.list_ports.comports())
     
-    # Filter for Raspberry Pi Pico devices
+    # Filter for Raspberry Pi Pico devices - more lenient detection
     pico_ports = []
     for port in ports:
-        # The Pico shows up as either "USB Serial Device" or mentions "RP2040" in the description
-        if "USB Serial Device" in port.description or "RP2040" in port.description:
+        # Check if it's one of our known Pico COM ports
+        if port.device in ['COM3', 'COM4', 'COM6'] or \
+           "USB Serial Device" in port.description or \
+           "RP2040" in port.description or \
+           "USB Serial" in port.description:
             pico_ports.append(port)
     
     if not pico_ports:
@@ -79,15 +82,47 @@ def upload_to_pico(port, uf2_file, node_id=None):
     """Upload the compiled program to a specific Pico device"""
     print(f"\nUploading to {port.device} ({port.description})...")
     
-    # If assigning node IDs, put the Pico in bootloader mode first
     if node_id is not None:
         print(f"  Assigning Node ID: {node_id}")
         
-        # Modify a temporary copy of the code with the specific node ID
-        # This would require parsing and modifying the source code
-        # For demonstration, we'll just show how you would do it
-        print("  (Demo) Customizing node ID in the firmware...")
+        # Create a temporary copy of the INO file
+        temp_ino_file = os.path.join(BUILD_DIR, f"OG_node{node_id}.ino")
         
+        # Read the original file
+        with open(INO_FILE, 'r') as f:
+            code = f.read()
+        
+        # Replace or add node ID definition
+        if "deviceConfig.nodeId =" in code:
+            # Replace existing node ID assignment
+            code_lines = code.split('\n')
+            for i, line in enumerate(code_lines):
+                if "deviceConfig.nodeId =" in line:
+                    code_lines[i] = f"  deviceConfig.nodeId = {node_id};  // Auto-assigned by compilador.py"
+                    break
+            code = '\n'.join(code_lines)
+        else:
+            # If no assignment found, look for setup() function and add it there
+            setup_pos = code.find("void setup()")
+            if setup_pos != -1:
+                # Find the opening brace of setup()
+                brace_pos = code.find("{", setup_pos)
+                if brace_pos != -1:
+                    # Insert after the opening brace
+                    code = code[:brace_pos+1] + f"\n  deviceConfig.nodeId = {node_id};  // Auto-assigned by compilador.py\n" + code[brace_pos+1:]
+        
+        # Write to temporary file
+        with open(temp_ino_file, 'w') as f:
+            f.write(code)
+        
+        # Compile the modified file
+        temp_uf2 = compile_program(temp_ino_file)
+        if not temp_uf2:
+            return False
+        
+        # Use the temp file's path for upload
+        uf2_file = temp_uf2
+    
     # For actual upload, use the Arduino CLI
     upload_cmd = [
         "arduino-cli",
@@ -96,9 +131,8 @@ def upload_to_pico(port, uf2_file, node_id=None):
         port.device,
         "--fqbn",
         "rp2040:rp2040:rpipico",
-        INO_FILE,
-        "--input-dir",
-        BUILD_DIR
+        "--input-file",
+        uf2_file
     ]
     
     try:
@@ -128,8 +162,15 @@ def main():
     
     # Step 3: Upload to each device
     successful_uploads = 0
+    # Use your specific node IDs instead of sequential numbers
+    node_ids = [33, 40, 52]
+    
+    if len(pico_devices) > len(node_ids):
+        print(f"Warning: Found {len(pico_devices)} devices but only have {len(node_ids)} node IDs.")
+    
     for i, device in enumerate(pico_devices):
-        node_id = i + 1 if args.assign_ids else None
+        # Only assign IDs up to the length of our node_ids list
+        node_id = node_ids[i] if args.assign_ids and i < len(node_ids) else None
         if upload_to_pico(device, uf2_file, node_id):
             successful_uploads += 1
     

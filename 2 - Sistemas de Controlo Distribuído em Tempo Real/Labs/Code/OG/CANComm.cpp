@@ -34,6 +34,12 @@ bool responseReceived = false;
 uint8_t responseSourceNode = 0;
 float responseValue = 0.0f;
 
+// Forward declarations
+float calibrateSystem(float referenceValue);
+void updateNeighborInfo(uint8_t nodeId, uint8_t sensorType, float value);
+bool shouldBeCoordinator();
+extern NeighborInfo neighbors[];
+
 extern bool canMonitorEnabled;
 
 /**
@@ -291,6 +297,62 @@ bool sendQueryResponse(uint8_t destNode, float value)
   }
   else
   {
+    msgErrors++;
+    return false;
+  }
+}
+
+/**
+ * Send a heartbeat message to indicate node presence
+ * Periodically broadcast to maintain network awareness
+ *
+ * @return true if message was successfully queued, false otherwise
+ */
+bool sendHeartbeat() {
+  can_frame frame;
+
+  // Configure message ID with normal priority
+  frame.can_id = buildCANId(CAN_TYPE_HEARTBEAT, CAN_ADDR_BROADCAST);
+  frame.can_dlc = 8;
+
+  // Payload format:
+  // [0] = Source node ID
+  // [1] = Status flags (bit0=feedback, bit1-2=luminaireState)
+  // [2-5] = Node uptime in seconds (32-bit)
+  // [6-7] = Reserved
+  
+  uint8_t myNodeId;
+  bool feedback;
+  LuminaireState state;
+  
+  critical_section_enter_blocking(&commStateLock);
+  myNodeId = deviceConfig.nodeId;
+  feedback = controlState.feedbackControl;
+  state = controlState.luminaireState;
+  critical_section_exit(&commStateLock);
+  
+  frame.data[0] = myNodeId;
+  
+  // Pack status flags: bit0=feedback, bit1-2=luminaireState
+  uint8_t statusFlags = 0;
+  if (feedback) statusFlags |= 0x01;
+  statusFlags |= ((uint8_t)state << 1) & 0x06;
+  frame.data[1] = statusFlags;
+  
+  // Include uptime in seconds
+  float uptime = getElapsedTime();
+  floatToBytes(uptime, &frame.data[2]);
+  
+  frame.data[6] = 0;
+  frame.data[7] = 0;
+
+  // Send the message and update statistics
+  MCP2515::ERROR result = sendCANMessage(frame);
+
+  if (result == MCP2515::ERROR_OK) {
+    msgSent++;
+    return true;
+  } else {
     msgErrors++;
     return false;
   }
@@ -725,62 +787,94 @@ void processIncomingMessage(const can_frame &msg)
       default:
         return; // Unknown query type
       }
-
-      // Send response with requested value
-      sendQueryResponse(sourceNode, responseValue);
-    }
-    // Network discovery protocol messages
-    else if (controlType == CAN_DISC_HELLO) { // Node announcing itself
-      // Extract the node ID from the value field (not the source field)
-      uint8_t announcedNodeId = (uint8_t)value;
-      
-      // Store sender in discovered nodes array and increment count
-      if (!discoveredNodes[announcedNodeId]) {
-          discoveredNodes[announcedNodeId] = true;
-          discoveredCount++;
-          
-        if (canMonitorEnabled) {
-            Serial.print("Network: Discovered node ");
-            Serial.print(announcedNodeId);
-            Serial.print(", total nodes: ");
-            Serial.println(discoveredCount);
-        }
-      }
-    }
-    else if (controlType == CAN_DISC_READY) { // Node ready for calibration
-      // Mark the sender as ready
-      if (!readyNodes[sourceNode]) {
-        readyNodes[sourceNode] = true;
-        readyCount++;
-        
-        if (canMonitorEnabled) {
-          Serial.print("Network: Node ");
-          Serial.print(sourceNode);
-          Serial.println(" is ready for calibration");
-        }
-      }
-    }
-    else if (controlType == CAN_DISC_CALIBRATION) { // Calibration sequence coordination
-      // Extract the sequence index from the value field
-      uint8_t sequenceIndex = (uint8_t)value;
-      
-      // Update calibration state
-      calibrationNodeSequence = sequenceIndex;
-      lastNetworkActionTime = millis();
-      
-      if (canMonitorEnabled) {
-          Serial.print("Network: Received calibration message, active node: ");
-          Serial.println(calibrationNodeSequence);
-      }
-  
-      // Use a pointer to access the network state defined in processNetworkStateMachine
-      // This is a proper way to handle the transition to calibration state
-      extern NetworkState currentNetworkState;
-      if (currentNetworkState == NET_STATE_READY) {
-          currentNetworkState = NET_STATE_CALIBRATION;
-          Serial.println("Network: Transitioning to CALIBRATION state due to calibration message");
-      }
+    // Send response with requested value
+    sendQueryResponse(sourceNode, responseValue);
   }
+  else if (controlType == CAN_CTRL_WAKEUP_INIT) {
+    if (canMonitorEnabled) {
+        Serial.println("CAN: Received wake-up initialization");
+    }
+    
+    critical_section_enter_blocking(&commStateLock);
+    if (controlState.wakeUpState == WAKEUP_IDLE) {
+        controlState.wakeUpState = WAKEUP_RESET;
+        controlState.isWakeUpMaster = false;
+        controlState.wakeUpStateTime = millis();
+        
+        // Reset to known state
+        controlState.setpointLux = 0.0f;
+        controlState.luminaireState = STATE_OFF;
+        sensorState.filterEnabled = true;
+        critical_section_exit(&commStateLock);
+        
+        // Send acknowledgment
+        sendControlCommand(sourceNode, CAN_CTRL_WAKEUP_ACK, deviceConfig.nodeId);
+        
+        Serial.println("Joined wake-up process as participant");
+    }
+    else {
+        critical_section_exit(&commStateLock);
+    }
+  }
+  else if (controlType == CAN_CTRL_WAKEUP_ACK) {
+    // Wake-up acknowledgment received
+    if (canMonitorEnabled) {
+      Serial.print("CAN: Received wake-up ACK from node ");
+      Serial.println(sourceNode);
+    }
+    
+    // Only process if we're the master and waiting for ACKs
+    critical_section_enter_blocking(&commStateLock);
+    bool isMaster = controlState.isWakeUpMaster;
+    bool isWaitingAcks = (controlState.wakeUpState == WAKEUP_ACK_WAIT);
+    critical_section_exit(&commStateLock);
+    
+    if (isMaster && isWaitingAcks) {
+      // Add the node to our ACK list
+      // In a full implementation, you would track all nodes that have ACKed
+      // For simplicity, just output a message
+      Serial.print("Node ");
+      Serial.print(sourceNode);
+      Serial.println(" has acknowledged wake-up command");
+    }
+  }
+  else if (controlType == CAN_CTRL_WAKEUP_CALIBRATE) {
+    // Wake-up calibration command received
+    if (canMonitorEnabled) {
+      Serial.println("CAN: Received wake-up calibration command");
+    }
+    
+    critical_section_enter_blocking(&commStateLock);
+    if (controlState.wakeUpState == WAKEUP_RESET || 
+        controlState.wakeUpState == WAKEUP_ACK_WAIT) {
+      controlState.wakeUpState = WAKEUP_CALIBRATE;
+      controlState.wakeUpStateTime = millis();
+    }
+    critical_section_exit(&commStateLock);
+    
+    // Initiate calibration
+    deviceConfig.ledGain = calibrateSystem(1.0);
+  }
+  else if (controlType == CAN_CTRL_WAKEUP_COMPLETE) {
+    // Wake-up completion notification received
+    if (canMonitorEnabled) {
+      Serial.println("CAN: Received wake-up completion");
+    }
+    
+    critical_section_enter_blocking(&commStateLock);
+    controlState.wakeUpState = WAKEUP_COMPLETE;
+    controlState.wakeUpStateTime = millis();
+    
+    // Enter unoccupied state as default after wake-up
+    controlState.luminaireState = STATE_UNOCCUPIED;
+    controlState.setpointLux = SETPOINT_UNOCCUPIED;
+    controlState.feedbackControl = true;
+    critical_section_exit(&commStateLock);
+    
+    // Reset PID controller for clean start
+    pid.reset();
+  }
+  
     break;
   }
 
@@ -808,8 +902,66 @@ void processIncomingMessage(const can_frame &msg)
       }
       break;
   }
-  }
 
+  //-------------------------------------------------------------------------
+  // HEARTBEAT MESSAGE HANDLING
+  //-------------------------------------------------------------------------
+
+  case CAN_TYPE_HEARTBEAT:
+  {
+      uint8_t nodeStatus = msg.data[1];
+      float nodeUptime = bytesToFloat(&msg.data[2]);
+      
+      // Check if this is a new node
+      bool isNewNode = true;
+      for (int i = 0; i < MAX_NEIGHBORS; i++) {
+          if (neighbors[i].isActive && neighbors[i].nodeId == sourceNode) {
+              isNewNode = false;
+              neighbors[i].lastUpdate = millis();
+              break;
+          }
+      }
+      
+      // If this is a new node with low uptime, consider wake-up
+      if (isNewNode && nodeUptime < 30) {
+          if (canMonitorEnabled) {
+              Serial.print("CAN: New node detected: ");
+              Serial.println(sourceNode);
+          }
+          
+          // Add the node to neighbors list
+          updateNeighborInfo(sourceNode, 0, 0.0);
+          
+          // Check if we should coordinate wake-up
+          bool shouldCoordinate = shouldBeCoordinator();
+          
+          if (shouldCoordinate) {
+              critical_section_enter_blocking(&commStateLock);
+              if (controlState.wakeUpState == WAKEUP_IDLE || 
+                  controlState.wakeUpState == WAKEUP_COMPLETE) {
+                  controlState.wakeUpState = WAKEUP_RESET;
+                  controlState.isWakeUpMaster = true;
+                  controlState.wakeUpStateTime = millis();
+                  critical_section_exit(&commStateLock);
+                  
+                  sendControlCommand(CAN_ADDR_BROADCAST, CAN_CTRL_WAKEUP_INIT, 0.0f);
+                  Serial.println("AUTO: Wake-up initiated for new node");
+              }
+              else {
+                  critical_section_exit(&commStateLock);
+              }
+          }
+      }
+      
+      if (canMonitorEnabled) {
+          Serial.print("CAN: Heartbeat from node ");
+          Serial.print(sourceNode);
+          Serial.print(", uptime: ");
+          Serial.println(nodeUptime);
+      }
+      break;
+  }
+  }
 }
 
 /**

@@ -29,6 +29,15 @@ extern const float MAX_POWER_WATTS;
  * Maximum number of stream requests that can be tracked simultaneously
  */
 #define MAX_STREAM_REQUESTS 5
+/**
+ * Illuminance setpoints for different states
+ */
+extern const float SETPOINT_OFF;        // Off state target (lux)
+extern const float SETPOINT_UNOCCUPIED; // Unoccupied state target (lux)
+extern const float SETPOINT_OCCUPIED;   // Occupied state target (lux)
+
+#define MAX_NEIGHBORS 5
+
 
 //==========================================================================================================================================================
 // SYSTEM STATE ENUMERATIONS
@@ -44,6 +53,17 @@ enum LuminaireState
   STATE_UNOCCUPIED = 1, // Low ambient lighting when area is unoccupied
   STATE_OCCUPIED = 2    // Full task lighting when workspace is in use
 };
+
+enum WakeUpState
+{
+  WAKEUP_IDLE = 0,        // No wake-up in progress
+  WAKEUP_RESET = 1,       // Reset phase - All nodes reset their state
+  WAKEUP_ACK_WAIT = 2,    // Waiting for acknowledgments from all nodes
+  WAKEUP_CALIBRATE = 3,   // Calibration phase - Measure sensor parameters
+  WAKEUP_TRANSITION = 4,  // Transitioning to normal operation
+  WAKEUP_COMPLETE = 5     // Wake-up complete, normal operation
+};
+
 
 
 //==========================================================================================================================================================
@@ -77,10 +97,12 @@ enum LuminaireState
 /** State change notifications */
 #define CAN_CTRL_STATE_CHANGE 0x10
 
-/** Network discovery protocol message types */
-#define CAN_DISC_HELLO 0x30       // Node announcing itself to the network
-#define CAN_DISC_READY 0x31       // Node ready for calibration
-#define CAN_DISC_CALIBRATION 0x32 // Calibration sequence coordination
+/** Wake up protocol messages */
+#define CAN_CTRL_WAKEUP_INIT 0x20
+#define CAN_CTRL_WAKEUP_ACK 0x21
+#define CAN_CTRL_WAKEUP_CALIBRATE 0x22
+#define CAN_CTRL_WAKEUP_COMPLETE 0x23
+
 
 //==========================================================================================================================================================
 // STRUCTURE DEFINITIONS
@@ -127,6 +149,19 @@ struct SensorState
 };
 
 /**
+ * Structure to track neighboring nodes in the network
+ */
+struct NeighborInfo {
+  uint8_t nodeId;           // CAN node ID
+  float lastLux;            // Last reported illuminance
+  float lastDuty;           // Last reported duty cycle
+  LuminaireState state;     // Current operating state
+  unsigned long lastUpdate; // Last update timestamp
+  unsigned long firstSeen;  // When this node was first discovered
+  bool isActive;            // Is node currently active
+};
+
+/**
  * ControlState holds control parameters for lighting.
  */
 struct ControlState
@@ -136,6 +171,11 @@ struct ControlState
   LuminaireState luminaireState; // Current luminaire operating state
   bool feedbackControl;          // Flag for automatic feedback control (true) vs manual (false)
   bool antiWindup;               // PID controller anti-windup flag
+  
+  // Wake-up protocol state machine fields
+  WakeUpState wakeUpState;        // Current wake-up protocol state
+  unsigned long wakeUpStateTime;  // Timestamp when current wake-up state started
+  bool isWakeUpMaster;            // Whether this node is coordinating the wake-up
 };
 
 /**
@@ -160,17 +200,6 @@ struct CommState
   bool canMonitorEnabled;        // Enable monitoring of CAN messages
 };
 
-/**
- * Network operating states
- * Defines the possible states of the network discovery and calibration process
- */
-enum NetworkState
-{
-  NET_STATE_BOOT = 0,        // Initial startup
-  NET_STATE_DISCOVERY = 1,    // Discovering other nodes
-  NET_STATE_READY = 2,        // All nodes discovered, ready for calibration
-  NET_STATE_CALIBRATION = 3   // Performing sequential calibration
-};
 
 //==========================================================================================================================================================
 // GLOBAL VARIABLE DECLARATIONS
@@ -212,21 +241,12 @@ extern CommState commState;
 extern class PIController pid;
 
 /**
- * Network discovery and calibration variables
- * Used to manage the network start-up process
+ * Node fitness variables for coordinator selection
  */
-extern bool discoveredNodes[64];           // Tracks which nodes have been discovered
-extern uint8_t discoveredCount;            // Count of discovered nodes
-extern bool readyNodes[64];                // Tracks which nodes are ready for calibration
-extern uint8_t readyCount;                 // Count of ready nodes
-extern uint8_t calibrationNodeSequence;    // Current node in calibration sequence
-extern uint8_t calibrationStep;            // Current step in calibration process
-extern unsigned long lastNetworkActionTime; // Timestamp of last network action
-extern bool isCalibrationComplete;         // Flag indicating if calibration is complete
+extern float myFitness;
+extern float maxFitness;
 
-// Add these declarations for light coupling measurements
-extern float selfGain;                     // Luminaire's effect on its own sensor
-extern float crossGains[64];               // Effect of other luminaires on this sensor
+
 
 //==========================================================================================================================================================
 // FUNCTION DECLARATIONS
