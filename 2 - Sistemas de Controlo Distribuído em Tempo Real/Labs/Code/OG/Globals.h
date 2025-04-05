@@ -38,7 +38,6 @@ extern const float SETPOINT_OCCUPIED;   // Occupied state target (lux)
 
 #define MAX_NEIGHBORS 5
 
-
 //==========================================================================================================================================================
 // SYSTEM STATE ENUMERATIONS
 //==========================================================================================================================================================
@@ -56,15 +55,13 @@ enum LuminaireState
 
 enum WakeUpState
 {
-  WAKEUP_IDLE = 0,        // No wake-up in progress
-  WAKEUP_RESET = 1,       // Reset phase - All nodes reset their state
-  WAKEUP_ACK_WAIT = 2,    // Waiting for acknowledgments from all nodes
-  WAKEUP_CALIBRATE = 3,   // Calibration phase - Measure sensor parameters
-  WAKEUP_TRANSITION = 4,  // Transitioning to normal operation
-  WAKEUP_COMPLETE = 5     // Wake-up complete, normal operation
+  WAKEUP_IDLE = 0,       // No wake-up in progress
+  WAKEUP_RESET = 1,      // Reset phase - All nodes reset their state
+  WAKEUP_ACK_WAIT = 2,   // Waiting for acknowledgments from all nodes
+  WAKEUP_CALIBRATE = 3,  // Calibration phase - Measure sensor parameters
+  WAKEUP_TRANSITION = 4, // Transitioning to normal operation
+  WAKEUP_COMPLETE = 5    // Wake-up complete, normal operation
 };
-
-
 
 //==========================================================================================================================================================
 // CAN MESSAGE TYPES
@@ -103,11 +100,11 @@ enum WakeUpState
 #define CAN_CTRL_WAKEUP_CALIBRATE 0x22
 #define CAN_CTRL_WAKEUP_COMPLETE 0x23
 
+#define CAN_CTRL_EMERGENCY_SHUTDOWN 0x30
 
 //==========================================================================================================================================================
 // STRUCTURE DEFINITIONS
 //==========================================================================================================================================================
-
 
 /**
  * Structure to track a request to stream data to another node
@@ -125,14 +122,14 @@ struct StreamRequest
  */
 struct DeviceConfig
 {
-  uint8_t nodeId;           // Unique ID for this device (used for CAN communication)
-  float ledGain;            // Calibrated LED contribution gain
-  float calibrationOffset;  // Calibration offset for sensor
-  
+  uint8_t nodeId;          // Unique ID for this device (used for CAN communication)
+  float ledGain;           // Calibrated LED contribution gain
+  float calibrationOffset; // Calibration offset for sensor
+
   // PID tuning parameters
-  float pidKp;              // Proportional gain
-  float pidKi;              // Integral gain
-  float pidBeta;            // Setpoint weighting factor
+  float pidKp;   // Proportional gain
+  float pidKi;   // Integral gain
+  float pidBeta; // Setpoint weighting factor
 };
 
 /**
@@ -151,7 +148,8 @@ struct SensorState
 /**
  * Structure to track neighboring nodes in the network
  */
-struct NeighborInfo {
+struct NeighborInfo
+{
   uint8_t nodeId;           // CAN node ID
   float lastLux;            // Last reported illuminance
   float lastDuty;           // Last reported duty cycle
@@ -171,11 +169,15 @@ struct ControlState
   LuminaireState luminaireState; // Current luminaire operating state
   bool feedbackControl;          // Flag for automatic feedback control (true) vs manual (false)
   bool antiWindup;               // PID controller anti-windup flag
-  
+
   // Wake-up protocol state machine fields
-  WakeUpState wakeUpState;        // Current wake-up protocol state
-  unsigned long wakeUpStateTime;  // Timestamp when current wake-up state started
-  bool isWakeUpMaster;            // Whether this node is coordinating the wake-up
+  WakeUpState wakeUpState;       // Current wake-up protocol state
+  unsigned long wakeUpStateTime; // Timestamp when current wake-up state started
+  // bool isWakeUpMaster;           // Whether this node is coordinating the wake-up
+
+  // Network discovery and stability tracking
+  bool networkReady;               // Flag indicating network has been stable for required time
+  unsigned long lastNetworkChange; // Timestamp of last network change (node join/leave)
 };
 
 /**
@@ -184,22 +186,21 @@ struct ControlState
 struct CommState
 {
   // Streaming parameters
-  bool streamingEnabled;         // Enable periodic streaming
-  char* streamingVar;            // Identifier of variable being streamed
-  int streamingIndex;            // Index of the node for streaming
-  unsigned long lastStreamTime;  // Last time a stream was sent
-  
+  bool streamingEnabled;        // Enable periodic streaming
+  char *streamingVar;           // Identifier of variable being streamed
+  int streamingIndex;           // Index of the node for streaming
+  unsigned long lastStreamTime; // Last time a stream was sent
+
   // Remote streaming requests from other nodes
-  StreamRequest remoteStreamRequests[MAX_STREAM_REQUESTS]; 
-  
+  StreamRequest remoteStreamRequests[MAX_STREAM_REQUESTS];
+
   // Atomic flag to indicate new CAN messages are available
   std::atomic_flag hasNewMessages;
-  
-  // CAN communication flags
-  bool periodicCANEnabled;       // Enable periodic CAN transmissions
-  bool canMonitorEnabled;        // Enable monitoring of CAN messages
-};
 
+  // CAN communication flags
+  bool periodicCANEnabled; // Enable periodic CAN transmissions
+  bool canMonitorEnabled;  // Enable monitoring of CAN messages
+};
 
 //==========================================================================================================================================================
 // GLOBAL VARIABLE DECLARATIONS
@@ -246,8 +247,6 @@ extern class PIController pid;
 extern float myFitness;
 extern float maxFitness;
 
-
-
 //==========================================================================================================================================================
 // FUNCTION DECLARATIONS
 //==========================================================================================================================================================
@@ -287,6 +286,5 @@ void setLEDPower(float powerWatts);
  * @param newState New operating state to set
  */
 void changeState(LuminaireState newState);
-
 
 #endif // GLOBALS_H

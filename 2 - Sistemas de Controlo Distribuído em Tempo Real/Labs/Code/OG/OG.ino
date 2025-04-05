@@ -18,7 +18,6 @@
 #include "pico/multicore.h"
 #include "Globals.h"
 
-
 #define MSG_SEND_SENSOR 1
 #define MSG_SEND_CONTROL 2
 #define MSG_UPDATE_STATE 3
@@ -75,10 +74,10 @@ const float ALPHA = 0.3;             // EMA filter coefficient (0=slow, 1=fast)
 //-----------------------------------------------------------------------------
 // PID Controller Parameters
 //-----------------------------------------------------------------------------
-const float Kp = 20;    // Initial proportional gain (will be replaced by ledGain)
-const float Ki = 400;   // Integral gain
-const float DT = 0.01;  // Sampling period (seconds)
-const float BETA = 0.8; // Setpoint weighting factor (0.0-1.0)
+const float Kp = 20;                // Initial proportional gain (will be replaced by ledGain)
+const float Ki = 400;               // Integral gain
+const float DT = 0.01;              // Sampling period (seconds)
+const float BETA = 0.8;             // Setpoint weighting factor (0.0-1.0)
 PIController pid(Kp, Ki, BETA, DT); // Create pid controller with initial values
 //-----------------------------------------------------------------------------
 // Power Consumption Model
@@ -114,16 +113,16 @@ const float EXTERNAL_LIGHT_CHANGE_THRESHOLD = 1.0f; // Minimum lux change to tri
 //-----------------------------------------------------------------------------
 // CAN Communication State
 //-----------------------------------------------------------------------------
-bool canMonitorEnabled = false;         // Display received messages
-uint8_t nodeID = 0;                     // Node ID (set during initialization)
-unsigned long lastCANSend = 0;          // Last transmission timestamp
+bool canMonitorEnabled = false; // Display received messages
+uint8_t nodeID = 0;             // Node ID (set during initialization)
+unsigned long lastCANSend = 0;  // Last transmission timestamp
 
 //-----------------------------------------------------------------------------
 // Network Discovery and Calibration
 //-----------------------------------------------------------------------------
 
-float myFitness = 0.0;     // This node's fitness score for coordination
-float maxFitness = 0.0;    // Highest fitness score among all nodes
+float myFitness = 0.0;                 // This node's fitness score for coordination
+float maxFitness = 0.0;                // Highest fitness score among all nodes
 NeighborInfo neighbors[MAX_NEIGHBORS]; // Neighbor state array
 
 //-----------------------------------------------------------------------------
@@ -135,7 +134,7 @@ void changeState(LuminaireState newState)
   critical_section_enter_blocking(&commStateLock);
   if (newState == controlState.luminaireState)
   {
-    critical_section_exit(&commStateLock); 
+    critical_section_exit(&commStateLock);
     return;
   }
 
@@ -278,7 +277,7 @@ float readLux()
   }
 
   // 5. Apply calibration offset and safety bounds check
-  float calibratedLux = lastFiltered+ deviceConfig.calibrationOffset;
+  float calibratedLux = lastFiltered + deviceConfig.calibrationOffset;
   if (calibratedLux < 0.0)
     calibratedLux = 0.0;
 
@@ -287,8 +286,6 @@ float readLux()
   sensorState.rawLux = sum / count;
   sensorState.lastFilteredLux = calibratedLux;
   critical_section_exit(&commStateLock);
-
-
 
   return calibratedLux;
 }
@@ -424,7 +421,6 @@ void adaptToExternalLight()
   }
 }
 
-
 //=============================================================================
 // UTILITY FUNCTIONS
 //=============================================================================
@@ -526,7 +522,7 @@ float calibrateIlluminanceModel()
  */
 float calibrateSystem(float referenceValue)
 {
-  
+
   const int SAMPLES = 5;               // Number of measurements to average
   const int STABILIZE_TIME = 500;      // Wait time between measurements in ms
   const int LED_RESPONSE_TIME = 10000; // Wait time for LDR to respond to LED changes
@@ -545,8 +541,6 @@ float calibrateSystem(float referenceValue)
     delay(STABILIZE_TIME);
   }
   y1 /= SAMPLES;
-
-  
 
   // Store baseline illuminance for external light calculation
   critical_section_enter_blocking(&commStateLock);
@@ -774,7 +768,7 @@ float getLEDPower()
  * @param index Node index
  * @return CSV string of historical values
  */
-void getLastMinuteBuffer(const char* var, int index, char* buffer, size_t bufferSize)
+void getLastMinuteBuffer(const char *var, int index, char *buffer, size_t bufferSize)
 {
   String result = "";
   int count = getLogCount();
@@ -826,121 +820,137 @@ void getLastMinuteBuffer(const char* var, int index, char* buffer, size_t buffer
  * Process wake-up state machine
  * Manages the multi-phase wake-up protocol for coordinated system startup
  */
-void processWakeUpStateMachine() {
+void processWakeUpStateMachine()
+{
   // Get current state with thread safety
   critical_section_enter_blocking(&commStateLock);
   WakeUpState state = controlState.wakeUpState;
-  bool isMaster = controlState.isWakeUpMaster;
+  // bool isMaster = controlState.isWakeUpMaster;
   unsigned long stateTime = controlState.wakeUpStateTime;
   critical_section_exit(&commStateLock);
-  
+
   // If not in wake-up mode, nothing to do
-  if (state == WAKEUP_IDLE || state == WAKEUP_COMPLETE) {
+  if (state == WAKEUP_IDLE || state == WAKEUP_COMPLETE)
+  {
     return;
   }
-  
+
   unsigned long currentTime = millis();
   unsigned long elapsedTime = currentTime - stateTime;
-  
+
   // All nodes process the same state machine but make decisions differently
-  switch (state) {
-    case WAKEUP_RESET:
-      // Any node can propose moving to ACK wait phase after timeout
-      if (elapsedTime > 1000) {
-        // Nodes decide to send messages based on fitness-weighted probability
-        float transitionProbability = 0.2 + (myFitness/maxFitness) * 0.6;
-        
-        // Randomize slightly so not all nodes act simultaneously
-        if (random(100) / 100.0f < transitionProbability) {
-          critical_section_enter_blocking(&commStateLock);
-          controlState.wakeUpState = WAKEUP_ACK_WAIT;
-          controlState.wakeUpStateTime = currentTime;
-          critical_section_exit(&commStateLock);
-          
-          // Only the fittest nodes announce the transition
-          if (transitionProbability > 0.5) {
-            Serial.println("Wake-up: Moving to acknowledgment phase...");
-            sendControlCommand(CAN_ADDR_BROADCAST, CAN_CTRL_WAKEUP_ACK, 0.0f);
-          }
-        }
-      }
-      break;
-      
-    case WAKEUP_ACK_WAIT:
-      // After waiting for ACKs, move to calibration
-      if (elapsedTime > 3000) {
-        // Probabilistic decision based on fitness
-        float transitionProbability = 0.2 + (myFitness/maxFitness) * 0.6;
-        
-        if (random(100) / 100.0f < transitionProbability) {
-          critical_section_enter_blocking(&commStateLock);
-          controlState.wakeUpState = WAKEUP_CALIBRATE;
-          controlState.wakeUpStateTime = currentTime;
-          critical_section_exit(&commStateLock);
-          
-          // Only some nodes announce the transition
-          if (transitionProbability > 0.5) {
-            Serial.println("Wake-up: Starting calibration phase...");
-            sendControlCommand(CAN_ADDR_BROADCAST, CAN_CTRL_WAKEUP_CALIBRATE, 0.0f);
-          }
-          
-          // All nodes perform calibration regardless of coordinator role
-          deviceConfig.ledGain = calibrateSystem(1.0);
-        }
-      }
-      break;
-      
-    case WAKEUP_CALIBRATE:
-      // After calibration completes, transition to normal operation
-      if (elapsedTime > 15000) {
-        // Weighted probability based on fitness
-        float transitionProbability = 0.2 + (myFitness/maxFitness) * 0.6;
-        
-        if (random(100) / 100.0f < transitionProbability) {
-          critical_section_enter_blocking(&commStateLock);
-          controlState.wakeUpState = WAKEUP_TRANSITION;
-          controlState.wakeUpStateTime = currentTime;
-          critical_section_exit(&commStateLock);
-          
-          // Only some nodes broadcast completion
-          if (transitionProbability > 0.5) {
-            Serial.println("Wake-up: Calibration complete, transitioning to normal operation...");
-            sendControlCommand(CAN_ADDR_BROADCAST, CAN_CTRL_WAKEUP_COMPLETE, 0.0f);
-          }
-        }
-      }
-      break;
-      
-    case WAKEUP_TRANSITION:
-      // All nodes can independently complete the wake-up process
-      if (elapsedTime > 2000) {
+  switch (state)
+  {
+  case WAKEUP_RESET:
+    // Any node can propose moving to ACK wait phase after timeout
+    if (elapsedTime > 1000)
+    {
+      // Nodes decide to send messages based on fitness-weighted probability
+      float transitionProbability = 0.2 + (myFitness / maxFitness) * 0.6;
+
+      // Randomize slightly so not all nodes act simultaneously
+      if (random(100) / 100.0f < transitionProbability)
+      {
         critical_section_enter_blocking(&commStateLock);
-        controlState.wakeUpState = WAKEUP_COMPLETE;
+        controlState.wakeUpState = WAKEUP_ACK_WAIT;
         controlState.wakeUpStateTime = currentTime;
-        
-        // All nodes enter the same state
-        controlState.luminaireState = STATE_UNOCCUPIED;
-        controlState.setpointLux = SETPOINT_UNOCCUPIED;
-        controlState.feedbackControl = true;
         critical_section_exit(&commStateLock);
-        
-        // Reset PID controller for clean start
-        pid.reset();
-        
-        Serial.println("Wake-up: Complete - System now in normal operation");
+
+        // Only the fittest nodes announce the transition
+        if (transitionProbability > 0.5)
+        {
+          Serial.println("Wake-up: Moving to acknowledgment phase...");
+          sendControlCommand(CAN_ADDR_BROADCAST, CAN_CTRL_WAKEUP_ACK, 0.0f);
+        }
       }
-      break;
-      
-    default:
-      break;
+    }
+    break;
+
+  case WAKEUP_ACK_WAIT:
+    // After waiting for ACKs, move to calibration
+    if (elapsedTime > 3000)
+    {
+      // Probabilistic decision based on fitness
+      float transitionProbability = 0.2 + (myFitness / maxFitness) * 0.6;
+
+      // Add a staggered delay based on node ID to prevent simultaneous calibration
+      int myCalibrationDelay = deviceConfig.nodeId * 500; // 500ms delay per node ID
+
+      if (elapsedTime > (3000 + myCalibrationDelay) &&
+          random(100) / 100.0f < transitionProbability)
+      {
+
+        critical_section_enter_blocking(&commStateLock);
+        controlState.wakeUpState = WAKEUP_CALIBRATE;
+        controlState.wakeUpStateTime = currentTime;
+        critical_section_exit(&commStateLock);
+
+        // Only some nodes announce the transition
+        if (transitionProbability > 0.5)
+        {
+          Serial.println("Wake-up: Starting calibration phase...");
+          sendControlCommand(CAN_ADDR_BROADCAST, CAN_CTRL_WAKEUP_CALIBRATE, 0.0f);
+        }
+      }
+    }
+    break;
+
+  case WAKEUP_CALIBRATE:
+    // After calibration completes, transition to normal operation
+    if (elapsedTime > 15000)
+    {
+      // Weighted probability based on fitness
+      float transitionProbability = 0.2 + (myFitness / maxFitness) * 0.6;
+
+      if (random(100) / 100.0f < transitionProbability)
+      {
+        critical_section_enter_blocking(&commStateLock);
+        controlState.wakeUpState = WAKEUP_TRANSITION;
+        controlState.wakeUpStateTime = currentTime;
+        critical_section_exit(&commStateLock);
+
+        // Only some nodes broadcast completion
+        if (transitionProbability > 0.5)
+        {
+          Serial.println("Wake-up: Calibration complete, transitioning to normal operation...");
+          sendControlCommand(CAN_ADDR_BROADCAST, CAN_CTRL_WAKEUP_COMPLETE, 0.0f);
+        }
+      }
+    }
+    break;
+
+  case WAKEUP_TRANSITION:
+    // All nodes can independently complete the wake-up process
+    if (elapsedTime > 2000)
+    {
+      critical_section_enter_blocking(&commStateLock);
+      controlState.wakeUpState = WAKEUP_COMPLETE;
+      controlState.wakeUpStateTime = currentTime;
+
+      // All nodes enter the same state
+      controlState.luminaireState = STATE_UNOCCUPIED;
+      controlState.setpointLux = SETPOINT_UNOCCUPIED;
+      controlState.feedbackControl = true;
+      critical_section_exit(&commStateLock);
+
+      // Reset PID controller for clean start
+      pid.reset();
+
+      Serial.println("Wake-up: Complete - System now in normal operation");
+    }
+    break;
+
+  default:
+    break;
   }
-  
+
   // Universal timeout safety - all nodes can recover independently
-  if (elapsedTime > 30000) {  // 30 seconds timeout for any state
+  if (elapsedTime > 30000)
+  { // 30 seconds timeout for any state
     critical_section_enter_blocking(&commStateLock);
     controlState.wakeUpState = WAKEUP_IDLE;
     critical_section_exit(&commStateLock);
-    
+
     Serial.println("Wake-up: Timeout, wake-up process aborted");
   }
 }
@@ -948,52 +958,57 @@ void processWakeUpStateMachine() {
 /**
  * Determine if this node should coordinate based on capabilities and consensus
  * Uses a distributed election algorithm rather than just node ID
- * 
+ *
  * @return true if this node should be coordinator
- */
-bool shouldBeCoordinator() {
+
+bool shouldBeCoordinator()
+{
   uint8_t myNodeId;
   critical_section_enter_blocking(&commStateLock);
   myNodeId = deviceConfig.nodeId;
   critical_section_exit(&commStateLock);
-  
+
   // Count active nodes (including ourselves)
   int activeNodes = 1; // Start with 1 for ourselves
   float totalFitness = calculateNodeFitness(myNodeId);
-  myFitness = totalFitness;    // Store in global for other functions
-  maxFitness = myFitness;      // Initialize max to our fitness
+  myFitness = totalFitness; // Store in global for other functions
+  maxFitness = myFitness;   // Initialize max to our fitness
   uint8_t fittestNode = myNodeId;
-  
+
   // Calculate total system fitness and find the fittest node
-  for (int i = 0; i < MAX_NEIGHBORS; i++) {
-    if (neighbors[i].isActive) {
+  for (int i = 0; i < MAX_NEIGHBORS; i++)
+  {
+    if (neighbors[i].isActive)
+    {
       activeNodes++;
-      
+
       // Calculate this node's fitness
       float nodeFitness = calculateNodeFitness(neighbors[i].nodeId);
       totalFitness += nodeFitness;
-      
+
       // Track the fittest node (or lowest ID in case of tie)
-      if (nodeFitness > maxFitness || 
-          (nodeFitness == maxFitness && neighbors[i].nodeId < fittestNode)) {
+      if (nodeFitness > maxFitness ||
+          (nodeFitness == maxFitness && neighbors[i].nodeId < fittestNode))
+      {
         maxFitness = nodeFitness;
         fittestNode = neighbors[i].nodeId;
       }
     }
   }
-  
+
   // Weighted probability approach - nodes with higher fitness have
   // higher probability of becoming coordinator
   float coordinationThreshold = myFitness / totalFitness;
-  
+
   // Use our node ID and uptime to generate a stable-ish random number
   // This ensures consistent coordinator selection within a short time period
   uint32_t seed = myNodeId * 1000 + (uint32_t)(getElapsedTime() / 10.0);
   srand(seed);
   float randomValue = (float)rand() / RAND_MAX;
-  
+
   // Log decision factors if debugging
-  if (canMonitorEnabled) {
+  if (canMonitorEnabled)
+  {
     Serial.print("Coordination fitness: ");
     Serial.print(myFitness);
     Serial.print("/");
@@ -1005,66 +1020,78 @@ bool shouldBeCoordinator() {
     Serial.print(", fittest node: ");
     Serial.println(fittestNode);
   }
-  
+
   // If we're clearly the fittest node, we should coordinate
-  if (fittestNode == myNodeId) {
+  if (fittestNode == myNodeId)
+  {
     return true;
   }
-  
+
   // Otherwise use probabilistic approach
   return randomValue < coordinationThreshold;
-}
+}*/
 
 /**
  * Calculate node fitness for coordinator role based on capabilities
  * Higher value means better suited to be coordinator
- * 
+ *
  * @param nodeId Node to evaluate
  * @return Fitness score
- */
-float calculateNodeFitness(uint8_t nodeId) {
+
+float calculateNodeFitness(uint8_t nodeId)
+{
   float fitness = 1.0; // Base fitness
-  
+
   // Check if this is our own node
   critical_section_enter_blocking(&commStateLock);
   bool isOurNode = (nodeId == deviceConfig.nodeId);
   critical_section_exit(&commStateLock);
-  
+
   // 1. Uptime contribution - stable nodes make better coordinators
   // Max contribution: 1.0 (after running for 1+ hours)
   float uptime = 0.0;
-  if (isOurNode) {
+  if (isOurNode)
+  {
     uptime = min(getElapsedTime() / 3600.0f, 1.0f);
-  } else {
+  }
+  else
+  {
     // Estimate neighbor uptime based on how long we've known them
-    for (int i = 0; i < MAX_NEIGHBORS; i++) {
-      if (neighbors[i].isActive && neighbors[i].nodeId == nodeId) {
+    for (int i = 0; i < MAX_NEIGHBORS; i++)
+    {
+      if (neighbors[i].isActive && neighbors[i].nodeId == nodeId)
+      {
         uptime = min(float(millis() - neighbors[i].firstSeen) / 3600000.0f, 1.0f);
         break;
       }
     }
   }
   fitness += uptime;
-  
+
   // 2. Network centrality - prefer nodes that can see more of the network
   float centrality = 0.0;
-  if (isOurNode) {
+  if (isOurNode)
+  {
     // Count our neighbors as a fraction of MAX_NEIGHBORS
     int neighborCount = 0;
-    for (int i = 0; i < MAX_NEIGHBORS; i++) {
-      if (neighbors[i].isActive) {
+    for (int i = 0; i < MAX_NEIGHBORS; i++)
+    {
+      if (neighbors[i].isActive)
+      {
         neighborCount++;
       }
     }
     centrality = float(neighborCount) / MAX_NEIGHBORS;
-  } else {
+  }
+  else
+  {
     // For other nodes, we estimate based on observations
     centrality = 0.5; // Default assumption
   }
   fitness += centrality;
-  
+
   return fitness;
-}
+}*/
 
 //=============================================================================
 // NEIGHBOR COORDINATION SUBSYSTEM
@@ -1077,55 +1104,147 @@ float calculateNodeFitness(uint8_t nodeId) {
  * @param sensorType Type of sensor data (0=lux, 1=duty, 2=state)
  * @param value Sensor reading value
  */
+// Network Discovery Process:
+// 1. Nodes send heartbeats every 5 seconds
+// 2. Receiving a heartbeat from a new node updates the neighbor list
+// 3. Nodes timeout after 20 seconds without heartbeats
+// 4. Network is considered "ready" after 30 seconds of stability
+// 5. Any node joining or leaving resets the stability timer
 void updateNeighborInfo(uint8_t nodeId, uint8_t sensorType, float value)
 {
-    // Find node in list or empty slot
-    int nodeSlot = -1;
-    int emptySlot = -1;
-    
-    for (int i = 0; i < MAX_NEIGHBORS; i++) {
-        if (neighbors[i].isActive && neighbors[i].nodeId == nodeId) {
-            nodeSlot = i;
-            break;
-        }
-        else if (!neighbors[i].isActive && emptySlot < 0) {
-            emptySlot = i;
-        }
+  // Find node in list or empty slot
+  int nodeSlot = -1;
+  int emptySlot = -1;
+
+  for (int i = 0; i < MAX_NEIGHBORS; i++)
+  {
+    if (neighbors[i].isActive && neighbors[i].nodeId == nodeId)
+    {
+      nodeSlot = i;
+      break;
     }
-    
-    // Add new neighbor if not found and empty slot available
-    if (nodeSlot < 0 && emptySlot >= 0) {
-        neighbors[emptySlot].nodeId = nodeId;
-        neighbors[emptySlot].isActive = true;
-        neighbors[emptySlot].lastUpdate = millis();
-        neighbors[emptySlot].firstSeen = millis(); // Record when first discovered
-        neighbors[emptySlot].lastLux = 0.0;
-        neighbors[emptySlot].lastDuty = 0.0;
-        neighbors[emptySlot].state = STATE_OFF;
-        nodeSlot = emptySlot;
+    else if (!neighbors[i].isActive && emptySlot < 0)
+    {
+      emptySlot = i;
     }
-    
-    // Update node information
-    if (nodeSlot >= 0) {
-        neighbors[nodeSlot].lastUpdate = millis();
-        
-        if (sensorType == 0) {
-            neighbors[nodeSlot].lastLux = value;
-        }
-        else if (sensorType == 1) {
-            neighbors[nodeSlot].lastDuty = value;
-        }
-        else if (sensorType == 2) {
-            neighbors[nodeSlot].state = (LuminaireState)((int)value);
-        }
+  }
+
+  // Add new neighbor if not found and empty slot available
+  if (nodeSlot < 0 && emptySlot >= 0)
+  {
+    neighbors[emptySlot].nodeId = nodeId;
+    neighbors[emptySlot].isActive = true;
+    neighbors[emptySlot].lastUpdate = millis();
+    neighbors[emptySlot].firstSeen = millis(); // Record when first discovered
+    neighbors[emptySlot].lastLux = 0.0;
+    neighbors[emptySlot].lastDuty = 0.0;
+    neighbors[emptySlot].state = STATE_OFF;
+    nodeSlot = emptySlot;
+
+    // Mark network change to reset stability timer
+    critical_section_enter_blocking(&commStateLock);
+    controlState.networkReady = false;
+    controlState.lastNetworkChange = millis();
+    critical_section_exit(&commStateLock);
+
+    Serial.print("New neighbor detected: Node ID ");
+    Serial.println(nodeId);
+  }
+
+  // Update node information
+  if (nodeSlot >= 0)
+  {
+    neighbors[nodeSlot].lastUpdate = millis();
+
+    if (sensorType == 0)
+    {
+      neighbors[nodeSlot].lastLux = value;
     }
+    else if (sensorType == 1)
+    {
+      neighbors[nodeSlot].lastDuty = value;
+    }
+    else if (sensorType == 2)
+    {
+      neighbors[nodeSlot].state = (LuminaireState)((int)value);
+    }
+  }
+}
+
+void checkNeighborTimeouts()
+{
+  unsigned long currentTime = millis();
+  const unsigned long NEIGHBOR_TIMEOUT = 20000; // 20 seconds timeout
+  bool networkChanged = false;
+
+  for (int i = 0; i < MAX_NEIGHBORS; i++)
+  {
+    if (neighbors[i].isActive)
+    {
+      // Mark inactive if no heartbeat for more than 20 seconds
+      if (currentTime - neighbors[i].lastUpdate > NEIGHBOR_TIMEOUT)
+      {
+        Serial.print("Node ");
+        Serial.print(neighbors[i].nodeId);
+        Serial.println(" timed out (no heartbeat received)");
+
+        neighbors[i].isActive = false;
+        networkChanged = true;
+      }
+    }
+  }
+
+  // Reset network stability timer if any node was removed
+  if (networkChanged)
+  {
+    critical_section_enter_blocking(&commStateLock);
+    controlState.networkReady = false;
+    controlState.lastNetworkChange = currentTime;
+    critical_section_exit(&commStateLock);
+  }
+}
+
+void checkNetworkStability()
+{
+  const unsigned long STABILITY_TIMEOUT = 30000; // 30 seconds with no changes
+  unsigned long currentTime = millis();
+
+  critical_section_enter_blocking(&commStateLock);
+  bool isReady = controlState.networkReady;
+  unsigned long lastChange = controlState.lastNetworkChange;
+  critical_section_exit(&commStateLock);
+
+  // If not ready yet, check if we've been stable for long enough
+  if (!isReady && (currentTime - lastChange > STABILITY_TIMEOUT))
+  {
+    critical_section_enter_blocking(&commStateLock);
+    controlState.networkReady = true;
+    critical_section_exit(&commStateLock);
+
+    Serial.println("Network discovery complete - system ready");
+
+    // Log all active neighbors
+    int activeCount = 0;
+    Serial.println("Active nodes:");
+    for (int i = 0; i < MAX_NEIGHBORS; i++)
+    {
+      if (neighbors[i].isActive)
+      {
+        activeCount++;
+        Serial.print("  Node ");
+        Serial.println(neighbors[i].nodeId);
+      }
+    }
+    Serial.print("Total active nodes (including self): ");
+    Serial.println(activeCount + 1);
+  }
 }
 
 /**
  * Calculate light contribution from neighboring luminaires
  *
  * @return Estimated illuminance contribution from neighbors (lux)
- */
+
 float getNeighborsContribution()
 {
   float totalContribution = 0.0;
@@ -1154,12 +1273,12 @@ float getNeighborsContribution()
   }
 
   return totalContribution;
-}
+}*/
 
 /**
  * Coordinate illuminance with neighbors to optimize energy usage
  * Adjusts PID target to account for light from neighboring nodes
- */
+
 void coordinateWithNeighbors()
 {
   // Calculate total neighbor light contribution
@@ -1176,7 +1295,7 @@ void coordinateWithNeighbors()
     pid.setTarget(adjustedTarget);
   }
 }
-
+ */
 //=============================================================================
 // MAIN PROGRAM
 //=============================================================================
@@ -1212,20 +1331,23 @@ void configureDeviceFromID()
   // Read hardware ID
   pico_unique_board_id_t board_id;
   pico_get_unique_board_id(&board_id);
-  
+
   // Generate unique node ID from the last byte (1-63)
   uint8_t nodeId = board_id.id[7] & 0x3F; // Use last 6 bits for node ID (0-63)
-  
+
   // Avoid broadcast address (0)
   if (nodeId == 0)
     nodeId = 1;
-    
+
   // Print full board ID for debugging
   Serial.print("Board ID: ");
-  for (int i = 0; i < 8; i++) {
-    if (board_id.id[i] < 16) Serial.print("0");
+  for (int i = 0; i < 8; i++)
+  {
+    if (board_id.id[i] < 16)
+      Serial.print("0");
     Serial.print(board_id.id[i], HEX);
-    if (i < 7) Serial.print(":");
+    if (i < 7)
+      Serial.print(":");
   }
   Serial.print(" -> NodeID: ");
   Serial.println(nodeId);
@@ -1236,10 +1358,10 @@ void configureDeviceFromID()
 
   // Start with default configuration
   DeviceConfig config;
-  
+
   // IMPORTANT: Always use the unique node ID
   config.nodeId = nodeId;
-  
+
   // Apply device-type specific PID parameters
   switch (config.nodeId)
   {
@@ -1301,13 +1423,18 @@ void setup()
   controlState.luminaireState = STATE_OFF;
   controlState.feedbackControl = true;
   controlState.antiWindup = true;
-  controlState.dutyCycle = 0.0; 
+  controlState.dutyCycle = 0.0;
   controlState.wakeUpState = WAKEUP_IDLE;
-  controlState.isWakeUpMaster = false;
+  // controlState.isWakeUpMaster = false;
   controlState.wakeUpStateTime = 0;
 
   commState.streamingEnabled = false;
-  
+
+  critical_section_enter_blocking(&commStateLock);
+  controlState.networkReady = false;
+  controlState.lastNetworkChange = millis();
+  critical_section_exit(&commStateLock);
+
   // Calibrate the system
   deviceConfig.ledGain = calibrateSystem(1.0);
   Serial.println();
@@ -1323,7 +1450,6 @@ void setup()
   initPendingQueries();
 
   Serial.println("Distributed Control System with CAN-BUS initialized");
-
 }
 
 /**
@@ -1334,15 +1460,27 @@ void loop()
 {
   // (A) Process incoming serial commands
   processSerialCommands();
-  
+
   // Process wake-up state machine
   processWakeUpStateMachine();
-  
+
   // Send periodic heartbeat (every 5 seconds)
   static unsigned long lastHeartbeatTime = 0;
-  if (millis() - lastHeartbeatTime > 5000) {
+
+  if (millis() - lastHeartbeatTime > 5000)
+  {
     sendHeartbeat();
     lastHeartbeatTime = millis();
+  }
+
+  static unsigned long lastNeighborCheckTime = 0;
+
+  // Check neighbor timeouts and network stability every 2 seconds
+  if (millis() - lastNeighborCheckTime > 2000)
+  {
+    checkNeighborTimeouts();
+    checkNetworkStability();
+    lastNeighborCheckTime = millis();
   }
 
   // (B) Handle streaming
@@ -1391,33 +1529,33 @@ void loop()
 // Core 0: CAN Communication
 void core0_main()
 {
-    CoreMessage msg;
-    
-    while (true)
+  CoreMessage msg;
+
+  while (true)
+  {
+    // Process CAN messages
+    canCommLoop();
+
+    // Check for messages from Core 1
+    if (queue_try_remove(&core1to0queue, &msg))
     {
-        // Process CAN messages
-        canCommLoop();
-        
-        // Check for messages from Core 1
-        if (queue_try_remove(&core1to0queue, &msg))
-        {
-            switch (msg.msgType)
-            {
-            case MSG_SEND_SENSOR:
-                sendSensorReading(msg.nodeId, msg.dataType, msg.value);
-                break;
-                
-            case MSG_SEND_CONTROL:
-                sendControlCommand(msg.nodeId, msg.dataType, msg.value);
-                break;
-                
-            case MSG_UPDATE_STATE:
-                // Handle state update as needed
-                break;
-            }
-        }
-        
-        // Brief delay to prevent core hogging
-        sleep_ms(1);
+      switch (msg.msgType)
+      {
+      case MSG_SEND_SENSOR:
+        sendSensorReading(msg.nodeId, msg.dataType, msg.value);
+        break;
+
+      case MSG_SEND_CONTROL:
+        sendControlCommand(msg.nodeId, msg.dataType, msg.value);
+        break;
+
+      case MSG_UPDATE_STATE:
+        // Handle state update as needed
+        break;
+      }
     }
+
+    // Brief delay to prevent core hogging
+    sleep_ms(1);
+  }
 }
