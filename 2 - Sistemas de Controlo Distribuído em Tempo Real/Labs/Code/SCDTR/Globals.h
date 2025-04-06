@@ -29,14 +29,8 @@ extern const float MAX_POWER_WATTS;
  * Maximum number of stream requests that can be tracked simultaneously
  */
 #define MAX_STREAM_REQUESTS 5
-/**
- * Illuminance setpoints for different states
- */
-extern const float SETPOINT_OFF;        // Off state target (lux)
-extern const float SETPOINT_UNOCCUPIED; // Unoccupied state target (lux)
-extern const float SETPOINT_OCCUPIED;   // Occupied state target (lux)
 
-#define MAX_NEIGHBORS 5
+#define MAX_CALIB_NODES 6  // Maximum number of nodes in calibration matrix
 
 //==========================================================================================================================================================
 // SYSTEM STATE ENUMERATIONS
@@ -51,16 +45,6 @@ enum LuminaireState
   STATE_OFF = 0,        // Complete shutdown, no illumination
   STATE_UNOCCUPIED = 1, // Low ambient lighting when area is unoccupied
   STATE_OCCUPIED = 2    // Full task lighting when workspace is in use
-};
-
-enum WakeUpState
-{
-  WAKEUP_IDLE = 0,       // No wake-up in progress
-  WAKEUP_RESET = 1,      // Reset phase - All nodes reset their state
-  WAKEUP_ACK_WAIT = 2,   // Waiting for acknowledgments from all nodes
-  WAKEUP_CALIBRATE = 3,  // Calibration phase - Measure sensor parameters
-  WAKEUP_TRANSITION = 4, // Transitioning to normal operation
-  WAKEUP_COMPLETE = 5    // Wake-up complete, normal operation
 };
 
 //==========================================================================================================================================================
@@ -94,17 +78,31 @@ enum WakeUpState
 /** State change notifications */
 #define CAN_CTRL_STATE_CHANGE 0x10
 
-/** Wake up protocol messages */
-#define CAN_CTRL_WAKEUP_INIT 0x20
-#define CAN_CTRL_WAKEUP_ACK 0x21
-#define CAN_CTRL_WAKEUP_CALIBRATE 0x22
-#define CAN_CTRL_WAKEUP_COMPLETE 0x23
+// Define calibration control command types
+#define CAL_CMD_INIT 101          // Initialize calibration
+#define CAL_CMD_ACK 102           // Acknowledge calibration
+#define CAL_CMD_START_NODE 103    // Start calibrating a specific node
+#define CAL_CMD_SEND_READING 104  // Send light reading
+#define CAL_CMD_NEXT_NODE 105     // Move to next node
+#define CAL_CMD_COMPLETE 106      // Calibration complete
 
-#define CAN_CTRL_EMERGENCY_SHUTDOWN 0x30
+// Constants for calibration process
+const int CAL_TIMEOUT_MS = 5000;            // Wait time for acknowledgments
+const int CAL_STABILIZE_TIME_MS = 1000;     // Wait time for light stabilization
+const int CAL_CHECK_INTERVAL_MS = 100;      // Interval to check stabilization
+const float CAL_STABILITY_THRESHOLD = 0.05; // Threshold for determining stability
+
+/**
+ * Illuminance setpoints for different states
+ */
+extern const float SETPOINT_OFF;        // Off state target (lux)
+extern const float SETPOINT_UNOCCUPIED; // Unoccupied state target (lux)
+extern const float SETPOINT_OCCUPIED;   // Occupied state target (lux)
 
 //==========================================================================================================================================================
 // STRUCTURE DEFINITIONS
 //==========================================================================================================================================================
+
 
 /**
  * Structure to track a request to stream data to another node
@@ -122,14 +120,14 @@ struct StreamRequest
  */
 struct DeviceConfig
 {
-  uint8_t nodeId;          // Unique ID for this device (used for CAN communication)
-  float ledGain;           // Calibrated LED contribution gain
-  float calibrationOffset; // Calibration offset for sensor
-
+  uint8_t nodeId;           // Unique ID for this device (used for CAN communication)
+  float ledGain;            // Calibrated LED contribution gain
+  float calibrationOffset;  // Calibration offset for sensor
+  
   // PID tuning parameters
-  float pidKp;   // Proportional gain
-  float pidKi;   // Integral gain
-  float pidBeta; // Setpoint weighting factor
+  float pidKp;              // Proportional gain
+  float pidKi;              // Integral gain
+  float pidBeta;            // Setpoint weighting factor
 };
 
 /**
@@ -146,20 +144,6 @@ struct SensorState
 };
 
 /**
- * Structure to track neighboring nodes in the network
- */
-struct NeighborInfo
-{
-  uint8_t nodeId;           // CAN node ID
-  float lastLux;            // Last reported illuminance
-  float lastDuty;           // Last reported duty cycle
-  LuminaireState state;     // Current operating state
-  unsigned long lastUpdate; // Last update timestamp
-  unsigned long firstSeen;  // When this node was first discovered
-  bool isActive;            // Is node currently active
-};
-
-/**
  * ControlState holds control parameters for lighting.
  */
 struct ControlState
@@ -169,15 +153,16 @@ struct ControlState
   LuminaireState luminaireState; // Current luminaire operating state
   bool feedbackControl;          // Flag for automatic feedback control (true) vs manual (false)
   bool antiWindup;               // PID controller anti-windup flag
+};
 
-  // Wake-up protocol state machine fields
-  WakeUpState wakeUpState;       // Current wake-up protocol state
-  unsigned long wakeUpStateTime; // Timestamp when current wake-up state started
-  // bool isWakeUpMaster;           // Whether this node is coordinating the wake-up
 
-  // Network discovery and stability tracking
-  bool networkReady;               // Flag indicating network has been stable for required time
-  unsigned long lastNetworkChange; // Timestamp of last network change (node join/leave)
+// Calibration matrix and parameters
+
+struct CalibrationMatrix {
+  float gains[MAX_CALIB_NODES][MAX_CALIB_NODES];  // [i][j] = effect of node j on node i
+  float externalLight[MAX_CALIB_NODES];           // External light contribution at each node
+  uint8_t nodeIds[MAX_CALIB_NODES];               // Node IDs corresponding to matrix indices
+  int numNodes;                                   // Number of nodes in calibration
 };
 
 /**
@@ -186,20 +171,35 @@ struct ControlState
 struct CommState
 {
   // Streaming parameters
-  bool streamingEnabled;        // Enable periodic streaming
-  char *streamingVar;           // Identifier of variable being streamed
-  int streamingIndex;           // Index of the node for streaming
-  unsigned long lastStreamTime; // Last time a stream was sent
-
+  bool streamingEnabled;         // Enable periodic streaming
+  char* streamingVar;            // Identifier of variable being streamed
+  int streamingIndex;            // Index of the node for streaming
+  unsigned long lastStreamTime;  // Last time a stream was sent
+  
   // Remote streaming requests from other nodes
-  StreamRequest remoteStreamRequests[MAX_STREAM_REQUESTS];
-
+  StreamRequest remoteStreamRequests[MAX_STREAM_REQUESTS]; 
+  
   // Atomic flag to indicate new CAN messages are available
   std::atomic_flag hasNewMessages;
-
+  
   // CAN communication flags
-  bool periodicCANEnabled; // Enable periodic CAN transmissions
-  bool canMonitorEnabled;  // Enable monitoring of CAN messages
+  bool periodicCANEnabled;       // Enable periodic CAN transmissions
+  bool canMonitorEnabled;        // Enable monitoring of CAN messages
+
+  // Calibration status
+  bool isCalibrationMaster;      // Is this node the calibration master
+  bool calibrationInProgress;    // Is calibration currently in progress  
+  uint8_t calibrationStep;       // Current step in the calibration sequence
+  unsigned long calLastStepTime; // Timestamp of last calibration step
+  uint8_t currentCalNode;        // Current node being calibrated
+  bool waitingForAcks;           // Waiting for acknowledgments flag
+  uint8_t acksReceived;          // Number of acknowledgments received
+  CalibrationMatrix calibMatrix; // Matrix of calibration gains
+  float luxReadings[MAX_CALIB_NODES]; // Temporary storage for lux readings during calibration
+  unsigned long stabilizationStartTime; // When we started waiting for light levels to stabilize
+  bool measurementsStable;      // Flag indicating if measurements are stable
+  float previousReadings[5];    // Store previous readings to check for stability
+  int readingIndex;             // Index for circular buffer of readings
 };
 
 //==========================================================================================================================================================
@@ -241,11 +241,6 @@ extern CommState commState;
  */
 extern class PIController pid;
 
-/**
- * Node fitness variables for coordinator selection
- */
-extern float myFitness;
-extern float maxFitness;
 
 //==========================================================================================================================================================
 // FUNCTION DECLARATIONS
@@ -286,5 +281,6 @@ void setLEDPower(float powerWatts);
  * @param newState New operating state to set
  */
 void changeState(LuminaireState newState);
+
 
 #endif // GLOBALS_H

@@ -214,6 +214,25 @@ bool sendQueryResponse(uint8_t destNode, float value);
  */
 bool sendHeartbeat();
 
+// Node discovery functions
+void initNodeDiscovery();
+void updateNodeStatus();
+int getActiveNodes(uint8_t* nodeList, int maxNodes);
+void displayDiscoveredNodes();
+/**
+ * Start a calibration sequence as the calibration master
+ * This node takes control of the calibration process across the network
+ * 
+ * @return true if calibration started successfully
+ */
+bool startCalibration();
+
+/**
+ * Update calibration state machine
+ * Called periodically from the main loop to advance the calibration process
+ */
+void updateCalibrationState();
+
 //=============================================================================
 // CORE CAN FUNCTIONS
 //=============================================================================
