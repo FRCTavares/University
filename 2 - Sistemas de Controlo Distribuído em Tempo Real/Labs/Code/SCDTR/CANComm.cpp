@@ -820,14 +820,6 @@ void updateCalibrationState() {
     return;
   }
 
-  // Debug for tracking state machine progress
-  Serial.print("Calibration state machine: step=");
-  Serial.print(commState.calibrationStep);
-  Serial.print(", master=");
-  Serial.print(commState.isCalibrationMaster ? "yes" : "no");
-  Serial.print(", node=");
-  Serial.println(commState.currentCalNode);
-
   // Master node state machine
   if (commState.isCalibrationMaster) {
     switch (commState.calibrationStep) {
@@ -961,11 +953,6 @@ void updateCalibrationState() {
       break;
       case 2: // Stage 3: Sequential node calibration
         {
-          // Debug output
-          Serial.print("Case 2 - Sequential calibration: node=");
-          Serial.print(commState.currentCalNode);
-          Serial.print(", measurementsStable=");
-          Serial.println(commState.measurementsStable);
           
           uint8_t currentNodeId = commState.calibMatrix.nodeIds[commState.currentCalNode];
           
@@ -1155,13 +1142,15 @@ void handleCalibrationMessage(uint8_t sourceNodeId, uint8_t controlType, float v
       
     case CAL_CMD_SEND_READING:
       {
+        // Master is requesting our lux reading during calibration
+        // This is called when master requests our external light reading
         // Read current illuminance
-        float lux = readLux();
+        float currentLux = readLux();
+        // Send response to master with our current lux reading
+        sendSensorReading(sourceNodeId, 0, currentLux);
         
-        // Send reading to requester (usually master)
-        sendControlCommand(sourceNodeId, CAL_CMD_SEND_READING, lux);
+        return;
       }
-      break;
       
     case CAL_CMD_START_NODE:
       {
