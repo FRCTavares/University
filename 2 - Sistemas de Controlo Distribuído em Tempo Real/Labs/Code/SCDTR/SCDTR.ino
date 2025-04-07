@@ -33,7 +33,8 @@
 #define MSG_UPDATE_STATE 3
 
 // Message structure for inter-core communication
-struct CoreMessage {
+struct CoreMessage
+{
   uint8_t msgType;  // Message type identifier
   uint8_t dataType; // Type of data being sent
   float value;      // Value to send
@@ -75,8 +76,8 @@ PIController pid(Kp, Ki, BETA, DT);
 
 // Illuminance setpoints for different states
 const float SETPOINT_OFF = 0.0;
-const float SETPOINT_UNOCCUPIED = 5.0;
-const float SETPOINT_OCCUPIED = 15.0;
+const float SETPOINT_UNOCCUPIED = 30.0;
+const float SETPOINT_OCCUPIED = 50.0;
 
 // CAN monitoring flag
 bool canMonitorEnabled = false;
@@ -89,7 +90,8 @@ bool canMonitorEnabled = false;
 const int MAX_NEIGHBORS = 5;
 
 // Structure to store neighbor information
-struct NeighborInfo {
+struct NeighborInfo
+{
   uint8_t nodeId;           // CAN node ID
   float lastLux;            // Last reported illuminance
   float lastDuty;           // Last reported duty cycle
@@ -117,7 +119,7 @@ void changeState(LuminaireState newState)
   critical_section_enter_blocking(&commStateLock);
   if (newState == controlState.luminaireState)
   {
-    critical_section_exit(&commStateLock); 
+    critical_section_exit(&commStateLock);
     return;
   }
 
@@ -129,6 +131,8 @@ void changeState(LuminaireState newState)
   case STATE_OFF:
     controlState.setpointLux = SETPOINT_OFF;
     controlState.feedbackControl = false;
+    // Only set duty cycle to 0 if we're actually transitioning to OFF state
+    controlState.dutyCycle = 0.0;
     break;
 
   case STATE_UNOCCUPIED:
@@ -153,56 +157,6 @@ void changeState(LuminaireState newState)
   msg.dataType = CAN_CTRL_STATE_CHANGE;
   msg.value = (float)controlState.luminaireState;
   queue_add_blocking(&core1to0queue, &msg);
-}
-
-/**
- * Update stored neighbor information when receiving CAN messages
- *
- * @param nodeId Source node ID
- * @param sensorType Type of sensor data (0=lux, 1=duty, 2=state)
- * @param value Sensor reading value
- */
-void updateNeighborInfo(uint8_t nodeId, uint8_t sensorType, float value)
-{
-  int emptySlot = -1;
-
-  // Find existing neighbor or empty slot
-  for (int i = 0; i < MAX_NEIGHBORS; i++)
-  {
-    if (neighbors[i].isActive && neighbors[i].nodeId == nodeId)
-    {
-      // Update existing neighbor
-      if (sensorType == 0)
-        neighbors[i].lastLux = value;
-      else if (sensorType == 1)
-        neighbors[i].lastDuty = value;
-      else if (sensorType == 2)
-        neighbors[i].state = (LuminaireState)((int)value);
-
-      neighbors[i].lastUpdate = millis();
-      return;
-    }
-
-    if (!neighbors[i].isActive && emptySlot < 0)
-    {
-      emptySlot = i;
-    }
-  }
-
-  // Add as new neighbor if slot available
-  if (emptySlot >= 0)
-  {
-    neighbors[emptySlot].nodeId = nodeId;
-    neighbors[emptySlot].isActive = true;
-    neighbors[emptySlot].lastUpdate = millis();
-
-    if (sensorType == 0)
-      neighbors[emptySlot].lastLux = value;
-    else if (sensorType == 1)
-      neighbors[emptySlot].lastDuty = value;
-    else if (sensorType == 2)
-      neighbors[emptySlot].state = (LuminaireState)((int)value);
-  }
 }
 
 /**
@@ -263,7 +217,7 @@ void configureDeviceFromID()
   // Read hardware ID
   pico_unique_board_id_t board_id;
   pico_get_unique_board_id(&board_id);
-  
+
   // Generate unique node ID from the last byte (1-63)
   uint8_t nodeId = board_id.id[7] & 0x3F; // Use last 6 bits for node ID (0-63)
 
@@ -273,9 +227,9 @@ void configureDeviceFromID()
 
   // Start with default configuration
   DeviceConfig config;
-  
+
   config.nodeId = nodeId;
-  
+
   // Apply device-type specific PID parameters
   switch (config.nodeId)
   {
@@ -339,15 +293,26 @@ void setup()
 
   controlState.setpointLux = SETPOINT_OFF;
   controlState.luminaireState = STATE_OFF;
-  controlState.feedbackControl = true;
+  controlState.feedbackControl = false;
   controlState.antiWindup = true;
-  controlState.dutyCycle = 0.0; 
+  controlState.dutyCycle = 0.0;
   commState.streamingEnabled = false;
   commState.isCalibrationMaster = false;
   commState.calibrationInProgress = false;
   commState.calibrationStep = 0;
   commState.calLastStepTime = 0;
-  
+  controlState.systemAwake = false;
+  controlState.systemReady = false;
+  controlState.discoveryStartTime = 0;
+
+  // Add to initialization in setup():
+  commState.readingIndex = 0;
+  commState.measurementsStable = false;
+  for (int i = 0; i < 5; i++)
+  {
+    commState.previousReadings[i] = 0.0f;
+  }
+
   // Calibrate the system
   deviceConfig.ledGain = 0;
   Serial.println();
@@ -361,7 +326,8 @@ void setup()
   // Launch core 0 for CAN communication
   multicore_launch_core1(core1_main);
 
-  Serial.println("Distributed Control System with CAN-BUS initialized");
+  controlState.standbyMode = true; // Start in standby mode by default
+  Serial.println("System starting in standby mode. Send 'wakeup' command to activate.");
 }
 
 /**
@@ -370,6 +336,51 @@ void setup()
  */
 void loop()
 {
+  // Check if in standby mode - skip most processing if true
+  critical_section_enter_blocking(&commStateLock);
+  bool inStandby = controlState.standbyMode;
+  bool inWakeUpDiscovery = controlState.systemAwake && !controlState.systemReady;
+  bool isSystemReady = controlState.systemReady;
+  unsigned long discoveryStartTime = controlState.discoveryStartTime;
+  critical_section_exit(&commStateLock);
+
+  if (inStandby)
+  {
+    // Only process commands (to catch WakeUp command) while in standby
+    processSerialCommands();
+    delay(100); // Reduced CPU usage while in standby
+    return;     // Skip the rest of the loop
+  }
+
+  // Handle wake-up discovery phase
+  if (inWakeUpDiscovery)
+  {
+    // Process commands during discovery
+    processSerialCommands();
+
+    // Check if discovery period has ended (10 seconds)
+    if (millis() - discoveryStartTime > 10000)
+    {
+      // Discovery period complete - display discovered nodes
+      Serial.println("\nNode discovery phase complete");
+      displayDiscoveredNodes();
+
+      // Initiate calibration sequence
+      Serial.println("Starting system calibration as master...");
+      critical_section_enter_blocking(&commStateLock);
+      controlState.systemAwake = false;
+      controlState.systemReady = false; // Will be set true after calibration
+      critical_section_exit(&commStateLock);
+
+      // Trigger calibration
+      startCalibration();
+    }
+
+    // Continue with minimal processing during discovery
+    sendHeartbeat();
+    delay(50);
+    return;
+  }
   // (A) Process incoming serial commands
   processSerialCommands();
 
@@ -384,8 +395,9 @@ void loop()
   critical_section_enter_blocking(&commStateLock);
   bool calibInProgress = commState.calibrationInProgress;
   critical_section_exit(&commStateLock);
-  
-  if (calibInProgress) {
+
+  if (calibInProgress)
+  {
     updateCalibrationState();
   }
 
@@ -394,23 +406,21 @@ void loop()
   LuminaireState state = controlState.luminaireState;
   bool feedback = controlState.feedbackControl;
   float setpoint = controlState.setpointLux;
+  float manualDuty = controlState.dutyCycle;
   critical_section_exit(&commStateLock);
 
-  if (state == STATE_OFF)
+  // Modified control logic - allow manual control regardless of state
+  if (feedback && state != STATE_OFF)
   {
-    setLEDDutyCycle(0.0);
-  }
-  else if (feedback)
-  {
+    // Only do automatic feedback control if it's enabled AND not in OFF state
     float u = pid.compute(setpoint, lux);
     setLEDPWMValue((int)u);
   }
   else
   {
-    critical_section_enter_blocking(&commStateLock);
-    float duty = controlState.dutyCycle;
-    critical_section_exit(&commStateLock);
-    setLEDDutyCycle(duty);
+    // Otherwise use manual duty cycle (which could be 0 for OFF state
+    // or whatever value was set by the "u" command)
+    setLEDDutyCycle(manualDuty);
   }
 
   // Update duty cycle after control action
@@ -434,26 +444,27 @@ void core1_main()
   // Add these variables at the top of core1_main
   unsigned long lastHeartbeatTime = 0;
   const unsigned long HEARTBEAT_INTERVAL = 3000; // Send heartbeat every 3 seconds
-  
+
   // Also declare other timing variables at the top
   unsigned long lastStatusUpdateTime = 0;
-  
+
   while (true)
   {
     // Process incoming CAN messages
     canCommLoop();
-    
+
     // Handle periodic heartbeat transmission
     unsigned long currentTime = millis();
-    
-    if (currentTime - lastHeartbeatTime >= HEARTBEAT_INTERVAL) {
+
+    if (currentTime - lastHeartbeatTime >= HEARTBEAT_INTERVAL)
+    {
       sendHeartbeat();
       lastHeartbeatTime = currentTime;
-      
+
       // While we're at it, also update node status (mark inactive nodes)
       updateNodeStatus();
     }
-    
+
     // Process outgoing messages from Core 0
     CoreMessage msg;
     if (queue_try_remove(&core1to0queue, &msg))
@@ -461,38 +472,39 @@ void core1_main()
       bool sendResult = false;
       switch (msg.msgType)
       {
-        case MSG_SEND_SENSOR:
-          sendResult = sendSensorReading(msg.nodeId, msg.dataType, msg.value);
+      case MSG_SEND_SENSOR:
+        sendResult = sendSensorReading(msg.nodeId, msg.dataType, msg.value);
+        break;
+
+      case MSG_SEND_CONTROL:
+        sendResult = sendControlCommand(msg.nodeId, msg.dataType, msg.value);
+        break;
+
+      case MSG_UPDATE_STATE:
+        // Handle state updates - this might update local state based on Core 0 request
+        critical_section_enter_blocking(&commStateLock);
+        switch (msg.dataType)
+        {
+        case CAN_CTRL_STATE_CHANGE:
+          controlState.luminaireState = (LuminaireState)(int)msg.value;
           break;
-          
-        case MSG_SEND_CONTROL:
-          sendResult = sendControlCommand(msg.nodeId, msg.dataType, msg.value);
-          break;
-          
-        case MSG_UPDATE_STATE:
-          // Handle state updates - this might update local state based on Core 0 request
-          critical_section_enter_blocking(&commStateLock);
-          switch(msg.dataType) {
-            case CAN_CTRL_STATE_CHANGE:
-              controlState.luminaireState = (LuminaireState)(int)msg.value;
-              break;
-            // Add other state update types as needed
-          }
-          critical_section_exit(&commStateLock);
-          sendResult = true;
-          break;
+          // Add other state update types as needed
+        }
+        critical_section_exit(&commStateLock);
+        sendResult = true;
+        break;
       }
-      
+
       // Could report back to Core 0 if needed
     }
-  
-    
+
     // Update node status every second
-    if (currentTime - lastStatusUpdateTime >= 1000) {
+    if (currentTime - lastStatusUpdateTime >= 1000)
+    {
       updateNodeStatus();
       lastStatusUpdateTime = currentTime;
     }
-    
+
     // Brief delay to prevent core hogging
     sleep_ms(1);
   }

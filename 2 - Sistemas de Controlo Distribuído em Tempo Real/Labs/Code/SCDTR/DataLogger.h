@@ -105,44 +105,4 @@ int getCurrentIndex();
  */
 void clearBuffer();
 
-/**
- * Get the oldest timestamp in the buffer
- *
- * @return Timestamp of oldest entry or 0 if buffer is empty
- */
-unsigned long getOldestTimestamp();
-
-/**
- * Get the newest timestamp in the buffer
- *
- * @return Timestamp of newest entry or 0 if buffer is empty
- */
-unsigned long getNewestTimestamp();
-
-/**
- * Calculate buffer duration in milliseconds
- *
- * @return Time span covered by buffer entries or 0 if fewer than 2 entries
- */
-unsigned long getBufferDuration();
-
-/**
- * Find the closest data entry to a given timestamp
- *
- * @param timestamp Target timestamp to search for
- * @return Index of closest entry or -1 if buffer is empty
- */
-int findClosestEntry(unsigned long timestamp);
-
-/**
- * Calculate flicker value for the current point
- * Based on the last three duty cycle values
- *
- * @param d0 First duty cycle point
- * @param d1 Second duty cycle point
- * @param d2 Third duty cycle point (current)
- * @return Flicker value or 0.0 if no direction change
- */
-float calculateFlickerValue(float d0, float d1, float d2);
-
 #endif // DATALOGGER_H

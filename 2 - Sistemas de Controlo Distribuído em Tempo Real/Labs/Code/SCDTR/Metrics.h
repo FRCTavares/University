@@ -16,7 +16,7 @@ void computeAndPrintMetrics();
 
 /**
  * Calculate energy consumption from duty cycle history
- * 
+ *
  * Energy is computed by integrating power over time:
  * E = ∫ P(t) dt
  *
@@ -28,20 +28,6 @@ void computeAndPrintMetrics();
  * @return Total energy consumption in joules
  */
 float computeEnergyFromBuffer();
-
-/**
- * Calculate average power consumption over the logged period
- *
- * @return Average power consumption in watts
- */
-float computeAveragePowerFromBuffer();
-
-/**
- * Calculate peak power consumption in the logged period
- *
- * @return Maximum power consumption in watts
- */
-float computePeakPowerFromBuffer();
 
 //=============================================================================
 // LIGHTING QUALITY METRICS
@@ -61,16 +47,6 @@ float computePeakPowerFromBuffer();
 float computeVisibilityErrorFromBuffer();
 
 /**
- * Calculate illuminance stability metric
- *
- * Measures how stable the illuminance level remains over time
- * Lower values indicate more stable illuminance
- *
- * @return Standard deviation of illuminance
- */
-float computeIlluminanceStabilityFromBuffer();
-
-/**
  * Calculate flicker metric from duty cycle history
  *
  * Flicker is computed by detecting direction changes in the
@@ -82,55 +58,5 @@ float computeIlluminanceStabilityFromBuffer();
  * @return Average flicker magnitude when direction changes
  */
 float computeFlickerFromBuffer();
-
-//=============================================================================
-// COMBINED QUALITY METRICS
-//=============================================================================
-
-/**
- * Calculate duty cycle stability metric
- *
- * Measures how stable the duty cycle remains over time
- * Lower values indicate better stability
- *
- * @return Standard deviation of duty cycle
- */
-float computeDutyStabilityFromBuffer();
-
-/**
- * Calculate overall lighting quality index
- *
- * Combines energy, visibility error, and flicker into a single metric
- * Higher values indicate better overall performance
- *
- * @return Quality index from 0 (worst) to 100 (best)
- */
-float computeQualityIndex();
-
-/**
- * Calculate comfort metric based on illuminance stability and flicker
- *
- * @return Comfort rating from 0 (poor) to 100 (excellent)
- */
-float computeComfortMetric();
-
-//=============================================================================
-// STATISTICAL ANALYSIS FUNCTIONS
-//=============================================================================
-
-/**
- * Calculate how closely illuminance matches the setpoint over time
- *
- * @return Mean absolute error between setpoint and measured illuminance
- */
-float computeSetpointTrackingError();
-
-/**
- * Calculate illuminance dip ratio
- * Measures the frequency and magnitude of illuminance drops below the setpoint
- *
- * @return Ratio of samples where illuminance is below setpoint
- */
-float computeIlluminanceDipRatio();
 
 #endif // METRICS_H

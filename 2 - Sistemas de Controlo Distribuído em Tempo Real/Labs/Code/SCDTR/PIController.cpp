@@ -10,9 +10,6 @@
 #include "Metrics.h"
 #include "PIController.h"
 #include "SensorManager.h"
-/******************************************************************************************************************************************************************************************************************************************************************************** */
-// PI CONTROLLER IMPLEMENTATION
-/******************************************************************************************************************************************************************************************************************************************************************************** */
 
 //==========================================================================================================================================================
 // CONFIGURATION AND CONSTANTS
@@ -25,14 +22,6 @@ const float FEEDFORWARD_THRESHOLD = 0.01f; // Minimum setpoint change to trigger
 // PWM output limits for saturation
 #define PWM_MAX 4095 // Maximum PWM value (12-bit resolution)
 #define PWM_MIN 0    // Minimum PWM value (off)
-
-// Animation and transition constants
-const int MIN_TRANSITION_TIME_MS = 10;       // Minimum LED transition time
-const int MIN_PULSE_DURATION_MS = 100;       // Minimum LED pulse effect duration
-const int ANIMATION_UPDATE_INTERVAL_MS = 20; // Interval for animation updates
-
-// Numeric comparison thresholds
-const float FLOAT_COMPARISON_THRESHOLD = 0.001f; // For float equality comparisons
 
 //==========================================================================================================================================================
 // CONSTRUCTOR AND INITIALIZATION
@@ -62,7 +51,7 @@ PIController::PIController(float kp, float ki, float beta, float samplingTime)
 
 /**
  * Compute PI control action for the current sample
- * 
+ *
  * Core control algorithm implementing:
  * - Setpoint weighting
  * - Anti-windup

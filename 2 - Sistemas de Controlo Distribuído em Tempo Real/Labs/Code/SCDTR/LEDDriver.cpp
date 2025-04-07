@@ -140,33 +140,3 @@ float getLEDDutyCycle()
 {
   return controlState.dutyCycle;
 }
-
-/**
- * Get current LED brightness as percentage
- *
- * @return Current brightness percentage (0.0 to 100.0)
- */
-float getLEDPercentage()
-{
-  return controlState.dutyCycle * 100.0f;
-}
-
-/**
- * Get current LED PWM value
- *
- * @return Current PWM value (0 to pwmMax)
- */
-int getLEDPWMValue()
-{
-  return (int)(controlState.dutyCycle * pwmMax);
-}
-
-/**
- * Get estimated current LED power consumption
- *
- * @return Estimated power consumption in watts
- */
-float getLEDPower()
-{
-  return controlState.dutyCycle * MAX_POWER_WATTS;
-}

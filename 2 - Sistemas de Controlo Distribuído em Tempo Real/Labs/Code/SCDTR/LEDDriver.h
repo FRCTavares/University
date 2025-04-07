@@ -50,25 +50,4 @@ void setLEDPower(float powerWatts);
  */
 float getLEDDutyCycle();
 
-/**
- * Get current LED brightness as percentage
- *
- * @return Current brightness percentage (0.0 to 100.0)
- */
-float getLEDPercentage();
-
-/**
- * Get current LED PWM value
- *
- * @return Current PWM value (0 to pwmMax)
- */
-int getLEDPWMValue();
-
-/**
- * Get estimated current LED power consumption
- *
- * @return Estimated power consumption in watts
- */
-float getLEDPower();
-
 #endif // LEDDRIVER_H

@@ -101,7 +101,7 @@ void parseCANId(uint32_t canId, uint8_t &msgType, uint8_t &destAddr);
 
 /**
  * Parse a string to an integer with error checking
- * 
+ *
  * @param str String to parse
  * @param result Output parameter for the parsed integer value
  * @return true if parsing was successful, false otherwise
@@ -217,12 +217,12 @@ bool sendHeartbeat();
 // Node discovery functions
 void initNodeDiscovery();
 void updateNodeStatus();
-int getActiveNodes(uint8_t* nodeList, int maxNodes);
+int getActiveNodes(uint8_t *nodeList, int maxNodes);
 void displayDiscoveredNodes();
 /**
  * Start a calibration sequence as the calibration master
  * This node takes control of the calibration process across the network
- * 
+ *
  * @return true if calibration started successfully
  */
 bool startCalibration();
@@ -262,14 +262,6 @@ MCP2515::ERROR sendCANMessage(const can_frame &frame);
  */
 MCP2515::ERROR readCANMessage(struct can_frame *frame);
 
-/**
- * Set a callback function for received CAN messages
- * The callback will be invoked for each received message
- *
- * @param callback Function pointer to the callback function
- */
-void setCANMessageCallback(CANMessageCallback callback);
-
 //=============================================================================
 // STATISTICS AND DIAGNOSTICS
 //=============================================================================
@@ -281,14 +273,8 @@ void setCANMessageCallback(CANMessageCallback callback);
 void displayCANStatistics();
 
 /**
- * Scan the CAN network for active nodes
- * Sends discovery messages and waits for responses
- */
-void scanCANNetwork();
-
-/**
  * Measure round-trip latency to a specific node
- * 
+ *
  * @param numTokens Number of tokens in command
  * @param tokens Command tokens (tokens[2] should contain node ID if present)
  */
