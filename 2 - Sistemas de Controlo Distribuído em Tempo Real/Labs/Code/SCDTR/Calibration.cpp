@@ -62,7 +62,6 @@ float calibrateSystem(float referenceValue)
     for (int i = 0; i < commState.calibMatrix.numNodes; i++)
     {
         offReadings[i] = commState.luxReadings[i];
-
     }
     critical_section_exit(&commStateLock);
 
@@ -121,7 +120,6 @@ float calibrateSystem(float referenceValue)
 
             // Store in calibration matrix [row=receiver node][col=sender node]
             commState.calibMatrix.gains[i][ourNodeIndex] = nodeGain;
-
         }
     }
     critical_section_exit(&commStateLock);
@@ -413,7 +411,6 @@ void updateCalibrationState()
             if (waitingForAcks && (acksReceived >= expectedAcks || timeoutOccurred))
             {
 
-
                 if (timeoutOccurred && acksReceived < expectedAcks)
                 {
                     // Serial.println("Warning: Not all nodes responded, continuing anyway");
@@ -455,7 +452,6 @@ void updateCalibrationState()
                 for (int i = 0; i < commState.calibMatrix.numNodes; i++)
                 {
                     commState.calibMatrix.externalLight[i] = commState.luxReadings[i];
-
                 }
 
                 // Move to measuring LED gain (first column)
@@ -513,8 +509,6 @@ void updateCalibrationState()
                 commState.calibrationStep = 3; // Move to the column calibration state
                 commState.calLastStepTime = currentTime;
                 critical_section_exit(&commStateLock);
-
-
             }
             break;
         }
@@ -525,8 +519,6 @@ void updateCalibrationState()
             int currentNodeIdx = commState.currentCalNode;
             uint8_t targetNodeId = commState.calibMatrix.nodeIds[currentNodeIdx];
             critical_section_exit(&commStateLock);
-
-
 
             // Calibrate the specified column
             calibrateColumn(currentNodeIdx);
@@ -606,16 +598,18 @@ void updateCalibrationState()
             delay(100);
 
             // Then send each node ID mapping again
-            for (int i = 0; i < totalNodes; i++) {
+            for (int i = 0; i < totalNodes; i++)
+            {
                 critical_section_enter_blocking(&commStateLock);
                 uint8_t nodeId = commState.calibMatrix.nodeIds[i];
                 critical_section_exit(&commStateLock);
-                
+
                 // Send node ID mapping - format: 980000 + index*1000 + nodeId
                 float nodeIdMessage = 980000.0f + i * 1000.0f + nodeId;
-                
+
                 // Send mapping 3 times with small delay to ensure reception
-                for (int retry = 0; retry < 3; retry++) {
+                for (int retry = 0; retry < 3; retry++)
+                {
                     sendControlCommand(CAN_ADDR_BROADCAST, CAL_CMD_NEXT_NODE, nodeIdMessage);
                     delay(50);
                 }
@@ -647,7 +641,7 @@ void updateCalibrationState()
                 }
             }
 
-           // Broadcast matrix size and structure information
+            // Broadcast matrix size and structure information
             Serial.println("Broadcasting matrix structure information...");
 
             // First, send the number of nodes with special code - increase delay for this critical message
@@ -656,20 +650,22 @@ void updateCalibrationState()
             delay(200); // Longer delay for this important message
 
             // Then send each node ID with a different special code - send multiple times for reliability
-            for (int i = 0; i < totalNodes; i++) {
+            for (int i = 0; i < totalNodes; i++)
+            {
                 critical_section_enter_blocking(&commStateLock);
                 uint8_t nodeId = commState.calibMatrix.nodeIds[i];
                 critical_section_exit(&commStateLock);
-                
+
                 // Format: 980000 + index*1000 + nodeId
                 float nodeIdMessage = 980000.0f + i * 1000.0f + nodeId;
-                
+
                 // Send each node ID message multiple times to ensure reception
-                for (int retry = 0; retry < 3; retry++) {
+                for (int retry = 0; retry < 3; retry++)
+                {
                     sendControlCommand(CAN_ADDR_BROADCAST, CAL_CMD_NEXT_NODE, nodeIdMessage);
                     delay(50);
                 }
-                
+
                 // Add extra delay between nodes to prevent message congestion
                 delay(100);
             }
@@ -679,15 +675,17 @@ void updateCalibrationState()
 
             // Now broadcast all gain values to ensure all nodes have a complete matrix
             Serial.println("Broadcasting all gain values...");
-            for (int col = 0; col < totalNodes; col++) {
-                for (int row = 0; row < totalNodes; row++) {
+            for (int col = 0; col < totalNodes; col++)
+            {
+                for (int row = 0; row < totalNodes; row++)
+                {
                     critical_section_enter_blocking(&commStateLock);
                     float gain = commState.calibMatrix.gains[row][col];
                     critical_section_exit(&commStateLock);
-                    
+
                     // Format: col*10000 + row*1000 + gain
                     float packedValue = col * 10000.0f + row * 1000.0f + gain;
-                    
+
                     // Send gain value to all nodes
                     sendControlCommand(CAN_ADDR_BROADCAST, CAL_CMD_NEXT_NODE, packedValue);
                     delay(30); // Small delay to prevent flooding
@@ -709,6 +707,7 @@ void updateCalibrationState()
             controlState.setpointLux = SETPOINT_UNOCCUPIED;
             controlState.feedbackControl = true;
             commState.calibrationInProgress = false;
+            commState.wasCalibrating = true; // Set flag to trigger state transition
             critical_section_exit(&commStateLock);
 
             Serial.println("Calibration process completed successfully");
@@ -751,7 +750,6 @@ float calibrateColumn(int columnIndex)
     const int STABILIZE_TIME = 500;      // Wait time between measurements in ms
     const int LED_RESPONSE_TIME = 10000; // Wait time for LDR to respond to LED changes
     const int MAX_RETRIES = 3;           // Maximum retries for readings
-
 
     // Arrays to store LED on readings from all nodes
     float onReadings[MAX_CALIB_NODES] = {0};
@@ -878,7 +876,6 @@ float calibrateColumn(int columnIndex)
         if (!isSelfCalibration)
         {
             sendControlCommand(targetNodeId, 4, 1.0f);
-
         }
 
         // Check if all readings are received
@@ -889,7 +886,6 @@ float calibrateColumn(int columnIndex)
             if (commState.luxReadings[i] <= 0.0f)
             {
                 missingReadings = true;
-
             }
         }
         allReadingsReceived = !missingReadings;
@@ -943,7 +939,6 @@ float calibrateColumn(int columnIndex)
 
         // Store in calibration matrix [row=receiver node][col=LED node]
         commState.calibMatrix.gains[i][columnIndex] = gain;
-
 
         // Add to average if it's a valid reading
         if (gain >= 0.0f)
@@ -1010,7 +1005,8 @@ float calibrateColumn(int columnIndex)
  * @param controlType Type of calibration command
  * @param value Command parameter value
  */
-void handleCalibrationMessage(uint8_t sourceNodeId, uint8_t controlType, float value){
+void handleCalibrationMessage(uint8_t sourceNodeId, uint8_t controlType, float value)
+{
     switch (controlType)
     {
     case CAL_CMD_INIT:
@@ -1044,7 +1040,6 @@ void handleCalibrationMessage(uint8_t sourceNodeId, uint8_t controlType, float v
             //  Use a small positive value instead of zero/negative to avoid division issues
             currentLux = 0.1f;
         }
-
 
         // Store reading in our calibration matrix
         critical_section_enter_blocking(&commStateLock);
@@ -1085,7 +1080,8 @@ void handleCalibrationMessage(uint8_t sourceNodeId, uint8_t controlType, float v
         if (commState.calibrationInProgress)
         {
             // Check if this is the matrix size message (990xxx)
-            if ((int)(value / 1000.0f) == 990) {
+            if ((int)(value / 1000.0f) == 990)
+            {
                 // Extract matrix size from message
                 int numNodes = (int)(value - 990000.0f);
                 commState.calibMatrix.numNodes = numNodes;
@@ -1093,34 +1089,38 @@ void handleCalibrationMessage(uint8_t sourceNodeId, uint8_t controlType, float v
                 Serial.println(numNodes);
             }
             // Check if this is a node ID message (980xxx)
-            else if ((int)(value / 1000.0f) == 980) {
+            else if ((int)(value / 1000.0f) == 980)
+            {
                 // Extract node index and ID from message
                 float remainder = value - 980000.0f;
                 int nodeIndex = (int)(remainder / 1000.0f);
                 int nodeId = (int)(remainder) % 1000;
-                
+
                 // Store the node ID if indices are valid and nodeId is not zero
-                if (nodeIndex >= 0 && nodeIndex < MAX_CALIB_NODES && nodeId > 0) {
+                if (nodeIndex >= 0 && nodeIndex < MAX_CALIB_NODES && nodeId > 0)
+                {
                     // Add additional debug output
                     Serial.print("Received node ID mapping: index ");
                     Serial.print(nodeIndex);
                     Serial.print(" -> node ");
                     Serial.println(nodeId);
-                    
+
                     // Store the node ID
                     commState.calibMatrix.nodeIds[nodeIndex] = nodeId;
-                    
+
                     // If this is our node, track our position in the matrix
                     uint8_t ourNodeId = deviceConfig.nodeId;
-                    if (nodeId == ourNodeId) {
+                    if (nodeId == ourNodeId)
+                    {
                         Serial.print("Found our node ID at index ");
                         Serial.println(nodeIndex);
-                        
+
                         // Save our position for self-gain calculation when all data is received
                         commState.ourNodeIndex = nodeIndex;
                     }
                 }
-                else {
+                else
+                {
                     // Log invalid node ID information
                     Serial.print("Warning: Invalid node ID mapping (index=");
                     Serial.print(nodeIndex);
@@ -1130,29 +1130,34 @@ void handleCalibrationMessage(uint8_t sourceNodeId, uint8_t controlType, float v
                 }
             }
             // Process gain values (10000+)
-            else if (value >= 10000.0f) {
+            else if (value >= 10000.0f)
+            {
                 // Format: col*10000 + row*1000 + gain
                 int col = (int)(value / 10000.0f);
                 int row = (int)((value - col * 10000.0f) / 1000.0f);
                 float gain = value - col * 10000.0f - row * 1000.0f;
-                
+
                 // Store the gain if indices are valid
-                if (col >= 0 && col < MAX_CALIB_NODES && row >= 0 && row < MAX_CALIB_NODES) {
+                if (col >= 0 && col < MAX_CALIB_NODES && row >= 0 && row < MAX_CALIB_NODES)
+                {
                     commState.calibMatrix.gains[row][col] = gain;
-                    
+
                     // Check if this is our self-gain (diagonal element for our node)
-                    if (row == col) {
+                    if (row == col)
+                    {
                         uint8_t nodeId = commState.calibMatrix.nodeIds[row];
                         uint8_t ourNodeId = deviceConfig.nodeId;
-                        
-                        if (nodeId == ourNodeId) {
+
+                        if (nodeId == ourNodeId)
+                        {
                             deviceConfig.ledGain = gain;
                             Serial.print("Set self-gain to ");
                             Serial.println(gain);
                         }
                     }
                 }
-                else {
+                else
+                {
                     Serial.print("Warning: Invalid gain matrix indices (row=");
                     Serial.print(row);
                     Serial.print(", col=");
@@ -1161,30 +1166,35 @@ void handleCalibrationMessage(uint8_t sourceNodeId, uint8_t controlType, float v
                 }
             }
             // Handle legacy format
-            else if (value > 100.0f) {
+            else if (value > 100.0f)
+            {
                 // Old format: columnIndex * 1000 + rowIndex * 100 + gain
                 int columnIndex = (int)(value / 1000.0f);
                 int rowIndex = (int)((value - columnIndex * 1000.0f) / 100.0f);
                 float gain = value - columnIndex * 1000.0f - rowIndex * 100.0f;
-                
+
                 if (columnIndex >= 0 && columnIndex < MAX_CALIB_NODES &&
                     rowIndex >= 0 && rowIndex < MAX_CALIB_NODES)
                 {
                     commState.calibMatrix.gains[rowIndex][columnIndex] = gain;
                 }
             }
-            else {
+            else
+            {
                 // Simple gain value (original format)
                 // Find the index for the source node
                 int sourceIndex = -1;
-                for (int i = 0; i < commState.calibMatrix.numNodes; i++) {
-                    if (commState.calibMatrix.nodeIds[i] == sourceNodeId) {
+                for (int i = 0; i < commState.calibMatrix.numNodes; i++)
+                {
+                    if (commState.calibMatrix.nodeIds[i] == sourceNodeId)
+                    {
                         sourceIndex = i;
                         break;
                     }
                 }
-    
-                if (sourceIndex >= 0) {
+
+                if (sourceIndex >= 0)
+                {
                     // Update the master's self-gain
                     commState.calibMatrix.gains[sourceIndex][sourceIndex] = value;
                 }
@@ -1197,7 +1207,7 @@ void handleCalibrationMessage(uint8_t sourceNodeId, uint8_t controlType, float v
     case CAL_CMD_COMPLETE:
     {
         critical_section_enter_blocking(&commStateLock);
-        
+
         // Only respond to the final confirmation message (value == 1.0)
         if (value >= 1.0f)
         {
@@ -1206,19 +1216,25 @@ void handleCalibrationMessage(uint8_t sourceNodeId, uint8_t controlType, float v
             controlState.luminaireState = STATE_UNOCCUPIED;
             controlState.feedbackControl = true;
             controlState.systemReady = true;
+            controlState.standbyMode = false;
 
             // Find our node in the matrix and ensure our self-gain is set
             uint8_t ourNodeId = deviceConfig.nodeId;
             bool foundOurNode = false;
 
             // If any node ID is 0, try to fix it
-            for (int i = 0; i < commState.calibMatrix.numNodes; i++) {
-                if (commState.calibMatrix.nodeIds[i] == 0) {
+            for (int i = 0; i < commState.calibMatrix.numNodes; i++)
+            {
+                if (commState.calibMatrix.nodeIds[i] == 0)
+                {
                     // Node 0 is invalid - try to infer the node ID from its position
-                    if (i == 1 && commState.calibMatrix.numNodes == 3) {
+                    if (i == 1 && commState.calibMatrix.numNodes == 3)
+                    {
                         // In a 3-node system, if we have node IDs [33, 0, 0], this is likely node 40
                         commState.calibMatrix.nodeIds[i] = 40;
-                    } else if (i == 2 && commState.calibMatrix.numNodes == 3) {
+                    }
+                    else if (i == 2 && commState.calibMatrix.numNodes == 3)
+                    {
                         // In a 3-node system, if we have node IDs [33, 40, 0], this is likely node 52
                         commState.calibMatrix.nodeIds[i] = 52;
                     }
@@ -1226,39 +1242,45 @@ void handleCalibrationMessage(uint8_t sourceNodeId, uint8_t controlType, float v
             }
 
             // Search through the node IDs to find our position
-            for (int i = 0; i < commState.calibMatrix.numNodes; i++) {
-                if (commState.calibMatrix.nodeIds[i] == ourNodeId) {
+            for (int i = 0; i < commState.calibMatrix.numNodes; i++)
+            {
+                if (commState.calibMatrix.nodeIds[i] == ourNodeId)
+                {
                     // Set our self-gain from the matrix
                     deviceConfig.ledGain = commState.calibMatrix.gains[i][i];
                     foundOurNode = true;
-                    
+
                     // Ensure it's not zero (would cause control issues)
-                    if (deviceConfig.ledGain <= 0.0f) {
+                    if (deviceConfig.ledGain <= 0.0f)
+                    {
                         // If diagonal is zero, use maximum value from this row
                         float maxGain = 0.0f;
-                        for (int j = 0; j < commState.calibMatrix.numNodes; j++) {
-                            if (commState.calibMatrix.gains[i][j] > maxGain) {
+                        for (int j = 0; j < commState.calibMatrix.numNodes; j++)
+                        {
+                            if (commState.calibMatrix.gains[i][j] > maxGain)
+                            {
                                 maxGain = commState.calibMatrix.gains[i][j];
                             }
                         }
-                        
+
                         // Use maximum as fallback or a reasonable default
                         deviceConfig.ledGain = maxGain > 0.0f ? maxGain : 10.0f;
                     }
-                    
+
                     Serial.print("Final self-gain set to: ");
                     Serial.println(deviceConfig.ledGain);
                     break;
                 }
             }
-            
-            if (!foundOurNode) {
+
+            if (!foundOurNode)
+            {
                 Serial.println("Warning: Could not find our node ID in the matrix!");
             }
 
             // Print the final calibration matrix
             Serial.println("\nFinal Calibration Matrix:");
-            
+
             // Print matrix header with node IDs
             for (int j = 0; j < commState.calibMatrix.numNodes; j++)
             {
@@ -1289,14 +1311,13 @@ void handleCalibrationMessage(uint8_t sourceNodeId, uint8_t controlType, float v
                 }
                 Serial.println();
             }
-            
+
             // Print separator line
             for (int j = 0; j < commState.calibMatrix.numNodes + 1; j++)
             {
                 Serial.print("--------");
             }
-            
-            
+
             // If this was part of the wake-up sequence, update system state
             if (!controlState.systemReady && !controlState.standbyMode)
             {
@@ -1317,6 +1338,7 @@ void handleCalibrationMessage(uint8_t sourceNodeId, uint8_t controlType, float v
 
         // Reset LED to off state
         setLEDDutyCycle(0.0f);
+        Serial.println("Calibration process completed successfully");
     }
     break;
 

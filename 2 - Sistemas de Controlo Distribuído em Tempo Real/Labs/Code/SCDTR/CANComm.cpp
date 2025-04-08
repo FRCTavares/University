@@ -689,12 +689,12 @@ void processIncomingMessage(const can_frame &msg)
     // Otherwise print standard format if monitoring enabled or not part of stream
     else if ((!isPartOfStream && !inCalibration) || canMonitorEnabled)
     {
-      Serial.print("Node ");
+      /*Serial.print("Node ");
       Serial.print(sourceNodeID);
       Serial.print(" sent sensor type ");
       Serial.print(sensorType);
       Serial.print(" = ");
-      Serial.println(sensorValue, 2);
+      Serial.println(sensorValue, 2);*/
     }
   }
 
@@ -754,44 +754,50 @@ void processIncomingMessage(const can_frame &msg)
     }
     else if (sensorType == 1) // Duty cycle update
     {
-        // Get the source node ID and duty cycle value
-        uint8_t sourceNodeId = msg.data[0];
-        float dutyCycle = bytesToFloat(&msg.data[2]);
-        
-        // Update neighbor info
-        bool neighborFound = false;
-        critical_section_enter_blocking(&commStateLock);
-        // Try to update an existing neighbor
-        for (int i = 0; i < MAX_NEIGHBORS; i++) {
-            if (neighbors[i].nodeId == sourceNodeId) {
-                neighbors[i].lastDuty = dutyCycle;
-                neighbors[i].lastUpdate = millis();
-                neighbors[i].isActive = true;
-                neighborFound = true;
-                break;
-            }
+      // Get the source node ID and duty cycle value
+      uint8_t sourceNodeId = msg.data[0];
+      float dutyCycle = bytesToFloat(&msg.data[2]);
+
+      // Update neighbor info
+      bool neighborFound = false;
+      critical_section_enter_blocking(&commStateLock);
+      // Try to update an existing neighbor
+      for (int i = 0; i < MAX_NEIGHBORS; i++)
+      {
+        if (neighbors[i].nodeId == sourceNodeId)
+        {
+          neighbors[i].lastDuty = dutyCycle;
+          neighbors[i].lastUpdate = millis();
+          neighbors[i].isActive = true;
+          neighborFound = true;
+          break;
         }
-        
-        // If not found, add as a new neighbor
-        if (!neighborFound) {
-            for (int i = 0; i < MAX_NEIGHBORS; i++) {
-                if (!neighbors[i].isActive) {
-                    neighbors[i].nodeId = sourceNodeId;
-                    neighbors[i].lastDuty = dutyCycle;
-                    neighbors[i].lastUpdate = millis();
-                    neighbors[i].isActive = true;
-                    break;
-                }
-            }
+      }
+
+      // If not found, add as a new neighbor
+      if (!neighborFound)
+      {
+        for (int i = 0; i < MAX_NEIGHBORS; i++)
+        {
+          if (!neighbors[i].isActive)
+          {
+            neighbors[i].nodeId = sourceNodeId;
+            neighbors[i].lastDuty = dutyCycle;
+            neighbors[i].lastUpdate = millis();
+            neighbors[i].isActive = true;
+            break;
+          }
         }
-        critical_section_exit(&commStateLock);
-        
-        if (canMonitorEnabled) {
-            Serial.print("Updated neighbor duty cycle: Node ");
-            Serial.print(sourceNodeId);
-            Serial.print(" = ");
-            Serial.println(dutyCycle, 3);
-        }
+      }
+      critical_section_exit(&commStateLock);
+
+      if (canMonitorEnabled)
+      {
+        Serial.print("Updated neighbor duty cycle: Node ");
+        Serial.print(sourceNodeId);
+        Serial.print(" = ");
+        Serial.println(dutyCycle, 3);
+      }
     }
 
     // Output debug info if monitoring enabled

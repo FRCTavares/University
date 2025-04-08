@@ -194,6 +194,7 @@ struct CommState
   // Calibration status
   bool isCalibrationMaster;             // Is this node the calibration master
   bool calibrationInProgress;           // Is calibration currently in progress
+  bool wasCalibrating;                  // Was calibration in progress before standby
   uint8_t calibrationStep;              // Current step in the calibration sequence
   unsigned long calLastStepTime;        // Timestamp of last calibration step
   uint8_t currentCalNode;               // Current node being calibrated

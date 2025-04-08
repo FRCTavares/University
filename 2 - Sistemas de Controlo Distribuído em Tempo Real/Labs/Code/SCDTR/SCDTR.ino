@@ -76,8 +76,8 @@ PIController pid(Kp, Ki, BETA, DT);
 
 // Illuminance setpoints for different states
 const float SETPOINT_OFF = 0.0;
-const float SETPOINT_UNOCCUPIED = 30.0;
-const float SETPOINT_OCCUPIED = 50.0;
+const float SETPOINT_UNOCCUPIED = 20.0;
+const float SETPOINT_OCCUPIED = 30.0;
 
 // CAN monitoring flag
 bool canMonitorEnabled = false;
@@ -252,15 +252,17 @@ void configureDeviceFromID()
  * 2. Local feedback control via PI controller
  * 3. Sequential update scheduling to prevent oscillations
  */
-bool updateCoordinatedDuty() {
+bool updateCoordinatedDuty()
+{
   static unsigned long lastUpdateTime = 0;
   unsigned long currentTime = millis();
-  
+
   // Only update every 1000ms
-  if (currentTime - lastUpdateTime < 1000) {
-      return false; // Skip if not enough time has passed
+  if (currentTime - lastUpdateTime < 1000)
+  {
+    return false; // Skip if not enough time has passed
   }
-  
+
   // Get our node ID and current time slot
   uint8_t myNodeId;
   critical_section_enter_blocking(&commStateLock);
@@ -274,163 +276,153 @@ bool updateCoordinatedDuty() {
   critical_section_enter_blocking(&commStateLock);
   float currentDuty = controlState.dutyCycle;
   critical_section_exit(&commStateLock);
-    
-    // Broadcast our duty cycle so other nodes can use it in their calculations
-    sendSensorReading(CAN_ADDR_BROADCAST, 1, currentDuty); // Type 1 for duty cycle
-  
+
+  // Broadcast our duty cycle so other nodes can use it in their calculations
+  sendSensorReading(CAN_ADDR_BROADCAST, 1, currentDuty); // Type 1 for duty cycle
+
   // Skip if feedback control is disabled or node is in OFF state
-  if (!feedbackEnabled || currentState == STATE_OFF) {
-      lastUpdateTime = currentTime;
-      return false; // Skip update
-  }
-  
+  /*if (!feedbackEnabled || currentState == STATE_OFF)
+  {
+    lastUpdateTime = currentTime;
+    return false; // Skip update
+  }*/
+
   // Determine if it's this node's turn to update based on timestamp and node ID
   // This creates a 3-slot rotation (0, 1, 2) based on seconds
   int timeSlot = (currentTime / 1000) % 3;
   bool isMyTurn = false;
 
-  // Print diagnostic info for all nodes (remove in production)
-  Serial.print("Node ");
-  Serial.print(myNodeId);
-  Serial.print(" checking timeSlot=");
-  Serial.print(timeSlot);
-  Serial.print(", myNodeId=");
-  Serial.println(myNodeId);
-      
-  
   // Assign time slots based on node ID
-  if ((myNodeId == 33 && timeSlot == 0) || 
-      (myNodeId == 40 && timeSlot == 1) || 
-      (myNodeId == 52 && timeSlot == 2)) {
-      isMyTurn = true;
-      Serial.print("It's node ");
-      Serial.print(myNodeId);
-      Serial.println("'s turn to update control");
+  if ((myNodeId == 33 && timeSlot == 0) ||
+      (myNodeId == 40 && timeSlot == 1) ||
+      (myNodeId == 52 && timeSlot == 2))
+  {
+    isMyTurn = true;
   }
-  
-  // Only proceed with coordinated update during this node's time slot
-  if (isMyTurn) {
-      // 1. Find our index in the calibration matrix
-      int myIndex = -1;
-      critical_section_enter_blocking(&commStateLock);
-      for (int i = 0; i < commState.calibMatrix.numNodes; i++) {
-          if (commState.calibMatrix.nodeIds[i] == myNodeId) {
-              myIndex = i;
-              break;
-          }
-      }
-      critical_section_exit(&commStateLock);
-      
-      // Skip if we couldn't find our index in the matrix
-      if (myIndex < 0) {
-          Serial.println("Warning: Could not find node index in calibration matrix");
-          lastUpdateTime = currentTime;
-          return false;
-      }
-      
-      // 2. Get current setpoint and self-gain (k_ii)
-      float setpoint, selfGain;
-      critical_section_enter_blocking(&commStateLock);
-      setpoint = controlState.setpointLux;
-      selfGain = commState.calibMatrix.gains[myIndex][myIndex];
-      critical_section_exit(&commStateLock);
-      
-      // If self-gain is too small, avoid division by small numbers
-      if (selfGain < 0.1) {
-          Serial.println("Warning: Self-gain too small for coordinated control");
-          lastUpdateTime = currentTime;
-          return false;
-      }
-      
-      // 3. Calculate disturbance estimate (d_i)
-      float disturbance = sensorState.baselineIlluminance;
-      
-      // 4. Calculate sum of neighbor influences
-      float neighborSum = 0.0;
-      critical_section_enter_blocking(&commStateLock);
-      for (int j = 0; j < commState.calibMatrix.numNodes; j++) {
-          // Skip ourselves
-          if (j != myIndex) {
-              uint8_t neighborId = commState.calibMatrix.nodeIds[j];
-              float gain_ij = commState.calibMatrix.gains[myIndex][j];
-              
-              // Find this neighbor's duty cycle in our neighbor tracking array
-              float neighbor_duty = 0.0;
-              for (int n = 0; n < MAX_NEIGHBORS; n++) {
-                  if (neighbors[n].nodeId == neighborId && neighbors[n].isActive) {
-                      neighbor_duty = neighbors[n].lastDuty;
-                      break;
-                  }
-              }
-              
-              // Add this neighbor's contribution to the sum
-              neighborSum += gain_ij * neighbor_duty;
 
-              // Debug neighbor information
-              Serial.print("Node ");
-              Serial.print(neighborId);
-              Serial.print(" duty=");
-              Serial.print(neighbor_duty, 3);
-              Serial.print(", gain=");
-              Serial.print(gain_ij, 3);
-              Serial.print(", contribution=");
-              Serial.println(gain_ij * neighbor_duty, 3);
-          }
+  // Only proceed with coordinated update during this node's time slot
+  if (isMyTurn)
+  {
+    // 1. Find our index in the calibration matrix
+    int myIndex = -1;
+    critical_section_enter_blocking(&commStateLock);
+    for (int i = 0; i < commState.calibMatrix.numNodes; i++)
+    {
+      if (commState.calibMatrix.nodeIds[i] == myNodeId)
+      {
+        myIndex = i;
+        break;
       }
-      critical_section_exit(&commStateLock);
-      
-      // 5. Calculate feedforward term: u_ff = (r_i - d_i - SUM_j≠i (k_ij * u_j)) / k_ii
-      float u_ff = (setpoint - disturbance - neighborSum) / selfGain;
-      
-      // Clamp feedforward term to valid range
-      u_ff = constrain(u_ff, 0.0f, 1.0f);
-      
-      // 6. Calculate feedback term from PI controller
-      float currentLux = sensorState.filteredLux;
-      float u_fb = pid.compute(setpoint, currentLux);
-      u_fb = constrain(u_fb / 4095.0f, 0.0f, 1.0f);  // Normalize to [0,1]
-      
-      // 7. Combine feedforward and feedback terms
-      float u_total = u_ff * 0.7f + u_fb * 0.3f;  // Weighted combination
-      u_total = constrain(u_total, 0.0f, 1.0f);
-      
-      // 8. Apply the combined control action
-      setLEDDutyCycle(u_total);
-      
-      // 9. Update control state
-      critical_section_enter_blocking(&commStateLock);
-      controlState.dutyCycle = u_total;
-      critical_section_exit(&commStateLock);
-      
-      // Debug output
-      Serial.print("Coordinated Control Update: [Node ");
-      Serial.print(myNodeId);
-      Serial.print("] u_ff=");
-      Serial.print(u_ff, 3);
-      Serial.print(", u_fb=");
-      Serial.print(u_fb, 3);
-      Serial.print(", u_total=");
-      Serial.print(u_total, 3);
-      Serial.print(", setpoint=");
-      Serial.print(setpoint, 1);
-      Serial.print(", current=");
-      Serial.print(currentLux, 1);
-      Serial.print(", neighborSum=");
-      Serial.println(neighborSum, 3);
-  }
-  
-    // At the end of the function, add this line:
-    static bool coordinatedUpdateApplied = false;
-    
-    // Only set this flag to true when we actually apply a coordinated update
-    if (isMyTurn) {
-        coordinatedUpdateApplied = true;
-    } else {
-        coordinatedUpdateApplied = false;
     }
-    
-    lastUpdateTime = currentTime;
-    return coordinatedUpdateApplied; // Return whether we applied an update
+    critical_section_exit(&commStateLock);
+
+    // Skip if we couldn't find our index in the matrix
+    if (myIndex < 0)
+    {
+      lastUpdateTime = currentTime;
+      return false;
+    }
+
+    // 2. Get current setpoint and self-gain (k_ii)
+    float setpoint, selfGain;
+    critical_section_enter_blocking(&commStateLock);
+    setpoint = controlState.setpointLux;
+    selfGain = commState.calibMatrix.gains[myIndex][myIndex];
+    critical_section_exit(&commStateLock);
+
+    // If self-gain is too small, avoid division by small numbers
+    /*if (selfGain < 0.1)
+    {
+      lastUpdateTime = currentTime;
+      return false;
+    }*/
+
+    // 3. Calculate disturbance estimate (d_i)
+    float disturbance = sensorState.baselineIlluminance;
+
+    // 4. Calculate sum of neighbor influences
+    float neighborSum = 0.0;
+    critical_section_enter_blocking(&commStateLock);
+    for (int j = 0; j < commState.calibMatrix.numNodes; j++)
+    {
+      // Skip ourselves
+      if (j != myIndex)
+      {
+        uint8_t neighborId = commState.calibMatrix.nodeIds[j];
+        float gain_ij = commState.calibMatrix.gains[myIndex][j];
+
+        // Find this neighbor's duty cycle in our neighbor tracking array
+        float neighbor_duty = 0.0;
+        for (int n = 0; n < MAX_NEIGHBORS; n++)
+        {
+          if (neighbors[n].nodeId == neighborId && neighbors[n].isActive)
+          {
+            neighbor_duty = neighbors[n].lastDuty;
+            break;
+          }
+        }
+
+        // Add this neighbor's contribution to the sum
+        neighborSum += gain_ij * neighbor_duty;
+      }
+    }
+    critical_section_exit(&commStateLock);
+
+    // 5. Calculate feedforward term: u_ff = (r_i - d_i - SUM_j≠i (k_ij * u_j)) / k_ii
+    float u_ff = (setpoint - disturbance - neighborSum) / selfGain;
+
+    // Clamp feedforward term to valid range
+    u_ff = constrain(u_ff, 0.0f, 1.0f);
+
+    // 6. Calculate feedback term from PI controller
+    float currentLux = sensorState.filteredLux;
+    float u_fb = pid.compute(setpoint, currentLux);
+    u_fb = constrain(u_fb / 4095.0f, 0.0f, 1.0f); // Normalize to [0,1]
+
+    // 7. Combine feedforward and feedback terms
+    float u_total = u_ff * 0.7f + u_fb * 0.3f; // Weighted combination
+    u_total = constrain(u_total, 0.0f, 1.0f);
+
+    // 8. Apply the combined control action
+    setLEDDutyCycle(u_total);
+
+    // 9. Update control state
+    critical_section_enter_blocking(&commStateLock);
+    controlState.dutyCycle = u_total;
+    critical_section_exit(&commStateLock);
+
+    // Debug output
+    /*Serial.print("Coordinated Control Update: [Node ");
+    Serial.print(myNodeId);
+    Serial.print("] u_ff=");
+    Serial.print(u_ff, 3);
+    Serial.print(", u_fb=");
+    Serial.print(u_fb, 3);
+    Serial.print(", u_total=");
+    Serial.print(u_total, 3);
+    Serial.print(", setpoint=");
+    Serial.print(setpoint, 1);
+    Serial.print(", current=");
+    Serial.print(currentLux, 1);
+    Serial.print(", neighborSum=");
+    Serial.println(neighborSum, 3);*/
+  }
+
+  // At the end of the function, add this line:
+  static bool coordinatedUpdateApplied = false;
+
+  // Only set this flag to true when we actually apply a coordinated update
+  if (isMyTurn)
+  {
+    coordinatedUpdateApplied = true;
+  }
+  else
+  {
+    coordinatedUpdateApplied = false;
+  }
+
+  lastUpdateTime = currentTime;
+  return coordinatedUpdateApplied; // Return whether we applied an update
 }
 
 //=============================================================================
@@ -520,6 +512,7 @@ void loop()
   if (inStandby)
   {
     // Only process commands (to catch WakeUp command) while in standby
+    // Serial.println("System in standby mode. Waiting for wakeup command...");
     processSerialCommands();
     delay(100); // Reduced CPU usage while in standby
     return;     // Skip the rest of the loop
@@ -530,6 +523,7 @@ void loop()
   {
     // Process commands during discovery
     processSerialCommands();
+    // Serial.println("System in discovery phase. Waiting for calibration...");
 
     // Check if discovery period has ended (10 seconds)
     if (millis() - discoveryStartTime > 10000)
@@ -539,7 +533,7 @@ void loop()
       displayDiscoveredNodes();
 
       // Initiate calibration sequence
-      Serial.println("Starting system calibration as master...");
+      Serial.println("Starting system calibration as coordinated...");
       critical_section_enter_blocking(&commStateLock);
       controlState.systemAwake = false;
       controlState.systemReady = false; // Will be set true after calibration
@@ -547,7 +541,6 @@ void loop()
 
       // Trigger calibration
       startCalibration();
-
     }
 
     // Continue with minimal processing during discovery
@@ -555,6 +548,7 @@ void loop()
     delay(50);
     return;
   }
+
   // (A) Process incoming serial commands
   processSerialCommands();
 
@@ -571,21 +565,53 @@ void loop()
   // Update calibration state machine if calibration is in progress
   critical_section_enter_blocking(&commStateLock);
   bool calibInProgress = commState.calibrationInProgress;
+  bool wasCalibrating = commState.wasCalibrating;
   critical_section_exit(&commStateLock);
 
   if (calibInProgress)
   {
     updateCalibrationState();
   }
+  else if (wasCalibrating)
+  {
+    // Reset the flag after calibration is done
+    critical_section_enter_blocking(&commStateLock);
+    commState.wasCalibrating = false; // Clear the flag
+    controlState.systemReady = true;  // Set system ready after calibration
+    critical_section_exit(&commStateLock);
 
-  // Always update filtered lux value in the sensor state
+    // Explicitly set state to UNOCCUPIED
+    changeState(STATE_UNOCCUPIED);
+
+    // Initialize with a non-zero duty cycle to start coordinated control
+    float initialDuty = SETPOINT_UNOCCUPIED / deviceConfig.ledGain;
+    initialDuty = constrain(initialDuty, 0.1f, 0.7f); // Reasonable limits
+    setLEDDutyCycle(initialDuty);
+
+    // Reset PID controller with initial state to avoid large transient
+    pid.reset();
+
+    critical_section_enter_blocking(&commStateLock);
+    controlState.dutyCycle = initialDuty; // Set initial duty cycle
+    critical_section_exit(&commStateLock);
+
+    // Broadcast to ensure all nodes receive this state
+    sendControlCommand(CAN_ADDR_BROADCAST, CAN_CTRL_STATE_CHANGE, (float)STATE_UNOCCUPIED);
+
+    // Also broadcast initial duty cycle so nodes can start coordinating
+    sendSensorReading(CAN_ADDR_BROADCAST, 1, 0.3f);
+
+    Serial.println("Calibration complete - entering UNOCCUPIED state");
+  }
+
+  //  Always update filtered lux value in the sensor state
   critical_section_enter_blocking(&commStateLock);
   sensorState.filteredLux = lux;
   critical_section_exit(&commStateLock);
 
-
   // Only apply standard control if coordinated control wasn't applied this cycle
-  if (!coordUpdateApplied) {
+  if (!coordUpdateApplied)
+  {
     critical_section_enter_blocking(&commStateLock);
     LuminaireState state = controlState.luminaireState;
     bool feedback = controlState.feedbackControl;
@@ -606,7 +632,7 @@ void loop()
       // or whatever value was set by the "u" command)
       setLEDDutyCycle(manualDuty);
     }
-    
+
     // Update duty cycle after control action
     critical_section_enter_blocking(&commStateLock);
     controlState.dutyCycle = getLEDDutyCycle();
