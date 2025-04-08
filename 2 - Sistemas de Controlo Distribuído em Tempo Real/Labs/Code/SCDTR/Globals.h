@@ -205,7 +205,25 @@ struct CommState
   bool measurementsStable;              // Flag indicating if measurements are stable
   float previousReadings[5];            // Store previous readings to check for stability
   int readingIndex;                     // Index for circular buffer of readings
+  int ourNodeIndex;                     // Index of this node in calibration matrix
 };
+
+// Maximum number of neighbors to track
+#define MAX_NEIGHBORS 5
+
+// Structure to store neighbor information
+struct NeighborInfo
+{
+  uint8_t nodeId;           // CAN node ID
+  float lastLux;            // Last reported illuminance
+  float lastDuty;           // Last reported duty cycle
+  LuminaireState state;     // Current operating state
+  unsigned long lastUpdate; // Last update timestamp
+  bool isActive;            // Is node currently active
+};
+
+// Array of neighbor information
+extern NeighborInfo neighbors[MAX_NEIGHBORS];
 
 //==========================================================================================================================================================
 // GLOBAL VARIABLE DECLARATIONS

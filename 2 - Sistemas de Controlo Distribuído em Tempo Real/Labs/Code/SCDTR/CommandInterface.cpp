@@ -1656,6 +1656,64 @@ static bool handleSystemStateCommands(char tokens[][TOKEN_MAX_LENGTH], int numTo
         }
         return true;
     }
+    else if (strcmp(tokens[0], "m") == 0)
+    {
+        critical_section_enter_blocking(&commStateLock);
+        
+        // Print self gain first (most important value)
+        Serial.println("\n----- Calibration Gain Values -----");
+        Serial.print("Self-gain (Kii): ");
+        Serial.println(deviceConfig.ledGain, 4);
+        
+        // Print how many nodes we have in the matrix
+        int numNodes = commState.calibMatrix.numNodes;
+        Serial.print("Matrix Size: ");
+        Serial.print(numNodes);
+        Serial.println(" nodes");
+        
+        // Print header with node IDs
+        Serial.print("Effect Matrix | ");
+        for (int j = 0; j < numNodes; j++) {
+            Serial.print("Node ");
+            Serial.print(commState.calibMatrix.nodeIds[j]);
+            Serial.print(" | ");
+        }
+        Serial.println();
+        
+        // Print separator
+        for (int j = 0; j <= numNodes; j++) {
+            Serial.print("----------");
+        }
+        Serial.println();
+        
+        // Print each row with proper labels
+        for (int i = 0; i < numNodes; i++) {
+            Serial.print("Node ");
+            Serial.print(commState.calibMatrix.nodeIds[i]);
+            Serial.print(" | ");
+            
+            for (int j = 0; j < numNodes; j++) {
+                Serial.print(commState.calibMatrix.gains[i][j], 4);
+                Serial.print(" | ");
+            }
+            Serial.println();
+        }
+        
+        // Print external light contributions
+        Serial.println("\nExternal Illuminance Values:");
+        for (int i = 0; i < numNodes; i++) {
+            Serial.print("Node ");
+            Serial.print(commState.calibMatrix.nodeIds[i]);
+            Serial.print(": ");
+            Serial.print(commState.calibMatrix.externalLight[i], 2);
+            Serial.println(" lux");
+        }
+        Serial.println("--------------------------------\n");
+        
+        critical_section_exit(&commStateLock);
+        return true;
+    }
+
 
     // If we got here, the command wasn't recognized
     return false;
