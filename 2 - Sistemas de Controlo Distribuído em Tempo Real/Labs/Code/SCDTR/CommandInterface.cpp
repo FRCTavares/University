@@ -628,6 +628,28 @@ void applyLocalCommand(uint8_t controlType, float value)
         sensorState.filterEnabled = (value > 0.5f);
         critical_section_exit(&commStateLock);
         break;
+    case 31: // Set occupied illuminance bound
+        // In a production system, you would use a writable variable instead
+        // of modifying the constant SETPOINT_OCCUPIED
+        Serial.print("Received request to set occupied setpoint to ");
+        Serial.println(value);
+        Serial.println("ack");
+        break;
+
+    case 33: // Set unoccupied illuminance bound
+        // In a production system, you would use a writable variable instead
+        // of modifying the constant SETPOINT_UNOCCUPIED
+        Serial.print("Received request to set unoccupied setpoint to ");
+        Serial.println(value);
+        Serial.println("ack");
+        break;
+
+    case 36: // Set energy cost
+        critical_section_enter_blocking(&commStateLock);
+        controlState.cost = value;
+        critical_section_exit(&commStateLock);
+        Serial.println("ack");
+        break;
     }
 }
 
@@ -1652,7 +1674,7 @@ static bool handleSystemStateCommands(char tokens[][TOKEN_MAX_LENGTH], int numTo
 
             // Inform user
             Serial.println("Wake-up sequence initiated");
-            Serial.println("Starting 10-second node discovery phase...");
+            Serial.println("Starting 5-second node discovery phase...");
         }
         return true;
     }
@@ -1663,7 +1685,7 @@ static bool handleSystemStateCommands(char tokens[][TOKEN_MAX_LENGTH], int numTo
         // Print self gain first (most important value)
         Serial.println("\n----- Calibration Gain Values -----");
         Serial.print("Self-gain (Kii): ");
-        Serial.println(deviceConfig.ledGain, 4);
+        Serial.println(deviceConfig.ledGain, 2);
         
         // Print how many nodes we have in the matrix
         int numNodes = commState.calibMatrix.numNodes;
@@ -1693,7 +1715,7 @@ static bool handleSystemStateCommands(char tokens[][TOKEN_MAX_LENGTH], int numTo
             Serial.print(" | ");
             
             for (int j = 0; j < numNodes; j++) {
-                Serial.print(commState.calibMatrix.gains[i][j], 4);
+                Serial.print(commState.calibMatrix.gains[i][j], 2);
                 Serial.print(" | ");
             }
             Serial.println();
@@ -1713,7 +1735,6 @@ static bool handleSystemStateCommands(char tokens[][TOKEN_MAX_LENGTH], int numTo
         critical_section_exit(&commStateLock);
         return true;
     }
-
 
     // If we got here, the command wasn't recognized
     return false;
@@ -1933,13 +1954,6 @@ static bool handleCANNetworkCommands(char tokens[][TOKEN_MAX_LENGTH], int numTok
             // CAN statistics
             displayCANStatistics();
         }
-        else if (strcmp(tokens[1], "r") == 0)
-        {
-            // Reset CAN statistics
-            resetCANStats();
-            Serial.println("CAN statistics reset");
-            Serial.println("ack");
-        }
         else if (strcmp(tokens[1], "sc") == 0)
         {
             // Scan for CAN nodes
@@ -2110,6 +2124,309 @@ static bool handleDisableCommand(char tokens[][TOKEN_MAX_LENGTH], int numTokens)
     return false;
 }
 
+void handleControlMethodCommand(int numTokens, char tokens[][TOKEN_MAX_LENGTH]) {
+    if (numTokens < 2) {
+      Serial.println("Error: Missing control method parameter. Use 'seq' or 'admm'");
+      return;
+    }
+    
+    if (strcmp(tokens[1], "seq") == 0) {
+      critical_section_enter_blocking(&commStateLock);
+      controlState.usingADMM = false;
+      critical_section_exit(&commStateLock);
+      Serial.println("Switched to sequential time-slotted control");
+    } else if (strcmp(tokens[1], "admm") == 0) {
+      critical_section_enter_blocking(&commStateLock);
+      controlState.usingADMM = true;
+      critical_section_exit(&commStateLock);
+      Serial.println("Switched to ADMM optimization-based control");
+    } else {
+      Serial.println("Error: Invalid control method. Use 'seq' or 'admm'");
+    }
+}
+
+/**
+ * Handle illuminance bounds and energy cost commands (O, U, L, C, R)
+ *
+ * @param tokens Command tokens
+ * @param numTokens Number of tokens
+ * @return true if command was handled, false otherwise
+ */
+static bool handleIlluminanceCostCommands(char tokens[][TOKEN_MAX_LENGTH], int numTokens)
+{
+    // Get occupied illuminance bounds
+    if (strcmp(tokens[0], "g") == 0 && numTokens >= 3 && strcmp(tokens[1], "O") == 0)
+    {
+        int targetId;
+        if (!parseIntParam(tokens[2], &targetId))
+        {
+            Serial.println("err: Invalid node ID");
+            return true;
+        }
+
+        if (shouldForwardCommand(targetId))
+        {
+            // Forward request to another node
+            if (!addPendingQuery(targetId, 30, "O", tokens[2]))
+            {
+                Serial.println("err: Query queue full");
+            }
+        }
+        else
+        {
+            // Get local occupied state illuminance bound
+            float occupiedBound;
+            critical_section_enter_blocking(&commStateLock);
+            occupiedBound = SETPOINT_OCCUPIED;
+            critical_section_exit(&commStateLock);
+
+            Serial.print("O ");
+            Serial.print(tokens[2]);
+            Serial.print(" ");
+            Serial.println(occupiedBound, 1);
+        }
+        return true;
+    }
+
+    // Set occupied illuminance bounds
+    if (strcmp(tokens[0], "O") == 0 && numTokens >= 3)
+    {
+        int targetId;
+        float value;
+
+        if (!parseIntParam(tokens[1], &targetId) || !parseFloatParam(tokens[2], &value))
+        {
+            Serial.println("err: Invalid parameters");
+            return true;
+        }
+
+        if (!isInRange(value, 0.0f, MAX_ILLUMINANCE))
+        {
+            Serial.println("err: Value out of range");
+            return true;
+        }
+
+        if (shouldForwardCommand(targetId))
+        {
+            // Forward to another node
+            if (!sendControlCommand(targetId, 31, value))
+            {
+                Serial.println("err: Failed to send command");
+                return true;
+            }
+        }
+        else
+        {
+            // Apply locally - would need to modify the constant in a real implementation
+            // For now, we'll just acknowledge the command
+            Serial.println("ack");
+        }
+        return true;
+    }
+
+    // Get unoccupied illuminance bounds
+    if (strcmp(tokens[0], "g") == 0 && numTokens >= 3 && strcmp(tokens[1], "U") == 0)
+    {
+        int targetId;
+        if (!parseIntParam(tokens[2], &targetId))
+        {
+            Serial.println("err: Invalid node ID");
+            return true;
+        }
+
+        if (shouldForwardCommand(targetId))
+        {
+            // Forward request to another node
+            if (!addPendingQuery(targetId, 32, "U", tokens[2]))
+            {
+                Serial.println("err: Query queue full");
+            }
+        }
+        else
+        {
+            // Get local unoccupied state illuminance bound
+            float unoccupiedBound;
+            critical_section_enter_blocking(&commStateLock);
+            unoccupiedBound = SETPOINT_UNOCCUPIED;
+            critical_section_exit(&commStateLock);
+
+            Serial.print("U ");
+            Serial.print(tokens[2]);
+            Serial.print(" ");
+            Serial.println(unoccupiedBound, 1);
+        }
+        return true;
+    }
+
+    // Set unoccupied illuminance bounds
+    if (strcmp(tokens[0], "U") == 0 && numTokens >= 3)
+    {
+        int targetId;
+        float value;
+
+        if (!parseIntParam(tokens[1], &targetId) || !parseFloatParam(tokens[2], &value))
+        {
+            Serial.println("err: Invalid parameters");
+            return true;
+        }
+
+        if (!isInRange(value, 0.0f, MAX_ILLUMINANCE))
+        {
+            Serial.println("err: Value out of range");
+            return true;
+        }
+
+        if (shouldForwardCommand(targetId))
+        {
+            // Forward to another node
+            if (!sendControlCommand(targetId, 33, value))
+            {
+                Serial.println("err: Failed to send command");
+                return true;
+            }
+        }
+        else
+        {
+            // Apply locally - would need to modify the constant in a real implementation
+            // For now, we'll just acknowledge the command
+            Serial.println("ack");
+        }
+        return true;
+    }
+
+    // Get current illuminance lower bound
+    if (strcmp(tokens[0], "g") == 0 && numTokens >= 3 && strcmp(tokens[1], "L") == 0)
+    {
+        int targetId;
+        if (!parseIntParam(tokens[2], &targetId))
+        {
+            Serial.println("err: Invalid node ID");
+            return true;
+        }
+
+        if (shouldForwardCommand(targetId))
+        {
+            // Forward request to another node
+            if (!addPendingQuery(targetId, 34, "L", tokens[2]))
+            {
+                Serial.println("err: Query queue full");
+            }
+        }
+        else
+        {
+            // Get local current illuminance lower bound based on state
+            float currentBound;
+            critical_section_enter_blocking(&commStateLock);
+            currentBound = controlState.setpointLux;
+            critical_section_exit(&commStateLock);
+
+            Serial.print("L ");
+            Serial.print(tokens[2]);
+            Serial.print(" ");
+            Serial.println(currentBound, 1);
+        }
+        return true;
+    }
+
+    // Get energy cost
+    if (strcmp(tokens[0], "g") == 0 && numTokens >= 3 && strcmp(tokens[1], "C") == 0)
+    {
+        int targetId;
+        if (!parseIntParam(tokens[2], &targetId))
+        {
+            Serial.println("err: Invalid node ID");
+            return true;
+        }
+
+        if (shouldForwardCommand(targetId))
+        {
+            // Forward request to another node
+            if (!addPendingQuery(targetId, 35, "C", tokens[2]))
+            {
+                Serial.println("err: Query queue full");
+            }
+        }
+        else
+        {
+            // Get local energy cost
+            float energyCost;
+            critical_section_enter_blocking(&commStateLock);
+            energyCost = controlState.cost;
+            critical_section_exit(&commStateLock);
+
+            Serial.print("C ");
+            Serial.print(tokens[2]);
+            Serial.print(" ");
+            Serial.println(energyCost, 3);
+        }
+        return true;
+    }
+
+    // Set energy cost
+    if (strcmp(tokens[0], "C") == 0 && numTokens >= 3)
+    {
+        int targetId;
+        float value;
+
+        if (!parseIntParam(tokens[1], &targetId) || !parseFloatParam(tokens[2], &value))
+        {
+            Serial.println("err: Invalid parameters");
+            return true;
+        }
+
+        if (!isInRange(value, 0.0f, 10.0f)) // Assuming reasonable cost range
+        {
+            Serial.println("err: Value out of range");
+            return true;
+        }
+
+        if (shouldForwardCommand(targetId))
+        {
+            // Forward to another node
+            if (!sendControlCommand(targetId, 36, value))
+            {
+                Serial.println("err: Failed to send command");
+                return true;
+            }
+        }
+        else
+        {
+            // Apply locally
+            critical_section_enter_blocking(&commStateLock);
+            controlState.cost = value;
+            critical_section_exit(&commStateLock);
+            Serial.println("ack");
+        }
+        return true;
+    }
+
+    // Restart system
+    if (strcmp(tokens[0], "R") == 0)
+    {
+        // Implement system restart logic
+        Serial.println("Restarting system and recalibrating...");
+
+        // Reset and reinitialize
+        critical_section_enter_blocking(&commStateLock);
+        controlState.systemReady = false;
+        commState.wasCalibrating = false;
+        critical_section_exit(&commStateLock);
+
+        // Start calibration process
+        if (startCalibration())
+        {
+            Serial.println("ack");
+        }
+        else
+        {
+            Serial.println("err: Failed to start calibration");
+        }
+        return true;
+    }
+
+    return false;
+}
+
 //==========================================================================================================================================================
 // COMMAND PROCESSING PIPELINE
 //==========================================================================================================================================================
@@ -2161,6 +2478,33 @@ static void processCommandLine(const char *cmdLine)
         return;
     }
     else if (handleDisableCommand(tokens, numTokens))
+    {
+        return;
+    }
+    else if (strcmp(tokens[0], "control") == 0) 
+    {
+        handleControlMethodCommand(numTokens, tokens);
+        return;
+    }
+    else if (strcmp(tokens[0], "costmode") == 0) // Cost Mode: 0 = EQUAL, 1 = DIFFERENT
+    {
+        if (numTokens >= 2) {
+            int mode;
+            if (parseIntParam(tokens[1], &mode)) {
+                critical_section_enter_blocking(&commStateLock);
+                controlState.equalCosts = (mode == 0);
+                critical_section_exit(&commStateLock);
+                
+                Serial.print("Cost mode set to ");
+                Serial.println(controlState.equalCosts ? "equal" : "different");
+            } else {
+                Serial.println("err: Invalid mode parameter");
+            }
+        } else {
+            Serial.println("err: Missing mode parameter");
+        }
+    }
+    else if (handleIlluminanceCostCommands(tokens, numTokens))
     {
         return;
     }
@@ -2243,6 +2587,8 @@ void printHelp()
     Serial.println("fi <i> <val> : Set sensor filtering (0=off, 1=on) for node i");
     Serial.println("r <i> <val>  : Set illuminance reference (lux) for node i");
     Serial.println("st <i> <state>: Set luminaire state (off/unoccupied/occupied) for node i");
+    Serial.println("control <mode>: Set control method (seq=sequential, admm=optimization)");
+    Serial.println("costmode <mode>: Set cost mode (0=equal, 1=different) for ADMM");
 
     Serial.println("\n------- DATA STREAMING -------");
     Serial.println("s <x> <i>    : Start streaming variable x from node i");
@@ -2263,7 +2609,6 @@ void printHelp()
     Serial.println("\n------- CAN NETWORK -------");
     Serial.println("c m <0|1>    : Disable/enable CAN message monitoring");
     Serial.println("c st         : Display CAN communication statistics");
-    Serial.println("c r          : Reset CAN statistics counters");
     Serial.println("c sc         : Scan for active nodes on the CAN network");
     Serial.println("c l <i> <n>  : Measure round-trip latency to node i (n samples)");
     Serial.println("c d          : Display discovered nodes and their status");
@@ -2277,6 +2622,16 @@ void printHelp()
     Serial.println("FlickerInstant: Instantaneous flicker value");
     Serial.println("FlickerWithFilter: Cumulative flicker with filtering");
     Serial.println("FlickerNoFilter : Cumulative flicker without filtering");
+
+    Serial.println("\n------- ILLUMINANCE BOUNDS & ENERGY COST -------");
+    Serial.println("g O <i>     : Get occupied state illuminance bound for node i");
+    Serial.println("O <i> <val> : Set occupied state illuminance bound for node i");
+    Serial.println("g U <i>     : Get unoccupied state illuminance bound for node i");
+    Serial.println("U <i> <val> : Set unoccupied state illuminance bound for node i");
+    Serial.println("g L <i>     : Get current illuminance lower bound for node i");
+    Serial.println("g C <i>     : Get energy cost for node i");
+    Serial.println("C <i> <val> : Set energy cost for node i");
+    Serial.println("R           : Restart system and recalibrate");
 
     Serial.println("\nNode addressing:");
     Serial.println("  i = 0      : Broadcast to all nodes");

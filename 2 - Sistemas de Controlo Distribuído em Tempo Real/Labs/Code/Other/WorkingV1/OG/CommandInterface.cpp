@@ -1,0 +1,1465 @@
+#include "CommandInterface.h"
+#include "CANComm.h"
+#include <Arduino.h>
+#include <math.h>
+#include "Globals.h"
+#include "PIController.h"
+
+//=============================================================================
+// CONSTANTS AND DEFINITIONS
+//=============================================================================
+
+// Maximum command line length
+#define CMD_MAX_LENGTH 64
+// Maximum number of tokens in a command
+#define MAX_TOKENS 6
+// Maximum length of a single token
+#define TOKEN_MAX_LENGTH 16
+// Maximum number of pending queries that can be tracked
+#define MAX_PENDING_QUERIES 10
+
+// Forward declarations of functions used but defined elsewhere
+extern float readLux();
+extern float getVoltageAtLDR();
+extern float getExternalIlluminance();
+extern float getPowerConsumption();
+extern unsigned long getElapsedTime();
+extern bool responseReceived;
+extern bool canMonitorEnabled;
+
+static void handleDataBufferQuery(const char* subCommand, int numTokens, char tokens[][TOKEN_MAX_LENGTH]);
+static void handleBasicVariableQuery(const char* subCommand, const char* idx);
+
+//==========================================================================================================================================================
+// DATA STRUCTURES
+//==========================================================================================================================================================
+
+// Structure to track pending query requests
+struct PendingQuery
+{
+  bool active;               // Is this query slot active?
+  uint8_t targetNode;        // Node we're querying
+  uint8_t queryType;         // Type of query we sent
+  char originalCommand[16];  // Original command (like "y", "u", "V", etc.)
+  char displayIndex[8];      // Index to display in response
+  unsigned long timeoutTime; // When this query expires
+};
+
+//==========================================================================================================================================================
+// QUERY MANAGEMENT
+//==========================================================================================================================================================
+
+// Array of pending queries
+static PendingQuery pendingQueries[MAX_PENDING_QUERIES];
+
+/**
+ * Initialize the pending queries array
+ * Clears all query slots by marking them as inactive
+ */
+void initPendingQueries()
+{
+  for (int i = 0; i < MAX_PENDING_QUERIES; i++)
+  {
+    pendingQueries[i].active = false;
+  }
+}
+
+/**
+ * Add a new query to the pending queries list
+ * 
+ * @param targetNode The node ID being queried
+ * @param queryType The type of query being sent
+ * @param cmd The original command string (e.g., "u", "y", "V")
+ * @param index The display index to use in the response
+ * @return true if query was added successfully, false if no slots available
+ */
+static bool addPendingQuery(uint8_t targetNode, uint8_t queryType, const char *cmd, const char *index)
+{
+  // Find an empty slot
+  for (int i = 0; i < MAX_PENDING_QUERIES; i++)
+  {
+    if (!pendingQueries[i].active)
+    {
+      pendingQueries[i].active = true;
+      pendingQueries[i].targetNode = targetNode;
+      pendingQueries[i].queryType = queryType;
+      strncpy(pendingQueries[i].originalCommand, cmd, sizeof(pendingQueries[i].originalCommand) - 1);
+      pendingQueries[i].originalCommand[sizeof(pendingQueries[i].originalCommand) - 1] = '\0';
+      strncpy(pendingQueries[i].displayIndex, index, sizeof(pendingQueries[i].displayIndex) - 1);
+      pendingQueries[i].displayIndex[sizeof(pendingQueries[i].displayIndex) - 1] = '\0';
+      pendingQueries[i].timeoutTime = millis() + 500; // 500ms timeout
+      return true;
+    }
+  }
+  return false; // No slots available
+}
+
+/**
+ * Process all pending queries
+ * Checks for responses or timeouts for each active query
+ * Should be called regularly from the main loop
+ */
+static void processPendingQueries()
+{
+  // Check each active query
+  for (int i = 0; i < MAX_PENDING_QUERIES; i++)
+  {
+    if (pendingQueries[i].active)
+    {
+      // Check for timeout
+      if (millis() > pendingQueries[i].timeoutTime)
+      {
+        Serial.print("err: No response from node ");
+        Serial.println(pendingQueries[i].targetNode);
+        pendingQueries[i].active = false;
+        continue;
+      }
+
+      // Check for a response
+      can_frame frame;
+      if (readCANMessage(&frame) == MCP2515::ERROR_OK)
+      {
+        // Parse message details
+        uint8_t msgType, destAddr;
+        parseCANId(frame.can_id, msgType, destAddr);
+        uint8_t senderNodeID = frame.data[0];
+
+        // Check if this is a response for our query
+        critical_section_enter_blocking(&commStateLock);
+        if (msgType == CAN_TYPE_RESPONSE &&
+            senderNodeID == pendingQueries[i].targetNode &&
+            (destAddr == deviceConfig.nodeId || destAddr == CAN_ADDR_BROADCAST))
+        {
+            critical_section_exit(&commStateLock);
+          // Extract the float value
+          float value = bytesToFloat(&frame.data[2]);
+
+          // Format the command and send response
+          if (isupper(pendingQueries[i].originalCommand[0]))
+          {
+            // Handle upper case commands (V, F, E)
+            Serial.print(pendingQueries[i].originalCommand);
+          }
+          else
+          {
+            // Handle lower case commands
+            Serial.print(pendingQueries[i].originalCommand);
+          }
+
+          Serial.print(" ");
+          Serial.print(pendingQueries[i].displayIndex);
+          Serial.print(" ");
+
+          // Format the value based on command type
+          const char *cmd = pendingQueries[i].originalCommand;
+          if (strcmp(cmd, "u") == 0 || strcmp(cmd, "F") == 0 || strcmp(cmd, "E") == 0)
+          {
+            Serial.println(value, 4); // 4 decimal places
+          }
+          else if (strcmp(cmd, "V") == 0 || strcmp(cmd, "y") == 0 ||
+                   strcmp(cmd, "p") == 0 || strcmp(cmd, "d") == 0)
+          {
+            Serial.println(value, 2); // 2 decimal places
+          }
+          else if (strcmp(cmd, "v") == 0)
+          {
+            Serial.println(value, 3); // 3 decimal places
+          }
+          else if (strcmp(cmd, "o") == 0 || strcmp(cmd, "a") == 0 ||
+                   strcmp(cmd, "f") == 0 || strcmp(cmd, "t") == 0)
+          {
+            Serial.println((int)value); // Integer values
+          }
+          else
+          {
+            Serial.println(value); // Default format
+          }
+
+          // Mark this query as handled
+          pendingQueries[i].active = false;
+        }
+        critical_section_exit(&commStateLock);
+      }
+    }
+  }
+}
+
+//==========================================================================================================================================================
+// COMMAND PARSING HELPERS
+//==========================================================================================================================================================
+
+/**
+ * Parse a string to an integer with error checking
+ * 
+ * @param str String to parse
+ * @param result Output parameter for the parsed integer value
+ * @return true if parsing was successful, false otherwise
+ */
+bool parseIntParam(const char *str, int *result)
+{
+  if (str == NULL || result == NULL) {
+    return false;
+  }
+  
+  // Check if string is empty
+  if (str[0] == '\0') {
+    return false;
+  }
+  
+  char *endPtr;
+  long value = strtol(str, &endPtr, 10);
+  
+  // Check if any conversion happened and if we reached the end of the string
+  if (endPtr == str || *endPtr != '\0') {
+    return false;
+  }
+  
+  // Check for overflow/underflow
+  if (value > INT_MAX || value < INT_MIN) {
+    return false;
+  }
+  
+  *result = (int)value;
+  return true;
+}
+
+/**
+ * Parse a string to a float with error checking
+ * 
+ * @param str String to parse
+ * @param result Output parameter for the parsed float value
+ * @return true if parsing was successful, false otherwise
+ */
+static bool parseFloatParam(const char *str, float *result)
+{
+  if (str == NULL || result == NULL) {
+    return false;
+  }
+  
+  // Check if string is empty
+  if (str[0] == '\0') {
+    return false;
+  }
+  
+  char *endPtr;
+  float value = strtof(str, &endPtr);
+  
+  // Check if any conversion happened and if we reached the end of the string
+  if (endPtr == str || *endPtr != '\0') {
+    return false;
+  }
+  
+  // Check for NaN or infinity
+  if (isnan(value) || isinf(value)) {
+    return false;
+  }
+  
+  *result = value;
+  return true;
+}
+
+/**
+ * Parse a command line into tokens
+ * 
+ * @param cmdLine The command line string to parse
+ * @param tokens Array to store the parsed tokens
+ * @param maxTokens Maximum number of tokens to extract
+ * @return Number of tokens found
+ */
+int parseTokensChar(const char *cmdLine, char tokens[][TOKEN_MAX_LENGTH], int maxTokens)
+{
+  int numTokens = 0;
+  int cmdLen = strlen(cmdLine);
+  int i = 0;
+  
+  while (i < cmdLen && numTokens < maxTokens)
+  {
+    // Skip leading whitespace
+    while (i < cmdLen && isspace(cmdLine[i]))
+      i++;
+      
+    if (i >= cmdLen)
+      break;
+      
+    // Copy token
+    int tokenLen = 0;
+    while (i < cmdLen && !isspace(cmdLine[i]) && tokenLen < TOKEN_MAX_LENGTH - 1)
+    {
+      tokens[numTokens][tokenLen] = cmdLine[i];
+      tokenLen++;
+      i++;
+    }
+    
+    tokens[numTokens][tokenLen] = '\0';
+    numTokens++;
+  }
+  
+  return numTokens;
+}
+
+/**
+ * Check if float value is within specified range
+ * 
+ * @param value Value to check
+ * @param min Minimum allowed value (inclusive)
+ * @param max Maximum allowed value (inclusive)
+ * @return true if value is within range, false otherwise
+ */
+static bool isInRange(float value, float min, float max)
+{
+  return value >= min && value <= max;
+}
+
+/**
+ * Case-insensitive string comparison
+ *
+ * @param str1 First string to compare
+ * @param str2 Second string to compare
+ * @return 0 if equal, non-zero otherwise (like strcmp)
+ */
+static int strcmpIgnoreCase(const char *str1, const char *str2)
+{
+  while (*str1 && *str2)
+  {
+    char c1 = *str1 >= 'A' && *str1 <= 'Z' ? *str1 + 32 : *str1;
+    char c2 = *str2 >= 'A' && *str2 <= 'Z' ? *str2 + 32 : *str2;
+
+    if (c1 != c2)
+    {
+      return c1 - c2;
+    }
+
+    str1++;
+    str2++;
+  }
+
+  return *str1 - *str2;
+}
+
+/**
+ * Prepare command line by trimming and tokenizing
+ * 
+ * @param cmdLine The raw command line to process
+ * @param tokens Array to store the parsed tokens
+ * @return Number of tokens found
+ */
+static int prepareCommand(const char *cmdLine, char tokens[][TOKEN_MAX_LENGTH]) {
+  char trimmedCmd[CMD_MAX_LENGTH];
+  int cmdLen = strlen(cmdLine);
+  
+  // Trim leading spaces
+  int startPos = 0;
+  while (startPos < cmdLen && cmdLine[startPos] == ' ') {
+      startPos++;
+  }
+  
+  // Trim trailing spaces
+  int endPos = cmdLen - 1;
+  while (endPos >= 0 && cmdLine[endPos] == ' ') {
+      endPos--;
+  }
+  
+  // Copy trimmed command
+  if (endPos >= startPos) {
+      int trimmedLen = endPos - startPos + 1;
+      if (trimmedLen >= CMD_MAX_LENGTH)
+          trimmedLen = CMD_MAX_LENGTH - 1;
+      strncpy(trimmedCmd, cmdLine + startPos, trimmedLen);
+      trimmedCmd[trimmedLen] = '\0';
+  } else {
+      // Empty command after trimming
+      trimmedCmd[0] = '\0';
+      return 0;
+  }
+  
+  // Tokenize the command line
+  return parseTokensChar(trimmedCmd, tokens, MAX_TOKENS);
+}
+
+//==========================================================================================================================================================
+// COMMAND EXECUTION UTILITIES
+//==========================================================================================================================================================
+
+/**
+ * Map variable name to numeric code for CAN transmission
+ * 
+ * @param var Variable name string (e.g., "y", "u", "p")
+ * @param varCode Output parameter to store the resulting code
+ * @return true if mapping successful, false if variable not recognized
+ */
+static bool mapVariableToCode(const char* var, float* varCode) {
+    if (strcmp(var, "y") == 0) {
+        *varCode = 0.0f;  // Illuminance
+    } 
+    else if (strcmp(var, "u") == 0) {
+        *varCode = 1.0f;  // Duty cycle
+    }
+    else if (strcmp(var, "p") == 0) {
+        *varCode = 2.0f;  // Power
+    }
+    else if (strcmp(var, "d") == 0) {
+        *varCode = 3.0f;  // External illuminance
+    }
+    else if (strcmp(var, "r") == 0) {
+        *varCode = 4.0f;  // Reference illuminance
+    }
+    else if (strcmp(var, "o") == 0) {
+        *varCode = 5.0f;  // Occupancy state
+    }
+    else if (strcmp(var, "a") == 0) {
+        *varCode = 6.0f;  // Anti-windup state
+    }
+    else if (strcmp(var, "f") == 0) {
+        *varCode = 7.0f;  // Feedback control state
+    }
+    else if (strcmp(var, "v") == 0) {
+        *varCode = 8.0f;  // LDR voltage
+    }
+    else if (strcmp(var, "t") == 0) {
+        *varCode = 9.0f;  // Elapsed time
+    }
+    else if (strcmp(var, "V") == 0) {
+        *varCode = 10.0f; // Visibility error
+    }
+    else if (strcmp(var, "F") == 0) {
+        *varCode = 11.0f; // Flicker
+    }
+    else if (strcmp(var, "E") == 0) {
+        *varCode = 12.0f; // Energy
+    }
+    else {
+        // Default to illuminance if not recognized
+        *varCode = 0.0f;
+        return false;
+    }
+    
+    return true;
+}
+
+/**
+* Apply a command locally based on control type
+* 
+* @param controlType CAN control type code
+* @param value Command value
+*/
+void applyLocalCommand(uint8_t controlType, float value) {
+    switch (controlType) {
+        case 4:
+            // Set duty cycle directly
+            setLEDDutyCycle(value);
+            break;
+        case 5:
+            // Set LED percentage
+            setLEDPercentage(value);
+            break;
+        case 6:
+            // Set LED power in watts
+            setLEDPower(value);
+            break;
+        case 7:
+            // Set luminaire state
+            if (value >= 0 && value <= 2) {
+                changeState((LuminaireState)((int)value));
+            }
+            break;
+        case 8:
+            // Set anti-windup
+            critical_section_enter_blocking(&commStateLock);
+            controlState.antiWindup = (value != 0.0f);
+            critical_section_exit(&commStateLock);
+            break;
+        case 9:
+            // Set feedback control
+            critical_section_enter_blocking(&commStateLock);
+            controlState.feedbackControl = (value != 0.0f);
+            critical_section_exit(&commStateLock);
+            break;
+        case 10:
+            // Set reference illuminance (lux)
+            critical_section_enter_blocking(&commStateLock);
+            controlState.setpointLux = value;
+            critical_section_exit(&commStateLock);
+            break;
+        case 14:
+            // Set filter enable/disable
+            critical_section_enter_blocking(&commStateLock);
+            sensorState.filterEnabled = (value != 0.0f);
+            critical_section_exit(&commStateLock);
+            break;
+    }
+}
+  
+/**
+ * Determine if a command should be executed locally or forwarded to another node
+ *
+ * @param targetNode The node ID specified in the command
+ * @return true if command should be forwarded, false for local execution
+ */
+static bool shouldForwardCommand(uint8_t targetNode)
+{
+  // If target is broadcast (0) or matches this node, process locally
+  critical_section_enter_blocking(&commStateLock);
+  if (targetNode == 0 || targetNode == deviceConfig.nodeId)
+  {
+    critical_section_exit(&commStateLock);
+    return false;
+  }
+  // Otherwise, forward to target node
+  critical_section_exit(&commStateLock);
+  return true;
+}
+
+/**
+* Generic handler for targeted commands that follow the same pattern
+* 
+* @param targetNode Node to target (0 for broadcast)
+* @param controlType CAN control type code
+* @param value Command value
+* @return true if handled successfully
+*/
+static bool handleTargetedCommand(uint8_t targetNode, uint8_t controlType, float value) {
+  // Check if we need to forward this command
+  if (shouldForwardCommand(targetNode)) {
+      // Forward to specific node
+      if (sendControlCommand(targetNode, controlType, value)) {
+          Serial.println("ack");
+      } else {
+          Serial.println("err: CAN forwarding failed");
+      }
+      return true;
+  }
+  
+  // Handle broadcast case (targetNode = 0)
+  if (targetNode == 0) {
+      if (sendControlCommand(CAN_ADDR_BROADCAST, controlType, value)) {
+          // Also apply locally since broadcast includes this node
+          applyLocalCommand(controlType, value);
+          Serial.println("ack");
+      } else {
+          Serial.println("err: CAN broadcast failed");
+      }
+      return true;
+  }
+  
+  // Apply locally
+  applyLocalCommand(controlType, value);
+  Serial.println("ack");
+  return true;
+}
+
+/**
+* Handle a local query (non-forwarded)
+* 
+* @param subCommand The query command
+* @param originalCase Original case-preserved command
+* @param idx Node index string
+* @param numTokens Total number of tokens
+* @param tokens Full token array
+*/
+static void handleLocalQuery(const char* subCommand, const char* originalCase, const char* idx, int numTokens, char tokens[][TOKEN_MAX_LENGTH]) {
+  // Quality metrics
+  if (strcmp(originalCase, "V") == 0) {
+      float V = computeVisibilityErrorFromBuffer();
+      Serial.print("V ");
+      Serial.print(idx);
+      Serial.print(" ");
+      Serial.println(V, 2);
+  }
+  else if (strcmp(originalCase, "F") == 0) {
+      float F = computeFlickerFromBuffer();
+      Serial.print("F ");
+      Serial.print(idx);
+      Serial.print(" ");
+      Serial.println(F, 4);
+  }
+  else if (strcmp(originalCase, "E") == 0) {
+      float E = computeEnergyFromBuffer();
+      Serial.print("E ");
+      Serial.print(idx);
+      Serial.print(" ");
+      Serial.println(E, 4);
+  }
+  // Control system variables
+  else if (strcmp(subCommand, "u") == 0) {
+      Serial.print("u ");
+      Serial.print(idx);
+      Serial.print(" ");
+      critical_section_enter_blocking(&commStateLock);
+      Serial.println(controlState.dutyCycle, 4);
+      critical_section_exit(&commStateLock);
+  }
+  else if (strcmp(subCommand, "o") == 0) {
+      critical_section_enter_blocking(&commStateLock);
+      int occVal = static_cast<int>(controlState.luminaireState);
+      critical_section_exit(&commStateLock);
+      Serial.print("o ");
+      Serial.print(idx);
+      Serial.print(" ");
+      Serial.println(occVal);
+  }
+  // Additional query handlers for other variables
+  else if (strcmp(subCommand, "b") == 0 || strcmp(subCommand, "bigdump") == 0 || 
+           strcmp(subCommand, "mdump") == 0) {
+      handleDataBufferQuery(subCommand, numTokens, tokens);
+  }
+  else {
+      // Handle remaining variable queries
+      handleBasicVariableQuery(subCommand, idx);
+  }
+}
+
+//==========================================================================================================================================================
+// COMMAND CATEGORY HANDLERS
+//==========================================================================================================================================================
+
+/**
+ * Handle queries related to data buffer operations
+ * Processes buffer commands like dump, export, etc.
+ * 
+ * @param subCommand The specific buffer operation requested
+ * @param numTokens Number of tokens in the command
+ * @param tokens Full token array
+ */
+static void handleDataBufferQuery(const char* subCommand, int numTokens, char tokens[][TOKEN_MAX_LENGTH]) {
+    if (strcmp(subCommand, "b") == 0 || strcmp(subCommand, "bigdump") == 0) {
+        // Full data dump to serial
+        dumpBufferToSerial();
+        Serial.println("ack");
+    }
+    else if (strcmp(subCommand, "mdump") == 0) {
+        // Clear the buffer
+        clearBuffer();
+        Serial.println("Buffer cleared");
+        Serial.println("ack");
+    }
+    else {
+        Serial.println("err: Unknown buffer command");
+    }
+}
+
+/**
+ * Handle basic variable query operations
+ * Responds with the current value of the requested variable
+ * 
+ * @param subCommand The variable to query
+ * @param idx Node index to display in the response
+ */
+static void handleBasicVariableQuery(const char* subCommand, const char* idx) {
+    if (strcmp(subCommand, "y") == 0) {
+        // Current illuminance
+        float lux = readLux();
+        Serial.print("y ");
+        Serial.print(idx);
+        Serial.print(" ");
+        Serial.println(lux, 2);
+    }
+    else if (strcmp(subCommand, "p") == 0) {
+        // Power consumption
+        float power = getPowerConsumption();
+        Serial.print("p ");
+        Serial.print(idx);
+        Serial.print(" ");
+        Serial.println(power, 2);
+    }
+    else if (strcmp(subCommand, "t") == 0) {
+        // Elapsed time
+        unsigned long time = getElapsedTime();
+        Serial.print("t ");
+        Serial.print(idx);
+        Serial.print(" ");
+        Serial.println(time);
+    }
+    else if (strcmp(subCommand, "v") == 0) {
+        // LDR voltage
+        float voltage = getVoltageAtLDR();
+        Serial.print("v ");
+        Serial.print(idx);
+        Serial.print(" ");
+        Serial.println(voltage, 3);
+    }
+    else if (strcmp(subCommand, "d") == 0) {
+        // External illuminance
+        float extLux = getExternalIlluminance();
+        Serial.print("d ");
+        Serial.print(idx);
+        Serial.print(" ");
+        Serial.println(extLux, 2);
+    }
+    else if (strcmp(subCommand, "a") == 0) {
+        // Anti-windup state
+        critical_section_enter_blocking(&commStateLock);
+        int antiWindup = controlState.antiWindup ? 1 : 0;
+        critical_section_exit(&commStateLock);
+        Serial.print("a ");
+        Serial.print(idx);
+        Serial.print(" ");
+        Serial.println(antiWindup);
+    }
+    else if (strcmp(subCommand, "f") == 0) {
+        // Feedback control state
+        critical_section_enter_blocking(&commStateLock);
+        int feedback = controlState.feedbackControl ? 1 : 0;
+        critical_section_exit(&commStateLock);
+        Serial.print("f ");
+        Serial.print(idx);
+        Serial.print(" ");
+        Serial.println(feedback);
+    }
+    else if (strcmp(subCommand, "r") == 0) {
+        // Reference illuminance (setpoint)
+        critical_section_enter_blocking(&commStateLock);
+        float setpoint = controlState.setpointLux;
+        critical_section_exit(&commStateLock);
+        Serial.print("r ");
+        Serial.print(idx);
+        Serial.print(" ");
+        Serial.println(setpoint, 1);
+    }
+    else {
+        Serial.print("err: Unknown variable '");
+        Serial.print(subCommand);
+        Serial.println("'");
+    }
+}
+
+/**
+ * Handle LED control commands (u, p, w)
+ * 
+ * @param tokens Command tokens
+ * @param numTokens Number of tokens
+ * @return true if command was handled, false otherwise
+ */
+static bool handleLEDCommands(char tokens[][TOKEN_MAX_LENGTH], int numTokens) {
+  if (strcmp(tokens[0], "u") == 0) {
+      // Duty cycle command
+      if (numTokens < 3) {
+          Serial.println("err: Missing parameters");
+          return true;
+      }
+      
+      int targetNode;
+      float val;
+      
+      // Parse node ID
+      if (!parseIntParam(tokens[1], &targetNode) || targetNode < 0 || targetNode > 63) {
+          Serial.println("err: Invalid node ID");
+          return true;
+      }
+      
+      // Parse duty cycle value
+      if (!parseFloatParam(tokens[2], &val) || !isInRange(val, 0.0f, 1.0f)) {
+          Serial.println("err: Invalid duty cycle (must be between 0.0 and 1.0)");
+          return true;
+      }
+      
+      // Process command based on target
+      if (handleTargetedCommand(targetNode, 4, val)) {
+          return true;
+      }
+  } 
+  else if (strcmp(tokens[0], "p") == 0) {
+      // Percentage command
+      if (numTokens < 3) {
+          Serial.println("err: Missing parameters");
+          return true;
+      }
+      
+      int targetNode;
+      float val;
+      
+      // Parse node ID
+      if (!parseIntParam(tokens[1], &targetNode) || targetNode < 0 || targetNode > 63) {
+          Serial.println("err: Invalid node ID");
+          return true;
+      }
+      
+      // Parse percentage value
+      if (!parseFloatParam(tokens[2], &val) || !isInRange(val, 0.0f, 100.0f)) {
+          Serial.println("err: Invalid percentage (must be between 0.0 and 100.0)");
+          return true;
+      }
+      
+      // Process command based on target
+      if (handleTargetedCommand(targetNode, 5, val)) {
+          return true;
+      }
+  }
+  else if (strcmp(tokens[0], "w") == 0) {
+      // Power in watts command
+      if (numTokens < 3) {
+          Serial.println("err: Missing parameters");
+          return true;
+      }
+      
+      int targetNode;
+      float val;
+      
+      // Parse node ID
+      if (!parseIntParam(tokens[1], &targetNode) || targetNode < 0 || targetNode > 63) {
+          Serial.println("err: Invalid node ID");
+          return true;
+      }
+      
+      // Parse power value
+      if (!parseFloatParam(tokens[2], &val) || !isInRange(val, 0.0f, MAX_POWER_WATTS)) {
+          Serial.println("err: Invalid power (must be between 0.0 and MAX_POWER_WATTS)");
+          return true;
+      }
+      
+      // Process command based on target
+      if (handleTargetedCommand(targetNode, 6, val)) {
+          return true;
+      }
+  }
+  else {
+      return false; // Not an LED command
+  }
+
+  return true;
+}
+
+/**
+* Handle system state control commands (o, a, fi, f, r, st)
+* 
+* @param tokens Command tokens
+* @param numTokens Number of tokens
+* @return true if command was handled, false otherwise
+*/
+static bool handleSystemStateCommands(char tokens[][TOKEN_MAX_LENGTH], int numTokens) {
+    if (strcmp(tokens[0], "o") == 0) {
+        // Occupancy command
+        if (numTokens < 3) {
+            Serial.println("err: Missing parameters");
+            return true;
+        }
+        
+        int targetNode;
+        int val;
+        
+        // Parse node ID
+        if (!parseIntParam(tokens[1], &targetNode) || targetNode < 0 || targetNode > 63) {
+            Serial.println("err: Invalid node ID");
+            return true;
+        }
+        
+        // Parse state value
+        if (!parseIntParam(tokens[2], &val) || !isInRange(val, 0, 2)) {
+            Serial.println("err: Invalid state (must be 0=off, 1=unoccupied, or 2=occupied)");
+            return true;
+        }
+        
+        // Process command based on target
+        if (handleTargetedCommand(targetNode, 7, val)) {
+            return true;
+        }
+    }
+    else if (strcmp(tokens[0], "a") == 0) {
+        // Anti-windup command
+        if (numTokens < 3) {
+            Serial.println("err: Missing parameters");
+            return true;
+        }
+        
+        int targetNode;
+        int val;
+        
+        // Parse node ID
+        if (!parseIntParam(tokens[1], &targetNode) || targetNode < 0 || targetNode > 63) {
+            Serial.println("err: Invalid node ID");
+            return true;
+        }
+        
+        // Parse anti-windup value (0=off, 1=on)
+        if (!parseIntParam(tokens[2], &val) || !isInRange(val, 0, 1)) {
+            Serial.println("err: Invalid anti-windup value (must be 0 or 1)");
+            return true;
+        }
+        
+        // Process command based on target
+        if (handleTargetedCommand(targetNode, 8, val)) {
+            return true;
+        }
+    }
+    else if (strcmp(tokens[0], "f") == 0) {
+        // Feedback control command
+        if (numTokens < 3) {
+            Serial.println("err: Missing parameters");
+            return true;
+        }
+        
+        int targetNode;
+        int val;
+        
+        // Parse node ID
+        if (!parseIntParam(tokens[1], &targetNode) || targetNode < 0 || targetNode > 63) {
+            Serial.println("err: Invalid node ID");
+            return true;
+        }
+        
+        // Parse feedback control value (0=off, 1=on)
+        if (!parseIntParam(tokens[2], &val) || !isInRange(val, 0, 1)) {
+            Serial.println("err: Invalid feedback control value (must be 0 or 1)");
+            return true;
+        }
+        
+        // Process command based on target
+        if (handleTargetedCommand(targetNode, 9, val)) {
+            return true;
+        }
+    }
+    else if (strcmp(tokens[0], "fi") == 0) {
+        // Filter enable/disable command
+        if (numTokens < 3) {
+            Serial.println("err: Missing parameters");
+            return true;
+        }
+        
+        int targetNode;
+        int val;
+        
+        // Parse node ID
+        if (!parseIntParam(tokens[1], &targetNode) || targetNode < 0 || targetNode > 63) {
+            Serial.println("err: Invalid node ID");
+            return true;
+        }
+        
+        // Parse filter enable value (0=off, 1=on)
+        if (!parseIntParam(tokens[2], &val) || !isInRange(val, 0, 1)) {
+            Serial.println("err: Invalid filter value (must be 0 or 1)");
+            return true;
+        }
+        
+        // Process command based on target
+        if (handleTargetedCommand(targetNode, 14, val)) {
+            return true;
+        }
+    }
+  else if (strcmp(tokens[0], "r") == 0) {
+        // Reference illuminance command
+        if (numTokens < 3) {
+            Serial.println("err: Missing parameters");
+            return true;
+        }
+        
+        int targetNode;
+        float val;
+        
+        // Parse node ID
+        if (!parseIntParam(tokens[1], &targetNode) || targetNode < 0 || targetNode > 63) {
+            Serial.println("err: Invalid node ID");
+            return true;
+        }
+        
+        // Parse reference value
+        if (!parseFloatParam(tokens[2], &val) || val < 0.0f) {
+            Serial.println("err: Invalid reference value (must be >= 0.0)");
+            return true;
+        }
+        
+        // Process command based on target
+        if (handleTargetedCommand(targetNode, 10, val)) {
+            return true;
+        }
+    }
+  // Similar implementations for a, fi, f, r commands
+    else if (strcmp(tokens[0], "st") == 0) {
+        // Set luminaire state by name
+        if (numTokens < 3) {
+            Serial.println("err: Missing parameters");
+            return true;
+        }
+        
+        int targetNode;
+        if (!parseIntParam(tokens[1], &targetNode) || targetNode < 0 || targetNode > 63) {
+            Serial.println("err: Invalid node ID");
+            return true;
+        }
+      
+        char stateStr[TOKEN_MAX_LENGTH];
+        strcpy(stateStr, tokens[2]);
+        
+        // Convert state string to value for CAN transmission
+        int stateVal = -1; // Invalid by default
+        if (strcmp(stateStr, "off") == 0)
+            stateVal = 0;
+        else if (strcmp(stateStr, "unoccupied") == 0)
+            stateVal = 1;
+        else if (strcmp(stateStr, "occupied") == 0)
+            stateVal = 2;
+        else {
+            Serial.println("err: Invalid state (must be 'off', 'unoccupied', or 'occupied')");
+            return true;
+        }
+      
+        // Check if we need to forward this command
+        if (shouldForwardCommand(targetNode)) {
+            // Forward to specific node - control type 13 = luminaire state
+            if (sendControlCommand(targetNode, 13, stateVal)) {
+                Serial.println("ack");
+            } else {
+                Serial.println("err: CAN forwarding failed");
+            }
+            return true;
+        }
+        
+        // Handle broadcast case (targetNode = 0)
+        if (targetNode == 0) {
+            if (sendControlCommand(CAN_ADDR_BROADCAST, 13, stateVal)) {
+                // Also apply locally since broadcast includes this node
+                if (strcmp(stateStr, "off") == 0)
+                    changeState(STATE_OFF);
+                else if (strcmp(stateStr, "unoccupied") == 0)
+                    changeState(STATE_UNOCCUPIED);
+                else if (strcmp(stateStr, "occupied") == 0)
+                    changeState(STATE_OCCUPIED);
+                Serial.println("ack");
+            } else {
+                Serial.println("err: CAN broadcast failed");
+            }
+            return true;
+        }
+        
+    // Apply locally
+    if (strcmp(stateStr, "off") == 0)
+        changeState(STATE_OFF);
+    else if (strcmp(stateStr, "unoccupied") == 0)
+        changeState(STATE_UNOCCUPIED);
+    else if (strcmp(stateStr, "occupied") == 0)
+        changeState(STATE_OCCUPIED);
+    Serial.println("ack");
+    return true;
+  }
+  else {
+      return false; // Not a system state command
+  }
+  
+  return true;
+}
+
+/**
+ * Handle data query commands (g)
+ * 
+ * @param tokens Command tokens
+ * @param numTokens Number of tokens
+ * @return true if command was handled, false otherwise
+ */
+static bool handleDataQueryCommands(char tokens[][TOKEN_MAX_LENGTH], int numTokens) {
+  if (strcmp(tokens[0], "g") == 0) {
+      if (numTokens < 3) {
+          Serial.println("err: Missing parameters");
+          return true;
+      }
+
+      char subCommand[TOKEN_MAX_LENGTH];
+      char originalCase[TOKEN_MAX_LENGTH];
+      char idx[TOKEN_MAX_LENGTH];
+      strcpy(subCommand, tokens[1]);
+      strcpy(originalCase, tokens[1]);
+      strcpy(idx, tokens[2]);
+
+      int targetNode;
+      // Parse node ID with error checking
+      if (!parseIntParam(tokens[2], &targetNode) || targetNode < 0 || targetNode > 63) {
+          Serial.println("err: Invalid node ID");
+          return true;
+      }
+
+      // Check if we need to forward this command
+      if (shouldForwardCommand(targetNode)) {
+          // Map the get command to a CAN query message type (using code 20-32)
+          uint8_t queryType = 20; // Default query type
+
+          // Map variable types to query codes
+          if (strcmp(originalCase, "V") == 0)
+              queryType = 20; // Visibility error
+          else if (strcmp(originalCase, "F") == 0)
+              queryType = 21; // Flicker
+          else if (strcmp(originalCase, "E") == 0)
+              queryType = 22; // Energy
+          else if (strcmp(subCommand, "u") == 0)
+              queryType = 23; // Duty cycle
+          else if (strcmp(subCommand, "o") == 0)
+              queryType = 24; // Occupancy
+          else if (strcmp(subCommand, "a") == 0)
+              queryType = 25; // Anti-windup
+          else if (strcmp(subCommand, "f") == 0)
+              queryType = 26; // Feedback control
+          else if (strcmp(subCommand, "r") == 0)
+              queryType = 27; // Reference illuminance
+          else if (strcmp(subCommand, "y") == 0)
+              queryType = 28; // Current illuminance
+          else if (strcmp(subCommand, "p") == 0)
+              queryType = 29; // Power consumption
+          else if (strcmp(subCommand, "t") == 0)
+              queryType = 30; // Elapsed time
+          else if (strcmp(subCommand, "v") == 0)
+              queryType = 31; // LDR voltage
+          else if (strcmp(subCommand, "d") == 0)
+              queryType = 32; // External illuminance
+          else {
+              Serial.println("err: Unsupported remote variable query");
+              return true;
+          }
+
+          if (sendControlCommand(targetNode, queryType, 0.0f)) {
+              Serial.print("Query sent to node ");
+              Serial.println(targetNode);
+
+              // Instead of waiting in a blocking loop, store the query details
+              if (!addPendingQuery(targetNode, queryType, originalCase[0] == 'V' || originalCase[0] == 'F' || originalCase[0] == 'E' ? originalCase : subCommand, idx)) {
+                  Serial.println("err: Too many pending queries");
+              }
+              return true;
+          } else {
+              Serial.print("err: Failed to send query to node ");
+              Serial.println(targetNode);
+              return true;
+          }
+      }
+
+      // Handle local queries
+      handleLocalQuery(subCommand, originalCase, idx, numTokens, tokens);
+      return true;
+  }
+  return false;
+}
+
+/**
+* Handle streaming commands (s, S)
+* 
+* @param tokens Command tokens
+* @param numTokens Number of tokens
+* @return true if command was handled, false otherwise
+*/
+static bool handleStreamingCommands(char tokens[][TOKEN_MAX_LENGTH], int numTokens) {
+  if (strcmp(tokens[0], "s") == 0 || strcmp(tokens[0], "S") == 0) {
+      if (numTokens < 3) {
+          Serial.println("err: Missing parameters");
+          return true;
+      }
+
+      char var[TOKEN_MAX_LENGTH];
+      strcpy(var, tokens[1]); // Variable name
+      
+      int targetNode;
+      if (!parseIntParam(tokens[2], &targetNode) || targetNode < 0 || targetNode > 63) {
+          Serial.println("err: Invalid node ID");
+          return true;
+      }
+
+      // Check if we need to forward this command
+      if (shouldForwardCommand(targetNode)) {
+          // Map variable names to numeric codes for CAN transmission
+          float varCode = 0; // Default for 'y' (lux)
+          mapVariableToCode(var, &varCode);
+
+          // Control type: 11 = start stream, 12 = stop stream
+          uint8_t controlType = (tokens[0][0] == 's') ? 11 : 12;
+          
+          if (sendControlCommand(targetNode, controlType, varCode)) {
+              Serial.println("ack");
+          } else {
+              Serial.println("err: CAN forwarding failed");
+          }
+          return true;
+      }
+      
+      // Handle locally
+      if (tokens[0][0] == 's') {
+          startStream(var, targetNode);
+      } else {
+          stopStream(var, targetNode);
+      }
+      Serial.println("ack");
+      return true;
+  }
+  return false;
+}
+
+/**
+* Handle CAN network commands (c)
+* 
+* @param tokens Command tokens
+* @param numTokens Number of tokens
+* @return true if command was handled, false otherwise
+*/
+static bool handleCANNetworkCommands(char tokens[][TOKEN_MAX_LENGTH], int numTokens) {
+  if (strcmp(tokens[0], "c") == 0) {
+      if (numTokens < 2) {
+          Serial.println("err: Missing subcommand");
+          return true;
+      }
+      
+      if (strcmp(tokens[1], "m") == 0) {
+          // CAN monitoring
+          if (numTokens < 3) {
+              Serial.println("err: Missing parameters");
+              return true;
+          }
+          
+          int val;
+          if (!parseIntParam(tokens[2], &val) || !isInRange(val, 0, 1)) {
+              Serial.println("err: Invalid monitoring value (must be 0=off or 1=on)");
+              return true;
+          }
+          
+          canMonitorEnabled = (val == 1);
+          Serial.print("CAN monitoring ");
+          Serial.println(canMonitorEnabled ? "enabled" : "disabled");
+          Serial.println("ack");
+      }
+      else if (strcmp(tokens[1], "st") == 0) {
+          // CAN statistics
+          displayCANStatistics();
+      }
+      else if (strcmp(tokens[1], "r") == 0) {
+          // Reset CAN statistics
+          resetCANStats();
+          Serial.println("CAN statistics reset");
+          Serial.println("ack");
+      }
+      else if (strcmp(tokens[1], "sc") == 0) {
+          // Scan for CAN nodes
+          scanCANNetwork();
+      }
+      else if (strcmp(tokens[1], "l") == 0) {
+          // Latency test
+          measureCANLatency(numTokens, tokens);
+      }
+      else {
+          Serial.println("err: Unknown CAN subcommand");
+      }
+      return true;
+  }
+  return false;
+}
+
+/**
+* Handle controller parameter commands (k)
+* 
+* @param tokens Command tokens
+* @param numTokens Number of tokens
+* @return true if command was handled, false otherwise
+*/
+static bool handleControllerParameterCommands(char tokens[][TOKEN_MAX_LENGTH], int numTokens) {
+  if (strcmp(tokens[0], "k") == 0) {
+      if (numTokens < 4) {
+          Serial.println("err: Missing parameters");
+          return true;
+      }
+      
+      int targetNode;
+      float value;
+      
+      if (!parseIntParam(tokens[1], &targetNode) || targetNode < 0 || targetNode > 63) {
+          Serial.println("err: Invalid node ID");
+          return true;
+      }
+      
+      char param[TOKEN_MAX_LENGTH];
+      strcpy(param, tokens[2]);
+      
+      if (!parseFloatParam(tokens[3], &value)) {
+          Serial.println("err: Invalid parameter value");
+          return true;
+      }
+      
+      // Check if we need to forward this command
+      if (shouldForwardCommand(targetNode)) {
+          // Map parameter to control code for CAN
+          uint8_t paramCode;
+          if (strcmp(param, "b") == 0)
+              paramCode = 15;
+          else if (strcmp(param, "k") == 0)
+              paramCode = 16;
+          else {
+              Serial.println("err: Unknown parameter (must be 'b' or 'k')");
+              return true;
+          }
+          
+          if (sendControlCommand(targetNode, paramCode, value)) {
+              Serial.println("ack");
+          } else {
+              Serial.println("err: CAN forwarding failed");
+          }
+          return true;
+      }
+      
+      // Handle locally
+      if (strcmp(param, "b") == 0) {
+          if (!isInRange(value, 0.0f, 1.0f)) {
+              Serial.println("err: Beta must be between 0.0 and 1.0");
+              return true;
+          }
+          pid.setWeighting(value);
+      }
+      else if (strcmp(param, "k") == 0) {
+          pid.setGains(value, value);
+      }
+      else {
+          Serial.println("err: Unknown parameter (must be 'b' or 'k')");
+          return true;
+      }
+      Serial.println("ack");
+      return true;
+  }
+  return false;
+}
+
+//==========================================================================================================================================================
+// COMMAND PROCESSING PIPELINE
+//==========================================================================================================================================================
+
+/**
+ * Process a single command line from Serial
+ * Parses and executes commands for control, metrics, and CAN operations
+ *
+ * @param cmdLine The command string to process
+ */
+static void processCommandLine(const char *cmdLine)
+{
+    char tokens[MAX_TOKENS][TOKEN_MAX_LENGTH];
+    int numTokens = prepareCommand(cmdLine, tokens);
+    
+    if (numTokens == 0) {
+        return;
+    }
+    
+    // Try each command category handler in sequence
+    if (handleLEDCommands(tokens, numTokens)) {
+        return;
+    }
+    
+    if (handleSystemStateCommands(tokens, numTokens)) {
+        return;
+    }
+    
+    if (handleDataQueryCommands(tokens, numTokens)) {
+        return;
+    }
+    
+    if (handleStreamingCommands(tokens, numTokens)) {
+        return;
+    }
+    
+    if (handleCANNetworkCommands(tokens, numTokens)) {
+        return;
+    }
+    
+    if (handleControllerParameterCommands(tokens, numTokens)) {
+        return;
+    }
+    
+    // Help command
+    if (strcmp(tokens[0], "h") == 0) {
+        printHelp();
+        return;
+    }
+    
+    // Default response for unrecognized commands
+    Serial.println("ack");
+}
+
+/**
+ * Process any pending serial commands
+ * This function should be called regularly in the main loop
+ */
+void processSerialCommands()
+{
+  static char inputBuffer[CMD_MAX_LENGTH];
+  static int bufferPos = 0;
+
+  // Process any pending queries first
+  processPendingQueries();
+
+  while (Serial.available() > 0)
+  {
+    char c = Serial.read();
+
+    // Process complete line when newline is received
+    if (c == '\n' || c == '\r')
+    {
+      if (bufferPos > 0)
+      {
+        inputBuffer[bufferPos] = '\0';
+        processCommandLine(inputBuffer);
+        bufferPos = 0;
+      }
+    }
+    // Add character to buffer if space available
+    else if (bufferPos < CMD_MAX_LENGTH - 1)
+    {
+      inputBuffer[bufferPos++] = c;
+    }
+  }
+}
+
+//==========================================================================================================================================================
+// USER INTERFACE
+//==========================================================================================================================================================
+
+/**
+ * Print a comprehensive list of all available commands
+ * Organizes commands by category and provides descriptions
+ */
+void printHelp()
+{
+  Serial.println("\n===== Distributed Lighting Control System Commands =====\n");
+
+  Serial.println("------- LED CONTROL -------");
+  Serial.println("u <i> <val>  : Set duty cycle (0.0-1.0) for node i");
+  Serial.println("p <i> <val>  : Set brightness percentage (0-100%) for node i");
+  Serial.println("w <i> <val>  : Set power in watts for node i");
+
+  Serial.println("\n------- CONTROLLER PARAMETERS -------");
+  Serial.println("k <i> beta <val>: Set setpoint weighting factor (0.0-1.0) for node i");
+  Serial.println("k <i> k <val>   : Set both proportional and integral gain for node i");
+
+  Serial.println("\n------- SYSTEM STATE -------");
+  Serial.println("o <i> <val>  : Set occupancy (0=unoccupied, 1=occupied) for node i");
+  Serial.println("a <i> <val>  : Set anti-windup (0=off, 1=on) for node i");
+  Serial.println("f <i> <val>  : Set feedback control (0=off, 1=on) for node i");
+  Serial.println("fi <i> <val> : Set sensor filtering (0=off, 1=on) for node i");
+  Serial.println("r <i> <val>  : Set illuminance reference (lux) for node i");
+  Serial.println("st <i> <state>: Set luminaire state (off/unoccupied/occupied) for node i");
+
+  Serial.println("\n------- DATA STREAMING -------");
+  Serial.println("s <x> <i>    : Start streaming variable x from node i");
+  Serial.println("S <x> <i>    : Stop streaming variable x from node i");
+  Serial.println("  Variables: y=illuminance, u=duty, p=power, o=occupancy,");
+  Serial.println("             a=anti-windup, f=feedback, r=reference,");
+  Serial.println("             v=LDR voltage, d=external illuminance,");
+  Serial.println("             t=elapsed time, V=visibility error,");
+  Serial.println("             F=flicker, E=energy");
+
+  Serial.println("\n------- DATA QUERIES -------");
+  Serial.println("g <var> <i>  : Get value of variable <var> from node i");
+  Serial.println("  Variables: Same as streaming, plus:");
+  Serial.println("  g b <x> <i>: Get buffer history of variable x from node i");
+  Serial.println("g bigdump <i>: Get complete time series data (timestamp, lux, duty, setpoint)");
+  Serial.println("g mdump <i>  : Get comprehensive metrics (timestamp, lux, duty, setpoint, flickers, energy, visibility)");
+
+  Serial.println("\n------- CAN NETWORK -------");
+  Serial.println("c m <0|1>    : Disable/enable CAN message monitoring");
+  Serial.println("c st         : Display CAN communication statistics");
+  Serial.println("c r          : Reset CAN statistics counters");
+  Serial.println("c sc         : Scan for active nodes on the CAN network");
+  Serial.println("c l <i> <n>  : Measure round-trip latency to node i (n samples)");
+
+  Serial.println("\n------- SYSTEM -------");
+  Serial.println("h            : Display this help information");
+
+  Serial.println("\n------- DATA FORMAT NOTES -------");
+  Serial.println("Energy      : Cumulative energy consumption in joules");
+  Serial.println("Visibility  : Cumulative visibility error when lux < setpoint");
+  Serial.println("FlickerInstant: Instantaneous flicker value");
+  Serial.println("FlickerWithFilter: Cumulative flicker with filtering");
+  Serial.println("FlickerNoFilter : Cumulative flicker without filtering");
+
+  Serial.println("\nNode addressing:");
+  Serial.println("  i = 0      : Broadcast to all nodes");
+  Serial.println("  i = n      : Address specific node n");
+  Serial.println("  Use this node's ID for local commands\n");
+
+  Serial.println("======================================================\n");
+}

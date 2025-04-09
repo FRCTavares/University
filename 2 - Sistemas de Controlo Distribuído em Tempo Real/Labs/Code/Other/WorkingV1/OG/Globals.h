@@ -4,7 +4,6 @@
 #include <Arduino.h>
 #include "pico/critical_section.h"
 #include <atomic>
-#include <map>  // Add this line to include the map header
 
 //==========================================================================================================================================================
 // SYSTEM CONSTANTS
@@ -30,10 +29,6 @@ extern const float MAX_POWER_WATTS;
  * Maximum number of stream requests that can be tracked simultaneously
  */
 #define MAX_STREAM_REQUESTS 5
-
-#define MAX_CALIB_NODES 6 // Maximum number of nodes in calibration matrix
-
-#define MAX_TRACKED_NODES 16 // Maximum number of nodes to track in the network
 
 //==========================================================================================================================================================
 // SYSTEM STATE ENUMERATIONS
@@ -81,33 +76,10 @@ enum LuminaireState
 /** State change notifications */
 #define CAN_CTRL_STATE_CHANGE 0x10
 
-// Duty cycle proposal for consensus (add in CAN message types section)
-#define CAN_SENSOR_DUTY_PROPOSAL 99
-
-// Define calibration control command types
-#define CAL_CMD_INIT 101         // Initialize calibration
-#define CAL_CMD_ACK 102          // Acknowledge calibration
-#define CAL_CMD_START_NODE 103   // Start calibrating a specific node
-#define CAL_CMD_SEND_READING 104 // Send light reading
-#define CAL_CMD_NEXT_NODE 105    // Move to next node
-#define CAL_CMD_COMPLETE 106     // Calibration complete
-
-// Constants for calibration process
-const int CAL_TIMEOUT_MS = 15000;           // Wait time for acknowledgments
-const int CAL_STABILIZE_TIME_MS = 1000;     // Wait time for light stabilization
-const int CAL_CHECK_INTERVAL_MS = 100;      // Interval to check stabilization
-const float CAL_STABILITY_THRESHOLD = 0.05; // Threshold for determining stability
-
-/**
- * Illuminance setpoints for different states
- */
-extern const float SETPOINT_OFF;        // Off state target (lux)
-extern const float SETPOINT_UNOCCUPIED; // Unoccupied state target (lux)
-extern const float SETPOINT_OCCUPIED;   // Occupied state target (lux)
-
 //==========================================================================================================================================================
 // STRUCTURE DEFINITIONS
 //==========================================================================================================================================================
+
 
 /**
  * Structure to track a request to stream data to another node
@@ -125,25 +97,14 @@ struct StreamRequest
  */
 struct DeviceConfig
 {
-  uint8_t nodeId;          // Unique ID for this device (used for CAN communication)
-  float ledGain;           // Calibrated LED contribution gain
-  float calibrationOffset; // Calibration offset for sensor
-
+  uint8_t nodeId;           // Unique ID for this device (used for CAN communication)
+  float ledGain;            // Calibrated LED contribution gain
+  float calibrationOffset;  // Calibration offset for sensor
+  
   // PID tuning parameters
-  float pidKp;   // Proportional gain
-  float pidKi;   // Integral gain
-  float pidBeta; // Setpoint weighting factor
-};
-
-/*
-ADMM Structure
-*/
-struct NodeInfo {
-  float d;      // Duty cycle
-  float d_av;   // Average duty cycle across nodes
-  float y;      // Lagrangian multiplier
-  float k;      // Coupling gain
-  float c;      // Cost weight
+  float pidKp;              // Proportional gain
+  float pidKi;              // Integral gain
+  float pidBeta;            // Setpoint weighting factor
 };
 
 /**
@@ -164,38 +125,11 @@ struct SensorState
  */
 struct ControlState
 {
-  float setpointLux;                // Target illuminance level in lux
-  float dutyCycle;                  // Current LED duty cycle [0-1]
-  float pendingDutyCycle;           // Proposed duty cycle waiting for consensus
-  uint8_t consensusRound;           // Current consensus round number
-  bool consensusReached;            // Whether consensus was reached
-  unsigned long lastProposalTime;   // Last time a proposal was sent
-  uint8_t iterationCounter;         // Counter for iterations before applying duty cycle
-  LuminaireState luminaireState;    // Current luminaire operating state
-  bool feedbackControl;             // Flag for automatic feedback control (true) vs manual (false)
-  bool antiWindup;                  // PID controller anti-windup flag
-  bool standbyMode;                 // Flag to indicate if node is in standby mode waiting for wake up
-  bool systemAwake;                 // System is in wake-up discovery phase
-  bool systemReady;                 // System is fully initialized and operational
-  unsigned long discoveryStartTime; // When node discovery phase started
-
-  bool usingADMM;                // Whether ADMM control is active
-  std::map<int, NodeInfo> nodeInfo; // Node information for ADMM
-  float rho;                     // ADMM step size parameter
-  float n;                       // Sum of squares of all gains
-  float m;                       // Sum of squares minus self gain squared
-  float L;                       // Illuminance lower bound
-  float o;                       // External illuminance
-  float cost;                    // Cost parameter
-  bool equalCosts; // true for equal costs, false for different costs
-};
-
-struct CalibrationMatrix
-{
-  float gains[MAX_CALIB_NODES][MAX_CALIB_NODES]; // [i][j] = effect of node j on node i
-  float externalLight[MAX_CALIB_NODES];          // External light contribution at each node
-  uint8_t nodeIds[MAX_CALIB_NODES];              // Node IDs corresponding to matrix indices
-  int numNodes;                                  // Number of nodes in calibration
+  float setpointLux;             // Target illuminance level in lux
+  float dutyCycle;               // Current LED duty cycle [0-1]
+  LuminaireState luminaireState; // Current luminaire operating state
+  bool feedbackControl;          // Flag for automatic feedback control (true) vs manual (false)
+  bool antiWindup;               // PID controller anti-windup flag
 };
 
 /**
@@ -204,59 +138,22 @@ struct CalibrationMatrix
 struct CommState
 {
   // Streaming parameters
-  bool streamingEnabled;        // Enable periodic streaming
-  char *streamingVar;           // Identifier of variable being streamed
-  int streamingIndex;           // Index of the node for streaming
-  unsigned long lastStreamTime; // Last time a stream was sent
-
+  bool streamingEnabled;         // Enable periodic streaming
+  char* streamingVar;            // Identifier of variable being streamed
+  int streamingIndex;            // Index of the node for streaming
+  unsigned long lastStreamTime;  // Last time a stream was sent
+  
   // Remote streaming requests from other nodes
-  StreamRequest remoteStreamRequests[MAX_STREAM_REQUESTS];
-
+  StreamRequest remoteStreamRequests[MAX_STREAM_REQUESTS]; 
+  
   // Atomic flag to indicate new CAN messages are available
   std::atomic_flag hasNewMessages;
-
+  
   // CAN communication flags
-  bool periodicCANEnabled; // Enable periodic CAN transmissions
-  bool canMonitorEnabled;  // Enable monitoring of CAN messages
-
-  // Calibration status
-  bool isCalibrationMaster;             // Is this node the calibration master
-  bool calibrationInProgress;           // Is calibration currently in progress
-  bool wasCalibrating;                  // Was calibration in progress before standby
-  uint8_t calibrationStep;              // Current step in the calibration sequence
-  unsigned long calLastStepTime;        // Timestamp of last calibration step
-  uint8_t currentCalNode;               // Current node being calibrated
-  bool waitingForAcks;                  // Waiting for acknowledgments flag
-  uint8_t acksReceived;                 // Number of acknowledgments received
-  CalibrationMatrix calibMatrix;        // Matrix of calibration gains
-  float luxReadings[MAX_CALIB_NODES];   // Temporary storage for lux readings during calibration
-  unsigned long stabilizationStartTime; // When we started waiting for light levels to stabilize
-  bool measurementsStable;              // Flag indicating if measurements are stable
-  float previousReadings[5];            // Store previous readings to check for stability
-  int readingIndex;                     // Index for circular buffer of readings
-  int ourNodeIndex;                     // Index of this node in calibration matrix
-
-  bool useDefaultGains;     // Whether to use default gains instead of calibration
+  bool periodicCANEnabled;       // Enable periodic CAN transmissions
+  bool canMonitorEnabled;        // Enable monitoring of CAN messages
 };
 
-// Maximum number of neighbors to track
-#define MAX_NEIGHBORS 5
-
-// Structure to store neighbor information
-struct NeighborInfo
-{
-  uint8_t nodeId;           // CAN node ID
-  float lastLux;            // Last reported illuminance
-  float lastDuty;           // Last reported duty cycle
-  float pendingDuty;        // Proposed duty cycle (for consensus)
-  bool hasProposal;         // Whether we've received a proposal from this neighbor
-  LuminaireState state;     // Current operating state
-  unsigned long lastUpdate; // Last update timestamp
-  bool isActive;            // Is node currently active
-};
-
-// Array of neighbor information
-extern NeighborInfo neighbors[MAX_NEIGHBORS];
 //==========================================================================================================================================================
 // GLOBAL VARIABLE DECLARATIONS
 //==========================================================================================================================================================

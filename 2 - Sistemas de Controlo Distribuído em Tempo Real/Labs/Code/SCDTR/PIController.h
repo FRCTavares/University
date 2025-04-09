@@ -134,6 +134,18 @@ public:
    */
   void enableFeedforward(bool enable, float ffGain);
 
+  /**
+   * Compute PI control action with awareness of feedforward term
+   * This method adjusts the setpoint to account for the expected
+   * contribution of the feedforward term
+   *
+   * @param setpoint Target value (illuminance in lux)
+   * @param measurement Current measured value (illuminance in lux)
+   * @param feedforwardDuty Feedforward duty cycle (0.0-1.0)
+   * @return Control action adjusted to PWM range
+   */
+  float computeWithFeedforward(float setpoint, float measurement, float feedforwardDuty);
+
 private:
   //=========================================================================
   // CONTROLLER PARAMETERS

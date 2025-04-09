@@ -9,16 +9,6 @@
 //==========================================================================================================================================================
 
 /**
- * Perform comprehensive system calibration:
- * 1. Calibrate LDR sensor accuracy
- * 2. Measure LED contribution for external illuminance calculation
- *
- * @param referenceValue The reference illuminance value
- * @return Calibrated LED gain value (G)
- */
-float calibrateSystem(float referenceValue);
-
-/**
  * Start a calibration sequence as the calibration master
  * This node takes control of the calibration process across the network
  *
@@ -57,12 +47,13 @@ bool processCalibrationAck(uint8_t nodeId);
 float calibrateColumn(int columnIndex);
 
 /**
- * Process and store a light reading from another node during calibration
- *
- * @param nodeId Source node ID
- * @param reading Light reading value
+ * Process a calibration reading received from another node
+ * Stores the reading in the calibration matrix for processing
+ * 
+ * @param sourceNodeId ID of the node that sent the reading
+ * @param value The illuminance reading value
  */
-void processCalibrationReading(uint8_t nodeId, float reading);
+void processCalibrationReading(uint8_t sourceNodeId, float value);
 
 //==========================================================================================================================================================
 // CALIBRATION STATE MACHINE

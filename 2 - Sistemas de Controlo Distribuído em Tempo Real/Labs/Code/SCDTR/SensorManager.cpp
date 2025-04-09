@@ -13,7 +13,7 @@
 
 // External dependencies
 extern void setLEDDutyCycle(float dutyCycle);
-extern float calibrateSystem(float referenceValue);
+
 
 //-----------------------------------------------------------------------------
 // Sensor Configuration

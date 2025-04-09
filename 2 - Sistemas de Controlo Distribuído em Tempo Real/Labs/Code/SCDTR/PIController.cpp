@@ -146,6 +146,85 @@ float PIController::compute(float setpoint, float measurement)
   return u_sat;
 }
 
+float PIController::computeWithFeedforward(float setpoint, float measurement, float feedforwardDuty)
+{
+  // Get current ledGain for illuminance calculations
+  float dynamicKp;
+  critical_section_enter_blocking(&commStateLock);
+  dynamicKp = deviceConfig.ledGain;
+  critical_section_exit(&commStateLock);
+
+  // Determine actual setpoint (internal or external)
+  float actualSetpoint = useInternalTarget ? internalTarget : setpoint;
+
+  // Calculate expected illuminance contribution from feedforward duty
+  float expectedContribution = feedforwardDuty * dynamicKp;
+  
+  // Adjust setpoint by subtracting the expected feedforward contribution
+  // This makes the PI controller only correct the residual error
+  float adjustedSetpoint = actualSetpoint - expectedContribution;
+  
+  // Calculate error based on the adjusted setpoint
+  float e = adjustedSetpoint - measurement;
+  
+  // Calculate proportional term with setpoint weighting on the adjusted setpoint
+  Pterm = dynamicKp * (Beta * adjustedSetpoint - measurement);
+
+  // Calculate step response feedforward for setpoint changes (separate from u_ff)
+  float stepFfTerm = 0.0f;
+  if (useFeedforward)
+  {
+    float setpointChange = actualSetpoint - prevSetpoint;
+    if (fabs(setpointChange) > FEEDFORWARD_THRESHOLD)
+    {
+      stepFfTerm = Kff * setpointChange;
+    }
+  }
+  prevSetpoint = actualSetpoint;
+
+  // Calculate feedback control action (u_fb) - this is the PI correction
+  float u_fb = Pterm + Iterm + stepFfTerm;
+
+  // Apply saturation limits to the feedback term alone
+  float u_fb_sat;
+  if (u_fb > PWM_MAX)
+  {
+    u_fb_sat = PWM_MAX;
+  }
+  else if (u_fb < PWM_MIN)
+  {
+    u_fb_sat = PWM_MIN;
+  }
+  else
+  {
+    u_fb_sat = u_fb;
+  }
+
+  // Back-calculation: adjust integral when saturated
+  float saturation_error = u_fb_sat - u_fb;
+
+  // Update integral term with anti-windup if enabled
+  bool useAntiWindup;
+  critical_section_enter_blocking(&commStateLock);
+  useAntiWindup = controlState.antiWindup;
+  critical_section_exit(&commStateLock);
+
+  if (useAntiWindup)
+  {
+    Iterm += Ki * e * h + ANTI_WINDUP_GAIN * saturation_error;
+  }
+  else
+  {
+    Iterm += Ki * e * h;
+  }
+
+  e_old = e;
+
+  // Return the feedback component in PWM range (0-4095)
+  // The caller will add the feedforward duty * PWM_MAX to get total output
+  return u_fb_sat;
+}
+
 //==========================================================================================================================================================
 // CONTROLLER MANAGEMENT FUNCTIONS
 //==========================================================================================================================================================

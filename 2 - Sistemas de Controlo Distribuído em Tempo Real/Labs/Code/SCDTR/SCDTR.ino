@@ -12,6 +12,7 @@
  */
 #include <Arduino.h>
 #include <math.h>
+#include <map>
 #include "pico/multicore.h"
 
 #include "Globals.h"
@@ -31,6 +32,11 @@
 #define MSG_SEND_SENSOR 1
 #define MSG_SEND_CONTROL 2
 #define MSG_UPDATE_STATE 3
+
+// Constants for consensus protocol
+#define CONVERGENCE_THRESHOLD 0.1   // Max difference allowed for convergence
+#define MAX_CONSENSUS_ROUNDS 3       // Maximum consensus rounds before forcing update
+#define CONSENSUS_TIMEOUT_MS 2000    // Timeout for waiting on proposals
 
 // Message structure for inter-core communication
 struct CoreMessage
@@ -87,6 +93,21 @@ bool canMonitorEnabled = false;
 //=============================================================================
 
 NeighborInfo neighbors[MAX_NEIGHBORS];
+
+// =============================================================================
+// ADMM CONSENSUS PROTOCOL VARIABLES
+// =============================================================================
+
+// These variables track the ADMM consensus state
+static bool is_running_admm_consensus = false;
+static bool is_first_admm_iteration = false;
+static int admm_consensus_iteration = 0;
+static int max_admm_iterations = 10;
+static std::map<std::pair<int, uint8_t>, float> d_received_values;
+enum admm_consensus_stage_t { ADMM_CONSENSUS_ITERATION, ADMM_WAIT_FOR_MESSAGES };
+static admm_consensus_stage_t admm_consensus_stage;
+const float maxGain = 30.0f; // Maximum expected gain value
+
 
 //=============================================================================
 // SYSTEM UTILITY FUNCTIONS
@@ -245,184 +266,923 @@ void configureDeviceFromID()
   applyDeviceConfig(config);
 }
 
+//===========================================================================================================================================================
+// Distributed Consensus Protocol NO OPTIMIZATION
+//===========================================================================================================================================================
+
 /**
- * Update luminaire duty cycle using coordinated control with sequential updates
- * This function implements a decentralized control strategy that combines:
- * 1. Model-based feedforward control using neighbor information
- * 2. Local feedback control via PI controller
- * 3. Sequential update scheduling to prevent oscillations
+ * Check if enough iterations have passed to apply the duty cycle
+ * 
+ * @return true if iteration count has reached the target
  */
-bool updateCoordinatedDuty()
-{
+bool shouldApplyProposal() {
+  critical_section_enter_blocking(&commStateLock);
+  uint8_t iterations = controlState.iterationCounter;
+  critical_section_exit(&commStateLock);
+  return iterations >= 10;
+}
+
+/**
+ * Increment the iteration counter only if neighbor proposals have changed
+ */
+void incrementIterationCounterIfStale() {
+  static float lastNeighborSum = -1.0;
+  float currentSum = 0.0;
+
+  critical_section_enter_blocking(&commStateLock);
+  for (int i = 0; i < MAX_NEIGHBORS; i++) {
+    if (neighbors[i].isActive && neighbors[i].hasProposal) {
+      currentSum += neighbors[i].pendingDuty;
+    }
+  }
+  critical_section_exit(&commStateLock);
+
+  if (fabs(currentSum - lastNeighborSum) > 0.01f) {
+    lastNeighborSum = currentSum;
+    critical_section_enter_blocking(&commStateLock);
+    controlState.iterationCounter++;
+    critical_section_exit(&commStateLock);
+  }
+}
+
+/**
+ * Reset consensus state for the next round
+ */
+void resetConsensusState() {
+  critical_section_enter_blocking(&commStateLock);
+  controlState.consensusRound = 0;
+  controlState.iterationCounter = 0;
+  controlState.consensusReached = false;
+  for (int i = 0; i < MAX_NEIGHBORS; i++) {
+    if (neighbors[i].isActive) {
+      neighbors[i].hasProposal = false;
+    }
+  }
+  critical_section_exit(&commStateLock);
+}
+
+/**
+ * Update luminaire duty cycle using coordinated control with iteration-based consensus
+ * This function implements a decentralized control strategy with a two-phase approach:
+ * 1. Calculate and propose duty cycle values
+ * 2. Wait for 10 iterations before committing the change
+ * 
+ * @return true if duty cycle was updated, false otherwise
+ */
+bool updateCoordinatedControl() {
   static unsigned long lastUpdateTime = 0;
   unsigned long currentTime = millis();
 
-  // Only update every 1000ms
-  if (currentTime - lastUpdateTime < 1000)
-  {
-    return false; // Skip if not enough time has passed
+  if (currentTime - lastUpdateTime < 1000) {
+    critical_section_enter_blocking(&commStateLock);
+    float pendingDuty = controlState.pendingDutyCycle;
+    uint8_t consensusRound = controlState.consensusRound;
+    unsigned long lastProposalTime = controlState.lastProposalTime;
+    critical_section_exit(&commStateLock);
+
+    if (consensusRound > 0 && (shouldApplyProposal() || (currentTime - lastProposalTime > CONSENSUS_TIMEOUT_MS))) {
+      setLEDDutyCycle(pendingDuty);
+
+      float currentLux, setpointLux;
+      critical_section_enter_blocking(&commStateLock);
+      currentLux = sensorState.filteredLux;
+      setpointLux = controlState.setpointLux;
+      controlState.dutyCycle = pendingDuty;
+      critical_section_exit(&commStateLock);
+      resetConsensusState();
+      return true;
+    }
+
+    if (consensusRound > 0) {
+      incrementIterationCounterIfStale();
+    }
+
+    return false;
   }
 
-  // Get our node ID and current time slot
   uint8_t myNodeId;
   critical_section_enter_blocking(&commStateLock);
   myNodeId = deviceConfig.nodeId;
   bool feedbackEnabled = controlState.feedbackControl;
   LuminaireState currentState = controlState.luminaireState;
+  uint8_t consensusRound = controlState.consensusRound;
   critical_section_exit(&commStateLock);
 
-  // Always broadcast our current duty cycle on every update interval,
-  // regardless of whether it's our turn to update the control
   critical_section_enter_blocking(&commStateLock);
   float currentDuty = controlState.dutyCycle;
   critical_section_exit(&commStateLock);
+  sendSensorReading(CAN_ADDR_BROADCAST, 1, currentDuty);
 
-  // Broadcast our duty cycle so other nodes can use it in their calculations
-  sendSensorReading(CAN_ADDR_BROADCAST, 1, currentDuty); // Type 1 for duty cycle
-
-  // Skip if feedback control is disabled or node is in OFF state
-  /*if (!feedbackEnabled || currentState == STATE_OFF)
-  {
+  if (currentState == STATE_OFF) {
     lastUpdateTime = currentTime;
-    return false; // Skip update
-  }*/
-
-  // Determine if it's this node's turn to update based on timestamp and node ID
-  // This creates a 3-slot rotation (0, 1, 2) based on seconds
-  int timeSlot = (currentTime / 1000) % 3;
-  bool isMyTurn = false;
-
-  // Assign time slots based on node ID
-  if ((myNodeId == 33 && timeSlot == 0) ||
-      (myNodeId == 40 && timeSlot == 1) ||
-      (myNodeId == 52 && timeSlot == 2))
-  {
-    isMyTurn = true;
+    return false;
   }
 
-  // Only proceed with coordinated update during this node's time slot
-  if (isMyTurn)
-  {
-    // 1. Find our index in the calibration matrix
+  int timeSlot = (currentTime / 1000) % 3;
+  bool isMyTurn = (myNodeId == 33 && timeSlot == 0) || (myNodeId == 40 && timeSlot == 1) || (myNodeId == 52 && timeSlot == 2);
+
+  
+  if (isMyTurn) {
+    Serial.print("Node ");
+    Serial.print(myNodeId);
+    Serial.print(" active in time slot ");
+    Serial.println(timeSlot);
+  }
+
+  if (isMyTurn && consensusRound == 0) {
     int myIndex = -1;
     critical_section_enter_blocking(&commStateLock);
-    for (int i = 0; i < commState.calibMatrix.numNodes; i++)
-    {
-      if (commState.calibMatrix.nodeIds[i] == myNodeId)
-      {
+    for (int i = 0; i < commState.calibMatrix.numNodes; i++) {
+      if (commState.calibMatrix.nodeIds[i] == myNodeId) {
         myIndex = i;
         break;
       }
     }
     critical_section_exit(&commStateLock);
 
-    // Skip if we couldn't find our index in the matrix
-    if (myIndex < 0)
-    {
+    if (myIndex < 0) {
       lastUpdateTime = currentTime;
       return false;
     }
 
-    // 2. Get current setpoint and self-gain (k_ii)
     float setpoint, selfGain;
     critical_section_enter_blocking(&commStateLock);
     setpoint = controlState.setpointLux;
     selfGain = commState.calibMatrix.gains[myIndex][myIndex];
     critical_section_exit(&commStateLock);
 
-    // If self-gain is too small, avoid division by small numbers
-    /*if (selfGain < 0.1)
-    {
-      lastUpdateTime = currentTime;
-      return false;
-    }*/
-
-    // 3. Calculate disturbance estimate (d_i)
     float disturbance = sensorState.baselineIlluminance;
 
-    // 4. Calculate sum of neighbor influences
     float neighborSum = 0.0;
     critical_section_enter_blocking(&commStateLock);
-    for (int j = 0; j < commState.calibMatrix.numNodes; j++)
-    {
-      // Skip ourselves
-      if (j != myIndex)
-      {
+    for (int j = 0; j < commState.calibMatrix.numNodes; j++) {
+      if (j != myIndex) {
         uint8_t neighborId = commState.calibMatrix.nodeIds[j];
         float gain_ij = commState.calibMatrix.gains[myIndex][j];
 
-        // Find this neighbor's duty cycle in our neighbor tracking array
         float neighbor_duty = 0.0;
-        for (int n = 0; n < MAX_NEIGHBORS; n++)
-        {
-          if (neighbors[n].nodeId == neighborId && neighbors[n].isActive)
-          {
+        for (int n = 0; n < MAX_NEIGHBORS; n++) {
+          if (neighbors[n].nodeId == neighborId && neighbors[n].isActive) {
             neighbor_duty = neighbors[n].lastDuty;
             break;
           }
         }
-
-        // Add this neighbor's contribution to the sum
         neighborSum += gain_ij * neighbor_duty;
       }
     }
     critical_section_exit(&commStateLock);
 
-    // 5. Calculate feedforward term: u_ff = (r_i - d_i - SUM_j≠i (k_ij * u_j)) / k_ii
-    float u_ff = (setpoint - disturbance - neighborSum) / selfGain;
-
-    // Clamp feedforward term to valid range
-    u_ff = constrain(u_ff, 0.0f, 1.0f);
-
-    // 6. Calculate feedback term from PI controller
     float currentLux = sensorState.filteredLux;
-    float u_fb = pid.compute(setpoint, currentLux);
-    u_fb = constrain(u_fb / 4095.0f, 0.0f, 1.0f); // Normalize to [0,1]
 
-    // 7. Combine feedforward and feedback terms
-    float u_total = u_ff * 0.7f + u_fb * 0.3f; // Weighted combination
+    Serial.println("===== Duty Cycle Calculation =====");
+    Serial.print("Node: "); Serial.println(myNodeId);
+    Serial.print("Setpoint: "); Serial.print(setpoint);
+    Serial.print(" lux, Current: "); Serial.print(currentLux);
+    Serial.print(" lux, Baseline: "); Serial.println(disturbance);
+    Serial.print("Self gain: "); Serial.println(selfGain);
+    Serial.print("Neighbor contribution: "); Serial.println(neighborSum);
+
+    float u_ff = (setpoint - disturbance - neighborSum) / selfGain;
+    u_ff = constrain(u_ff, 0.0f, 1.0f);
+  
+    
+    // Step 1: Run the feedback controller
+    float u_fb_pwm = pid.computeWithFeedforward(setpoint, currentLux, u_ff);
+
+    // Step 2: Add the feedforward component (convert u_ff to PWM range)
+    float u_total_pwm = u_fb_pwm + (u_ff * 4095.0f);
+
+    // Step 3: Convert the total PWM output to [0,1] duty cycle
+    float u_total = u_total_pwm / 4095.0f;
     u_total = constrain(u_total, 0.0f, 1.0f);
 
-    // 8. Apply the combined control action
-    setLEDDutyCycle(u_total);
-
-    // 9. Update control state
+    // After calculating final duty cycle
+    Serial.print("Feedforward (u_ff): "); Serial.println(u_ff, 4);
+    Serial.print("Feedback (u_fb_pwm): "); Serial.println(u_fb_pwm);
+    Serial.print("Total PWM: "); Serial.println(u_total_pwm);
+    Serial.print("Final duty cycle: "); Serial.println(u_total, 4);
+    Serial.println("===============================");
+  
+    // Store pending duty cycle and update state
     critical_section_enter_blocking(&commStateLock);
-    controlState.dutyCycle = u_total;
+    controlState.pendingDutyCycle = u_total;
+    controlState.lastProposalTime = currentTime;
+    controlState.consensusRound = 1;
+    controlState.iterationCounter = 0;
+    for (int i = 0; i < MAX_NEIGHBORS; i++) {
+      if (neighbors[i].nodeId == myNodeId) {
+        neighbors[i].pendingDuty = u_total;
+        neighbors[i].hasProposal = true;
+        break;
+      }
+    }
     critical_section_exit(&commStateLock);
 
-    // Debug output
-    /*Serial.print("Coordinated Control Update: [Node ");
-    Serial.print(myNodeId);
-    Serial.print("] u_ff=");
-    Serial.print(u_ff, 3);
-    Serial.print(", u_fb=");
-    Serial.print(u_fb, 3);
-    Serial.print(", u_total=");
-    Serial.print(u_total, 3);
-    Serial.print(", setpoint=");
-    Serial.print(setpoint, 1);
-    Serial.print(", current=");
-    Serial.print(currentLux, 1);
-    Serial.print(", neighborSum=");
-    Serial.println(neighborSum, 3);*/
-  }
-
-  // At the end of the function, add this line:
-  static bool coordinatedUpdateApplied = false;
-
-  // Only set this flag to true when we actually apply a coordinated update
-  if (isMyTurn)
-  {
-    coordinatedUpdateApplied = true;
-  }
-  else
-  {
-    coordinatedUpdateApplied = false;
+    sendSensorReading(CAN_ADDR_BROADCAST, CAN_SENSOR_DUTY_PROPOSAL, u_total);
   }
 
   lastUpdateTime = currentTime;
-  return coordinatedUpdateApplied; // Return whether we applied an update
+  return false;
+}
+
+//===================================================================================================================================
+// Distributed Consensus Protocol with Optimization (ADMM)
+//===================================================================================================================================
+
+/**
+ * Check if ADMM solution is feasible
+ * 
+ * @param d Map of duty cycles to check
+ * @return true if solution is feasible
+ */
+bool checkFeasibility(const std::map<int, float>& d) {
+  const float tol = 0.001; // Tolerance for rounding errors
+  
+  uint8_t myNodeId;
+  critical_section_enter_blocking(&commStateLock);
+  myNodeId = deviceConfig.nodeId;
+  critical_section_exit(&commStateLock);
+  
+  // DEBUG: Print constraint checking details
+  Serial.print("Checking feasibility - duty cycle bounds: ");
+  Serial.print(d.at(myNodeId));
+  Serial.print(" in [0,1]? ");
+  Serial.println((d.at(myNodeId) >= -tol && d.at(myNodeId) <= 1.0 + tol) ? "Yes" : "No");
+
+  // Check if duty cycle is within bounds
+  if (d.at(myNodeId) < -tol || d.at(myNodeId) > 1.0 + tol)
+    return false;
+    
+  // Check illuminance constraint
+  float d_dot_k = 0.0;
+  critical_section_enter_blocking(&commStateLock);
+  for (const auto& item : controlState.nodeInfo) {
+    d_dot_k += d.at(item.first) * item.second.k;
+  }
+  float L = controlState.L;
+  float o = controlState.o;
+  critical_section_exit(&commStateLock);
+  
+  // DEBUG: Print illuminance constraint details
+  Serial.print("Illuminance constraint: ");
+  Serial.print(d_dot_k);
+  Serial.print(" >= ");
+  Serial.print(L - o - tol);
+  Serial.print("? ");
+  Serial.println((d_dot_k >= L - o - tol) ? "Yes" : "No");
+
+  if (d_dot_k < L - o - tol)
+    return false;
+    
+  return true;
+}
+
+/**
+ * Evaluate the cost of a solution
+ * 
+ * @param d Map of duty cycles to evaluate
+ * @return Cost value
+ */
+float evaluateCost(const std::map<int, float>& d) {
+  float cost = 0.0;
+  
+  critical_section_enter_blocking(&commStateLock);
+  float rho = controlState.rho;
+  for (const auto& item : controlState.nodeInfo) {
+    cost += item.second.c * d.at(item.first) + 
+            item.second.y * (d.at(item.first) - item.second.d_av) + 
+            rho / 2.0 * pow(d.at(item.first) - item.second.d_av, 2);
+  }
+  critical_section_exit(&commStateLock);
+  
+  return cost;
+}
+
+/**
+ * Print a map for debugging
+ */
+void printMap(const std::map<int, float>& m) {
+  Serial.print("{");
+  int i = 0;
+  for (const auto& pair : m) {
+    Serial.print(pair.first);
+    Serial.print(": ");
+    Serial.print(pair.second, 4);
+    i++;
+    if (i < m.size())
+      Serial.print(", ");
+  }
+  Serial.print("}");
+}
+
+/**
+ * Core ADMM optimization algorithm
+ * Computes the optimal duty cycle values for all nodes
+ * 
+ * @return true if a feasible solution was found
+ */
+bool runADMMIteration() {
+  uint8_t myNodeId;
+  float n, m, o, L, rho;
+  std::map<int, float> d_best;
+  std::map<int, float> z;
+  float z_dot_k = 0.0;
+  
+  critical_section_enter_blocking(&commStateLock);
+  myNodeId = deviceConfig.nodeId;
+  n = controlState.n;
+  m = controlState.m;
+  o = controlState.o;
+  L = controlState.L;
+  rho = controlState.rho;
+  
+  // Initialize computation variables
+  for (const auto& item : controlState.nodeInfo) {
+    d_best[item.first] = -1.0;
+    z[item.first] = rho * item.second.d_av - item.second.y - item.second.c;
+    z_dot_k += z[item.first] * item.second.k;
+  }
+  critical_section_exit(&commStateLock);
+  
+  float cost_best = 1e6; // Large initial value
+  
+  // -------- Solution 1: Unconstrained minimum --------
+  std::map<int, float> d_u;
+  for (auto& item : z) {
+    d_u[item.first] = 1.0 / rho * item.second;
+  }
+  
+  Serial.print("Unconstrained: ");
+  printMap(d_u);
+  
+  if (checkFeasibility(d_u)) {
+    Serial.println(" -> Feasible");
+    
+    // Store unconstrained solution and we're done
+    critical_section_enter_blocking(&commStateLock);
+    for (auto& item : controlState.nodeInfo) {
+      item.second.d = d_u[item.first];
+    }
+    critical_section_exit(&commStateLock);
+    
+    return true;
+  } else {
+    Serial.println(" -> Not feasible");
+  }
+  
+  // -------- Solution 2: Linear boundary constrained --------
+  std::map<int, float> d_bl;
+  
+  critical_section_enter_blocking(&commStateLock);
+  for (const auto& item : controlState.nodeInfo) {
+    d_bl[item.first] = 1.0 / rho * z[item.first] - 
+                       item.second.k / n * (o - L + 1.0 / rho * z_dot_k);
+  }
+  critical_section_exit(&commStateLock);
+  
+  Serial.print("Boundary linear: ");
+  printMap(d_bl);
+  
+  if (checkFeasibility(d_bl)) {
+    Serial.print(" -> Feasible");
+    float cost = evaluateCost(d_bl);
+    if (cost < cost_best) {
+      d_best = d_bl;
+      cost_best = cost;
+      Serial.println(" -> Best so far");
+    } else {
+      Serial.println();
+    }
+  } else {
+    Serial.println(" -> Not feasible");
+  }
+  
+  // -------- Solution 3: Constrained to 0 --------
+  std::map<int, float> d_b0 = d_u;
+  d_b0[myNodeId] = 0.0;
+  
+  Serial.print("0-constrained: ");
+  printMap(d_b0);
+  
+  if (checkFeasibility(d_b0)) {
+    Serial.print(" -> Feasible");
+    float cost = evaluateCost(d_b0);
+    if (cost < cost_best) {
+      d_best = d_b0;
+      cost_best = cost;
+      Serial.println(" -> Best so far");
+    } else {
+      Serial.println();
+    }
+  } else {
+    Serial.println(" -> Not feasible");
+  }
+  
+  // -------- Solution 4: Constrained to 1.0 --------
+  std::map<int, float> d_b1 = d_u;
+  d_b1[myNodeId] = 1.0;
+  
+  Serial.print("1-constrained: ");
+  printMap(d_b1);
+  
+  if (checkFeasibility(d_b1)) {
+    Serial.print(" -> Feasible");
+    float cost = evaluateCost(d_b1);
+    if (cost < cost_best) {
+      d_best = d_b1;
+      cost_best = cost;
+      Serial.println(" -> Best so far");
+    } else {
+      Serial.println();
+    }
+  } else {
+    Serial.println(" -> Not feasible");
+  }
+  
+  // -------- Solution 5: Linear and 0 bounded --------
+  std::map<int, float> d_l0;
+  
+  critical_section_enter_blocking(&commStateLock);
+  for (const auto& item : controlState.nodeInfo) {
+    float k_idx = controlState.nodeInfo[myNodeId].k;
+    d_l0[item.first] = 1.0 / rho * z[item.first] - 
+                        1.0 / m * item.second.k * (o - L) + 
+                        1.0 / rho / m * item.second.k * (k_idx * z[myNodeId] - z_dot_k);
+  }
+  d_l0[myNodeId] = 0.0;
+  critical_section_exit(&commStateLock);
+  
+  Serial.print("Linear+0: ");
+  printMap(d_l0);
+  
+  if (checkFeasibility(d_l0)) {
+    Serial.print(" -> Feasible");
+    float cost = evaluateCost(d_l0);
+    if (cost < cost_best) {
+      d_best = d_l0;
+      cost_best = cost;
+      Serial.println(" -> Best so far");
+    } else {
+      Serial.println();
+    }
+  } else {
+    Serial.println(" -> Not feasible");
+  }
+  
+  // -------- Solution 6: Linear and 1.0 bounded --------
+  std::map<int, float> d_l1;
+  
+  critical_section_enter_blocking(&commStateLock);
+  for (const auto& item : controlState.nodeInfo) {
+    float k_idx = controlState.nodeInfo[myNodeId].k;
+    d_l1[item.first] = 1.0 / rho * z[item.first] - 
+                        1.0 / m * item.second.k * (o - L + 1.0 * k_idx) + 
+                        1.0 / rho / m * item.second.k * (k_idx * z[myNodeId] - z_dot_k);
+  }
+  d_l1[myNodeId] = 1.0;
+  critical_section_exit(&commStateLock);
+  
+  Serial.print("Linear+1: ");
+  printMap(d_l1);
+  
+  if (checkFeasibility(d_l1)) {
+    Serial.print(" -> Feasible");
+    float cost = evaluateCost(d_l1);
+    if (cost < cost_best) {
+      d_best = d_l1;
+      cost_best = cost;
+      Serial.println(" -> Best so far");
+    } else {
+      Serial.println();
+    }
+  } else {
+    Serial.println(" -> Not feasible");
+  }
+  
+  // Update with the best solution found
+  if (cost_best < 1e6) {
+    critical_section_enter_blocking(&commStateLock);
+
+  // Normalize values to ensure they're in [0,1] range
+  for (auto& item : controlState.nodeInfo) {
+    float normalized = constrain(d_best[item.first], 0.0f, 1.0f);
+    if (fabs(normalized - d_best[item.first]) > 0.01f) {
+      Serial.print("WARNING: Normalizing node ");
+      Serial.print(item.first);
+      Serial.print(" from ");
+      Serial.print(d_best[item.first], 4);
+      Serial.print(" to ");
+      Serial.println(normalized, 4);
+    }
+    item.second.d = normalized;
+  }
+  
+  critical_section_exit(&commStateLock);
+  
+  Serial.print("Selected solution: ");
+  printMap(d_best);
+  Serial.println();
+  
+  return true;
+}
+  
+  // No feasible solution found
+  return false;
+}
+
+/**
+ * Initialize the ADMM algorithm parameters
+ */
+void initADMMConsensus() {
+  uint8_t myNodeId;
+  critical_section_enter_blocking(&commStateLock);
+  myNodeId = deviceConfig.nodeId;
+  controlState.usingADMM = true;
+  controlState.rho = 0.07; // ADMM step size parameter
+  
+  // Cost weight should reflect energy savings priority
+  controlState.cost = 1.0;
+  Serial.print("Cost mode: ");
+  Serial.println(controlState.equalCosts ? "EQUAL" : "DIFFERENT");
+  critical_section_exit(&commStateLock);
+  
+  // Clear any previous state
+  Serial.println("Initializing node information from calibration matrix:");
+  critical_section_enter_blocking(&commStateLock);
+  controlState.nodeInfo.clear();
+  critical_section_exit(&commStateLock);
+  
+  // Parse the calibration matrix to set up ADMM
+  critical_section_enter_blocking(&commStateLock);
+  for (int i = 0; i < commState.calibMatrix.numNodes; i++) {
+    uint8_t nodeId = commState.calibMatrix.nodeIds[i];
+    NodeInfo info;
+    info.d = 0.0;
+    info.d_av = 0.0;
+    info.y = 0.0;
+    info.k = 0.0;
+    info.c = 0.0;
+    
+    // Find our row in the calibration matrix
+    for (int j = 0; j < commState.calibMatrix.numNodes; j++) {
+      if (commState.calibMatrix.nodeIds[j] == myNodeId) {
+        // Get the gain effect of node i on our node
+        info.k = commState.calibMatrix.gains[j][i] / 100.0; // Convert to proportion
+        Serial.print("Node ");
+        Serial.print(nodeId);
+        Serial.print(" k = ");
+        Serial.println(info.k, 4);
+        break;
+      }
+    }
+
+    // Calculate maxGain for cost normalization
+    float maxGain = 0.0;
+    for (int j = 0; j < commState.calibMatrix.numNodes; j++) {
+      if (commState.calibMatrix.gains[j][j] > maxGain) 
+        maxGain = commState.calibMatrix.gains[j][j];
+    }
+
+    // Use a minimum value to avoid division by zero
+    if (maxGain < 0.1f) maxGain = 1.0f;
+
+    // Set cost weight based on mode
+    if (controlState.equalCosts){
+      // All nodes have the same cost
+      info.c = controlState.cost;
+    }
+    else{
+      // Based on illumination gain (higher gain = higher cost priority)
+      info.c = controlState.cost * (1.0 + info.k / maxGain);
+    }
+    Serial.print("Node ");
+    Serial.print(nodeId);
+    Serial.print(" cost = ");
+    Serial.println(info.c, 4);
+
+    // Set the cost for this node
+    controlState.nodeInfo[nodeId] = info;
+  }
+  
+  // Calculate n and m parameters
+  float n = 0.0;
+  for (const auto& item : controlState.nodeInfo) {
+    n += item.second.k * item.second.k;
+  }
+  controlState.n = n;
+  
+  float self_gain_squared = pow(controlState.nodeInfo[myNodeId].k, 2);
+  controlState.m = n - self_gain_squared;
+  
+  // Get external illuminance
+  controlState.o = sensorState.baselineIlluminance;
+  
+  // Set lower bound based on setpoint
+  controlState.L = controlState.setpointLux;
+  critical_section_exit(&commStateLock);
+  
+  // Initialize the consensus process
+  is_running_admm_consensus = true;
+  is_first_admm_iteration = true;
+  admm_consensus_stage = ADMM_CONSENSUS_ITERATION;
+  d_received_values.clear();
+  admm_consensus_iteration = 0;
+  
+  Serial.println("ADMM consensus initialized");
+}
+
+/**
+ * Send our duty cycle proposals to all nodes
+ */
+void broadcastADMMValues() {
+  uint8_t myNodeId;
+  critical_section_enter_blocking(&commStateLock);
+  myNodeId = deviceConfig.nodeId;
+  
+  // For each node in our node info, send our proposal
+  for (const auto& item : controlState.nodeInfo) {
+    // Prepare duty cycle data: first byte is target node ID
+    uint8_t data[5];
+    data[0] = item.first;
+    
+    // Next 4 bytes are float value
+    float value = item.second.d;
+    memcpy(data+1, &value, sizeof(value));
+    
+    // Send the message
+    sendSensorReading(CAN_ADDR_BROADCAST, CAN_SENSOR_DUTY_PROPOSAL, *((float*)data));
+    
+    Serial.print("Sent ADMM proposal to node ");
+    Serial.print(item.first);
+    Serial.print(": ");
+    Serial.println(value, 4);
+  }
+  critical_section_exit(&commStateLock);
+}
+
+/**
+ * Process received ADMM consensus values from other nodes
+ * 
+ * @param sourceNodeId Node ID that sent the message
+ * @param data Byte array containing the message data
+ */
+void processADMMMessage(uint8_t sourceNodeId, const uint8_t* data) {
+  if (!is_running_admm_consensus) return;
+  
+  // First byte is the target node ID
+  uint8_t targetNodeId = data[0];
+  
+  // Next 4 bytes are the float value
+  float value;
+  memcpy(&value, data+1, sizeof(value));
+  
+  // Store in our map with pair key
+  d_received_values[{sourceNodeId, targetNodeId}] = value;
+  
+  Serial.print("ADMM MSG: Node ");
+  Serial.print(sourceNodeId);
+  Serial.print(" proposes for node ");
+  Serial.print(targetNodeId);
+  Serial.print(": d=");
+  Serial.println(value, 4);
+}
+
+/**
+ * Check if we have received all expected ADMM messages
+ * 
+ * @return true if all messages received
+ */
+bool haveAllADMMMessages() {
+  int expected = 0;
+  int active_nodes = 0;
+  
+  critical_section_enter_blocking(&commStateLock);
+  active_nodes = controlState.nodeInfo.size();
+  critical_section_exit(&commStateLock);
+  
+  // Each node sends proposals for all nodes
+  expected = (active_nodes - 1) * active_nodes;
+  
+  return d_received_values.size() >= expected;
+}
+
+void testADMMConvergence() {
+  Serial.println("\n==== ADMM CONVERGENCE TEST ====");
+  
+  // Test with different costs
+  bool testModes[] = {true, false};  // true = equal costs, false = different costs
+  
+  for (int mode = 0; mode < 2; mode++) {
+    // Set cost mode
+    critical_section_enter_blocking(&commStateLock);
+    controlState.equalCosts = testModes[mode];
+    critical_section_exit(&commStateLock);
+    
+    Serial.print("\nTesting with ");
+    Serial.print(testModes[mode] ? "EQUAL" : "DIFFERENT");
+    Serial.println(" costs");
+    
+    // Init ADMM and run for several iterations
+    initADMMConsensus();
+    
+    for (int iter = 0; iter < 10; iter++) {
+      Serial.print("\nIteration ");
+      Serial.println(iter+1);
+      
+      bool result = runADMMIteration();
+      
+      Serial.print("Found feasible solution: ");
+      Serial.println(result ? "YES" : "NO");
+      
+      // Print current state
+      critical_section_enter_blocking(&commStateLock);
+      Serial.println("Current duty cycles:");
+      for (const auto& item : controlState.nodeInfo) {
+        Serial.print("Node ");
+        Serial.print(item.first);
+        Serial.print(": ");
+        Serial.println(item.second.d, 4);
+      }
+      critical_section_exit(&commStateLock);
+      
+      delay(500);
+    }
+  }
+  
+  Serial.println("\n==== TEST COMPLETE ====");
+}
+
+/**
+ * Update our duty cycle averages based on received values
+ */
+void updateADMMDutyAverages() {
+  uint8_t myNodeId;
+  critical_section_enter_blocking(&commStateLock);
+  myNodeId = deviceConfig.nodeId;
+  
+  // For each node ID in our node info
+  for (auto& item : controlState.nodeInfo) {
+    uint8_t targetNodeId = item.first;
+    
+    // Start with our own value
+    float sum = item.second.d;
+    int count = 1;
+    
+    // Add values from all other nodes
+    for (const auto& received : d_received_values) {
+      if (received.first.second == targetNodeId) { // If this is for the current target
+        sum += received.second;
+        count++;
+      }
+    }
+    
+    // Calculate average
+    if (count > 0) {
+      item.second.d_av = sum / count;
+      
+      Serial.print("Updated average for node ");
+      Serial.print(targetNodeId);
+      Serial.print(": ");
+      Serial.println(item.second.d_av, 4);
+    }
+  }
+  critical_section_exit(&commStateLock);
+}
+
+/**
+ * Update Lagrangian multipliers for ADMM
+ */
+void updateADMMLagrangianMultipliers() {
+  critical_section_enter_blocking(&commStateLock);
+  float rho = controlState.rho;
+  
+  // For each node in our node info
+  for (auto& item : controlState.nodeInfo) {
+    // Update Lagrangian multiplier
+    item.second.y = item.second.y + rho * (item.second.d - item.second.d_av);
+    
+    Serial.print("Updated Lagrangian for node ");
+    Serial.print(item.first);
+    Serial.print(": ");
+    Serial.println(item.second.y, 4);
+  }
+  critical_section_exit(&commStateLock);
+}
+
+/**
+ * Apply the ADMM consensus result to our control system
+ */
+void applyADMMResult() {
+  uint8_t myNodeId;
+  float duty;
+  
+  critical_section_enter_blocking(&commStateLock);
+  myNodeId = deviceConfig.nodeId;
+  duty = controlState.nodeInfo[myNodeId].d_av;
+  
+  // Ensure value is within bounds
+  duty = constrain(duty, 0.0f, 1.0f);
+  
+  // Set as our new duty cycle
+  controlState.dutyCycle = duty;
+  controlState.pendingDutyCycle = duty;
+  
+  // Convert to PWM value for LED
+  float pwm_duty = duty * 4095.0f;
+  critical_section_exit(&commStateLock);
+  
+  // Apply the duty cycle
+  setLEDDutyCycle(duty);
+  
+  Serial.print("ADMM Final duty cycle: ");
+  Serial.println(duty, 4);
+  
+  // Reset consensus state for next time
+  is_running_admm_consensus = false;
+}
+
+/**
+ * Main ADMM consensus loop function
+ * Call this periodically to run the ADMM optimization
+ * 
+ * @return true if duty cycle was updated
+ */
+bool updateADMMConsensus() {
+  static unsigned long last_run_time = 0;
+  unsigned long current_time = millis();
+  
+  // Only run once per second
+  if (current_time - last_run_time < 1000) {
+    return false;
+  }
+  
+  last_run_time = current_time;
+  
+  // Only proceed if we're doing ADMM
+  if (!is_running_admm_consensus) {
+    // Check if we should initialize ADMM
+    critical_section_enter_blocking(&commStateLock);
+    bool should_use_admm = controlState.usingADMM && 
+                           controlState.luminaireState != STATE_OFF &&
+                           commState.calibMatrix.numNodes > 0;
+    critical_section_exit(&commStateLock);
+    
+    if (should_use_admm) {
+      initADMMConsensus();
+    } else {
+      return false;
+    }
+  }
+  
+  // Process the current consensus stage
+  switch (admm_consensus_stage) {
+    case ADMM_CONSENSUS_ITERATION:
+      admm_consensus_iteration++;
+      Serial.print("\n=== ADMM Iteration ");
+      Serial.print(admm_consensus_iteration);
+      Serial.println(" ===");
+      
+      if (is_first_admm_iteration) {
+        // First iteration already initialized in initADMMConsensus
+        is_first_admm_iteration = false;
+      }
+      
+      // Run the ADMM optimization iteration
+      if (runADMMIteration()) {
+        // Broadcast our values to other nodes
+        broadcastADMMValues();
+      } else {
+        Serial.println("No feasible solution found!");
+      }
+      
+      // Move to wait state
+      admm_consensus_stage = ADMM_WAIT_FOR_MESSAGES;
+      d_received_values.clear();
+      break;
+      
+    case ADMM_WAIT_FOR_MESSAGES:
+      // Check if we have all messages or timeout
+      if (haveAllADMMMessages() || (current_time - last_run_time > 1500)) {
+        // Update our averages based on received values
+        updateADMMDutyAverages();
+        
+        // Update Lagrangian multipliers
+        updateADMMLagrangianMultipliers();
+        
+        // Check if we've reached max iterations
+        if (admm_consensus_iteration >= max_admm_iterations) {
+          // Consensus complete - apply result
+          applyADMMResult();
+          return true;
+        } else {
+          // Continue to next iteration
+          admm_consensus_stage = ADMM_CONSENSUS_ITERATION;
+        }
+      }
+      break;
+  }
+  
+  return false;
 }
 
 //=============================================================================
@@ -470,7 +1230,26 @@ void setup()
   controlState.systemReady = false;
   controlState.discoveryStartTime = 0;
 
-  // Add to initialization in setup():
+  commState.useDefaultGains = true;  // Default to real calibration
+
+  // Initialize the consensus-related fields
+  controlState.pendingDutyCycle = 0.0;
+  controlState.consensusRound = 0;
+  controlState.consensusReached = false;
+  controlState.lastProposalTime = 0;
+  controlState.iterationCounter = 0;  // Initialize the iteration counter
+
+  // Initialize ADMM-related state
+  controlState.usingADMM = false; // Start with sequential control by default
+  controlState.rho = 0.07;
+  controlState.cost = 1.0;
+  
+  // Initialize neighbor proposal flags
+  for (int i = 0; i < MAX_NEIGHBORS; i++) {
+      neighbors[i].pendingDuty = 0.0;
+      neighbors[i].hasProposal = false;
+  }
+
   commState.readingIndex = 0;
   commState.measurementsStable = false;
   for (int i = 0; i < 5; i++)
@@ -501,38 +1280,37 @@ void setup()
  */
 void loop()
 {
-  // Check if in standby mode - skip most processing if true
+  // ===============================================================
+  // SYSTEM STATE MANAGEMENT
+  // ===============================================================
+  
+  // Get current system state
   critical_section_enter_blocking(&commStateLock);
   bool inStandby = controlState.standbyMode;
   bool inWakeUpDiscovery = controlState.systemAwake && !controlState.systemReady;
   bool isSystemReady = controlState.systemReady;
   unsigned long discoveryStartTime = controlState.discoveryStartTime;
   critical_section_exit(&commStateLock);
+  
+  float lux = readLux();
 
-  if (inStandby)
-  {
-    // Only process commands (to catch WakeUp command) while in standby
-    // Serial.println("System in standby mode. Waiting for wakeup command...");
-    processSerialCommands();
+  // Process serial commands in all states (required for standby wake-up)
+  processSerialCommands();
+
+  // Handle standby mode - minimal processing
+  if (inStandby) {
     delay(100); // Reduced CPU usage while in standby
     return;     // Skip the rest of the loop
   }
 
   // Handle wake-up discovery phase
-  if (inWakeUpDiscovery)
-  {
-    // Process commands during discovery
-    processSerialCommands();
-    // Serial.println("System in discovery phase. Waiting for calibration...");
-
-    // Check if discovery period has ended (10 seconds)
-    if (millis() - discoveryStartTime > 10000)
-    {
-      // Discovery period complete - display discovered nodes
+  if (inWakeUpDiscovery) {
+    // Check if discovery period has ended (5 seconds)
+    if (millis() - discoveryStartTime > 5000) {
       Serial.println("\nNode discovery phase complete");
       displayDiscoveredNodes();
 
-      // Initiate calibration sequence
+      // Transition to calibration phase
       Serial.println("Starting system calibration as coordinated...");
       critical_section_enter_blocking(&commStateLock);
       controlState.systemAwake = false;
@@ -549,102 +1327,109 @@ void loop()
     return;
   }
 
-  // (A) Process incoming serial commands
-  processSerialCommands();
+  // ===============================================================
+  // INPUT PROCESSING
+  // ===============================================================
+  
+  // Read sensor data - do this early to have fresh data for all functions
+  
+  
+  // Update filtered lux value in the sensor state
+  critical_section_enter_blocking(&commStateLock);
+  sensorState.filteredLux = lux;
+  critical_section_exit(&commStateLock);
 
-  // Add coordinated control update and capture whether it was applied
-  bool coordUpdateApplied = updateCoordinatedDuty();
-
-  // (B) Handle streaming
-  handleStreaming();
-  handleRemoteStreamRequests();
-
-  // (C) Read sensor data safely
-  float lux = readLux();
-
-  // Update calibration state machine if calibration is in progress
+  // ===============================================================
+  // CALIBRATION MANAGEMENT
+  // ===============================================================
+  
+  // Check calibration status
   critical_section_enter_blocking(&commStateLock);
   bool calibInProgress = commState.calibrationInProgress;
   bool wasCalibrating = commState.wasCalibrating;
   critical_section_exit(&commStateLock);
 
-  if (calibInProgress)
-  {
+  // Handle active calibration process
+  if (calibInProgress) {
     updateCalibrationState();
+    // Skip control during calibration
+    logData(millis(), lux, 0.0f);
+    delay((int)(pid.getSamplingTime() * 1000));
+    return;
   }
-  else if (wasCalibrating)
-  {
-    // Reset the flag after calibration is done
-    critical_section_enter_blocking(&commStateLock);
-    commState.wasCalibrating = false; // Clear the flag
-    controlState.systemReady = true;  // Set system ready after calibration
-    critical_section_exit(&commStateLock);
-
-    // Explicitly set state to UNOCCUPIED
-    changeState(STATE_UNOCCUPIED);
-
-    // Initialize with a non-zero duty cycle to start coordinated control
-    float initialDuty = SETPOINT_UNOCCUPIED / deviceConfig.ledGain;
-    initialDuty = constrain(initialDuty, 0.1f, 0.7f); // Reasonable limits
-    setLEDDutyCycle(initialDuty);
-
-    // Reset PID controller with initial state to avoid large transient
-    pid.reset();
-
-    critical_section_enter_blocking(&commStateLock);
-    controlState.dutyCycle = initialDuty; // Set initial duty cycle
-    critical_section_exit(&commStateLock);
-
-    // Broadcast to ensure all nodes receive this state
-    sendControlCommand(CAN_ADDR_BROADCAST, CAN_CTRL_STATE_CHANGE, (float)STATE_UNOCCUPIED);
-
-    // Also broadcast initial duty cycle so nodes can start coordinating
-    sendSensorReading(CAN_ADDR_BROADCAST, 1, 0.3f);
-
-    Serial.println("Calibration complete - entering UNOCCUPIED state");
+  
+  // Handle post-calibration initialization
+  if (wasCalibrating) {
+    handlePostCalibrationSetup();
+    return;
   }
 
-  //  Always update filtered lux value in the sensor state
+  // ===============================================================
+  // CONTROL SYSTEM EXECUTION
+  // ===============================================================
+  
+  // Determine which control method to use
   critical_section_enter_blocking(&commStateLock);
-  sensorState.filteredLux = lux;
+  bool useADMM = controlState.usingADMM;
   critical_section_exit(&commStateLock);
 
-  // Only apply standard control if coordinated control wasn't applied this cycle
-  if (!coordUpdateApplied)
-  {
-    critical_section_enter_blocking(&commStateLock);
-    LuminaireState state = controlState.luminaireState;
-    bool feedback = controlState.feedbackControl;
-    float setpoint = controlState.setpointLux;
-    float manualDuty = controlState.dutyCycle;
-    critical_section_exit(&commStateLock);
-
-    // Modified control logic - allow manual control regardless of state
-    if (feedback && state != STATE_OFF)
-    {
-      // Only do automatic feedback control if it's enabled AND not in OFF state
-      float u = pid.compute(setpoint, lux);
-      setLEDPWMValue((int)u);
-    }
-    else
-    {
-      // Otherwise use manual duty cycle (which could be 0 for OFF state
-      // or whatever value was set by the "u" command)
-      setLEDDutyCycle(manualDuty);
-    }
-
-    // Update duty cycle after control action
-    critical_section_enter_blocking(&commStateLock);
-    controlState.dutyCycle = getLEDDutyCycle();
-    critical_section_exit(&commStateLock);
+  // Execute selected control algorithm
+  bool controlUpdateApplied = false;
+  if (useADMM) {
+    controlUpdateApplied = updateADMMConsensus();
+  } else {
+    controlUpdateApplied = updateCoordinatedControl();
   }
 
-  // Log data
+  // Handle streaming requests
+  handleStreaming();
+  handleRemoteStreamRequests();
+
+  // ===============================================================
+  // DATA LOGGING AND TIMING
+  // ===============================================================
+  
+  // Log data for monitoring and metrics
   logData(millis(), lux, controlState.dutyCycle);
 
   // Wait for next control cycle
   delay((int)(pid.getSamplingTime() * 1000));
 }
+
+/**
+ * Handle post-calibration system setup
+ * Initializes control state after calibration is complete
+ */
+void handlePostCalibrationSetup() {
+  // Reset calibration flags and set system as ready
+  critical_section_enter_blocking(&commStateLock);
+  commState.wasCalibrating = false;
+  controlState.systemReady = true;
+  critical_section_exit(&commStateLock);
+
+  // Set initial state to UNOCCUPIED
+  changeState(STATE_UNOCCUPIED);
+
+  // Calculate and apply initial duty cycle
+  float initialDuty = SETPOINT_UNOCCUPIED / deviceConfig.ledGain;
+  initialDuty = constrain(initialDuty, 0.1f, 0.7f);
+  setLEDDutyCycle(initialDuty);
+
+  // Reset PID controller to avoid transients
+  pid.reset();
+
+  // Update control state with initial settings
+  critical_section_enter_blocking(&commStateLock);
+  controlState.dutyCycle = initialDuty;
+  critical_section_exit(&commStateLock);
+
+  // Broadcast state change and initial duty cycle to network
+  sendControlCommand(CAN_ADDR_BROADCAST, CAN_CTRL_STATE_CHANGE, (float)STATE_UNOCCUPIED);
+  sendSensorReading(CAN_ADDR_BROADCAST, 1, initialDuty);
+
+  Serial.println("Calibration complete!");
+}
+
 
 /**
  * Core 0: CAN Communication processing function

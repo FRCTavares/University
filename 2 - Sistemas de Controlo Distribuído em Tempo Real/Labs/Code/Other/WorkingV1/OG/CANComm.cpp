@@ -1,27 +1,11 @@
-#include <Arduino.h>
-#include <math.h>
-#include "pico/multicore.h"
-#include <SPI.h>
-
-#include "Globals.h"
 #include "CANComm.h"
-#include "CommandInterface.h"
-#include "DataLogger.h"
-#include "LEDDriver.h"
-#include "Metrics.h"
+#include <SPI.h>
+#include "Globals.h"
 #include "PIController.h"
-#include "SensorManager.h"
-#include "Calibration.h"
 
 extern float readLux();
 extern float getPowerConsumption();
 extern float getVoltageAtLDR();
-extern float getExternalIlluminance();
-
-// Add near the top with other external declarations:
-extern const float SETPOINT_OFF;
-extern const float SETPOINT_UNOCCUPIED;
-extern const float SETPOINT_OCCUPIED;
 
 //==========================================================================================================================================================
 // CONFIGURATION AND INITIALIZATION
@@ -46,28 +30,8 @@ static uint32_t msgErrors = 0;
 static unsigned long lastLatencyMeasure = 0;
 static unsigned long totalLatency = 0;
 static uint32_t latencySamples = 0;
-bool responseReceived = false;
-uint8_t responseSourceNode = 0;
-float responseValue = 0.0f;
 
 extern bool canMonitorEnabled;
-
-// Node discovery and tracking constants
-const unsigned long NODE_TIMEOUT_MS = 15000; // 15 seconds without heartbeat marks node as inactive
-
-// Structure to track discovered nodes
-struct DiscoveredNode
-{
-  uint8_t nodeId;              // Node identifier
-  unsigned long lastHeartbeat; // Time of last heartbeat (milliseconds)
-  bool isActive;               // Is the node currently active
-  uint8_t status;              // Status flags from last heartbeat
-  unsigned long uptime;        // Node's reported uptime in seconds
-};
-
-// Array to store discovered nodes
-static DiscoveredNode discoveredNodes[MAX_TRACKED_NODES];
-static int numDiscoveredNodes = 0;
 
 /**
  * Initialize the CAN communication interface
@@ -89,7 +53,7 @@ void initCANComm()
   // Set normal mode (not loopback or listen-only)
   can0.setNormalMode();
 
-  initNodeDiscovery();
+  Serial.println("CANComm: CAN initialized in normal mode");
 
   Serial.print("CANComm: Node ID assigned: ");
   critical_section_enter_blocking(&commStateLock);
@@ -329,242 +293,6 @@ bool sendQueryResponse(uint8_t destNode, float value)
   }
 }
 
-/**
- * Send a heartbeat message to indicate node presence
- * Periodically broadcast to maintain network awareness
- *
- * @return true if message was successfully queued, false otherwise
- */
-bool sendHeartbeat()
-{
-  can_frame frame;
-
-  // Configure message ID with heartbeat type and broadcast address
-  frame.can_id = buildCANId(CAN_TYPE_HEARTBEAT, CAN_ADDR_BROADCAST);
-  frame.can_dlc = 8;
-
-  // Read current state safely
-  critical_section_enter_blocking(&commStateLock);
-  uint8_t nodeId = deviceConfig.nodeId;
-  uint8_t statusFlags = 0;
-
-  // Pack status flags: bit0=feedback, bit1-2=luminaireState
-  statusFlags |= (controlState.feedbackControl ? 0x01 : 0x00);
-  statusFlags |= ((uint8_t)controlState.luminaireState << 1) & 0x06;
-  critical_section_exit(&commStateLock);
-
-  // Payload format:
-  // [0] = Source node ID
-  // [1] = Status flags
-  // [2-5] = Node uptime in seconds (32-bit little-endian)
-  // [6-7] = Reserved (set to 0)
-  frame.data[0] = nodeId;
-  frame.data[1] = statusFlags;
-
-  // Include uptime in seconds
-  unsigned long uptime = millis() / 1000;
-  frame.data[2] = uptime & 0xFF;
-  frame.data[3] = (uptime >> 8) & 0xFF;
-  frame.data[4] = (uptime >> 16) & 0xFF;
-  frame.data[5] = (uptime >> 24) & 0xFF;
-
-  // Reserved bytes
-  frame.data[6] = 0;
-  frame.data[7] = 0;
-
-  // Send the message
-  MCP2515::ERROR result = sendCANMessage(frame);
-
-  if (result == MCP2515::ERROR_OK)
-  {
-    msgSent++;
-    return true;
-  }
-  else
-  {
-    msgErrors++;
-    return false;
-  }
-}
-
-/**
- * Initialize node discovery system
- * Clears the tracked nodes array
- */
-void initNodeDiscovery()
-{
-  for (int i = 0; i < MAX_TRACKED_NODES; i++)
-  {
-    discoveredNodes[i].isActive = false;
-  }
-  numDiscoveredNodes = 0;
-}
-
-/**
- * Process incoming heartbeat message
- * Updates node tracking data with received heartbeat information
- *
- * @param nodeId Source node ID
- * @param statusFlags Status flags from heartbeat message
- * @param uptime Node uptime in seconds
- */
-void handleHeartbeatMessage(uint8_t nodeId, uint8_t statusFlags, unsigned long uptime)
-{
-  // Don't track our own node
-  critical_section_enter_blocking(&commStateLock);
-  bool isOurNode = (nodeId == deviceConfig.nodeId);
-  critical_section_exit(&commStateLock);
-
-  if (isOurNode)
-  {
-    return;
-  }
-
-  // This prevents phantom nodes from appearing in the list
-  bool isValidNode = (nodeId > 0 && nodeId <= 63);
-
-  // Also reject nodes with suspicious data (like zero uptime combined with status flags)
-  if (!isValidNode || (uptime == 0 && statusFlags == 0))
-  {
-    if (canMonitorEnabled)
-    {
-      Serial.print("WARNING: Ignoring heartbeat from invalid node ID: ");
-      Serial.println(nodeId);
-    }
-    return;
-  }
-
-  // Check if node already exists
-  int nodeIndex = -1;
-  for (int i = 0; i < numDiscoveredNodes; i++)
-  {
-    if (discoveredNodes[i].nodeId == nodeId)
-    {
-      nodeIndex = i;
-      break;
-    }
-  }
-
-  unsigned long currentTime = millis();
-
-  // If node not found, add it
-  if (nodeIndex == -1)
-  {
-    if (numDiscoveredNodes < MAX_TRACKED_NODES)
-    {
-      nodeIndex = numDiscoveredNodes++;
-
-      if (canMonitorEnabled)
-      {
-        Serial.print("CAN: Discovered new node: ");
-        Serial.println(nodeId);
-      }
-    }
-    else
-    {
-      // Find oldest inactive node to replace
-      unsigned long oldestTime = ULONG_MAX;
-      for (int i = 0; i < MAX_TRACKED_NODES; i++)
-      {
-        if (!discoveredNodes[i].isActive && discoveredNodes[i].lastHeartbeat < oldestTime)
-        {
-          nodeIndex = i;
-          oldestTime = discoveredNodes[i].lastHeartbeat;
-        }
-      }
-
-      // If no inactive nodes, ignore new node
-      if (nodeIndex == -1)
-      {
-        return;
-      }
-    }
-
-    // Initialize new node entry
-    discoveredNodes[nodeIndex].nodeId = nodeId;
-    discoveredNodes[nodeIndex].isActive = true;
-  }
-
-  // Update node information
-  discoveredNodes[nodeIndex].lastHeartbeat = currentTime;
-  discoveredNodes[nodeIndex].status = statusFlags;
-  discoveredNodes[nodeIndex].uptime = uptime;
-  discoveredNodes[nodeIndex].isActive = true;
-}
-
-/**
- * Update status of discovered nodes
- * Marks nodes as inactive if no heartbeat received within timeout period
- * Should be called periodically
- */
-void updateNodeStatus()
-{
-  unsigned long currentTime = millis();
-
-  for (int i = 0; i < numDiscoveredNodes; i++)
-  {
-    if (discoveredNodes[i].isActive &&
-        (currentTime - discoveredNodes[i].lastHeartbeat) > NODE_TIMEOUT_MS)
-    {
-      discoveredNodes[i].isActive = false;
-
-      if (canMonitorEnabled)
-      {
-        Serial.print("CAN: Node ");
-        Serial.print(discoveredNodes[i].nodeId);
-        Serial.println(" marked inactive (timeout)");
-      }
-    }
-  }
-}
-
-/**
- * Get list of active nodes
- *
- * @param nodeList Array to store active node IDs
- * @param maxNodes Maximum number of nodes to return
- * @return Number of active nodes found
- */
-int getActiveNodes(uint8_t *nodeList, int maxNodes)
-{
-  int count = 0;
-
-  for (int i = 0; i < numDiscoveredNodes && count < maxNodes; i++)
-  {
-    if (discoveredNodes[i].isActive)
-    {
-      nodeList[count++] = discoveredNodes[i].nodeId;
-    }
-  }
-
-  return count;
-}
-
-/**
- * Display discovered nodes and their status
- * Prints a table of all discovered nodes with their status
- */
-void displayDiscoveredNodes()
-{
-  Serial.print("\nDiscovered Nodes: of node ");
-  Serial.println(deviceConfig.nodeId);
-  Serial.println("----------------");
-  Serial.println("ID | Active | Status | Uptime (s)");
-
-  for (int i = 0; i < numDiscoveredNodes; i++)
-  {
-    Serial.print(discoveredNodes[i].nodeId);
-    Serial.print(" | ");
-    Serial.print(discoveredNodes[i].isActive ? "Yes" : "No");
-    Serial.print(" | 0x");
-    Serial.print(discoveredNodes[i].status, HEX);
-    Serial.print(" | ");
-    Serial.println(discoveredNodes[i].uptime);
-  }
-
-  Serial.println("----------------");
-}
-
 //==========================================================================================================================================================
 // MESSAGE PROCESSING
 //==========================================================================================================================================================
@@ -579,132 +307,41 @@ void processIncomingMessage(const can_frame &msg)
   // Parse CAN ID into message type and destination address
   uint8_t msgType, destAddr;
   parseCANId(msg.can_id, msgType, destAddr);
+
   // Extract sender node ID from first byte
   uint8_t sourceNodeID = msg.data[0];
 
-  // Validate the source node ID
-  if (sourceNodeID == 0 || sourceNodeID > 63)
-  {
-    if (canMonitorEnabled)
-    {
-      Serial.print("WARNING: Invalid source node ID: ");
-      Serial.println(sourceNodeID);
-    }
-    return;
-  }
-
-  // Process messages from other nodes
+  // Always print messages from other nodes (not just when monitoring is enabled)
   critical_section_enter_blocking(&commStateLock);
-  bool isOurNode = (sourceNodeID == deviceConfig.nodeId);
-  critical_section_exit(&commStateLock);
-
-  if (msgType == CAN_TYPE_HEARTBEAT)
+  if (sourceNodeID != deviceConfig.nodeId)
   {
-    // Extract heartbeat information
-    uint8_t statusFlags = msg.data[1];
-
-    // Extract node uptime from bytes 2-5 (little-endian)
-    unsigned long nodeUptime =
-        ((unsigned long)msg.data[5] << 24) |
-        ((unsigned long)msg.data[4] << 16) |
-        ((unsigned long)msg.data[3] << 8) |
-        msg.data[2];
-
-    // Handle the heartbeat message for discovery
-    handleHeartbeatMessage(sourceNodeID, statusFlags, nodeUptime);
-  }
-
-  if (!isOurNode && msgType == CAN_TYPE_SENSOR)
-  {
-    uint8_t sensorType = msg.data[1];
-    float sensorValue = bytesToFloat(&msg.data[2]);
-
-    // Check if this is part of a streaming request
-    bool isPartOfStream = false;
-    const char *varName = nullptr;
-
-    // NEW CODE: Check if we're in calibration mode
-    critical_section_enter_blocking(&commStateLock);
-    bool inCalibration = commState.calibrationInProgress;
-    if (commState.streamingEnabled && commState.streamingVar != nullptr &&
-        commState.streamingIndex == sourceNodeID)
-    {
-
-      // Map sensor type to variable name for output formatting
-      if ((strcmp(commState.streamingVar, "y") == 0 && sensorType == 0) ||
-          (strcmp(commState.streamingVar, "u") == 0 && sensorType == 1) ||
-          (strcmp(commState.streamingVar, "p") == 0 && sensorType == 2) ||
-          (strcmp(commState.streamingVar, "d") == 0 && sensorType == 3))
-      {
-        isPartOfStream = true;
-        varName = commState.streamingVar;
-      }
-    }
     critical_section_exit(&commStateLock);
-
-    // Also check REMOTE stream requests
-    for (int i = 0; i < MAX_STREAM_REQUESTS; i++)
+    if (msgType == CAN_TYPE_SENSOR)
     {
-      critical_section_enter_blocking(&commStateLock);
-      bool isActiveRequest = commState.remoteStreamRequests[i].active &&
-                             commState.remoteStreamRequests[i].requesterNode == deviceConfig.nodeId &&
-                             commState.remoteStreamRequests[i].variableType == sensorType;
-      critical_section_exit(&commStateLock);
+      uint8_t sensorType = msg.data[1];
+      float sensorValue = bytesToFloat(&msg.data[2]);
 
-      if (isActiveRequest)
-      {
-        isPartOfStream = true; // SET THE FLAG!
-
-        // Map sensor type to variable name
-        switch (sensorType)
-        {
-        case 0:
-          varName = "y";
-          break;
-        case 1:
-          varName = "u";
-          break;
-        case 2:
-          varName = "p";
-          break;
-        case 3:
-          varName = "d";
-          break;
-        default:
-          varName = "?";
-        }
-        break;
-      }
-    }
-
-    // If this is part of a stream, format and print in streaming format
-    if ((isPartOfStream && varName != nullptr) && !inCalibration)
-    {
-      Serial.print(varName);
-      Serial.print(" ");
-      Serial.print(sourceNodeID);
-      Serial.print(" ");
-      Serial.println(sensorValue, 2);
-    }
-    // Otherwise print standard format if monitoring enabled or not part of stream
-    else if ((!isPartOfStream && !inCalibration) || canMonitorEnabled)
-    {
-      /*Serial.print("Node ");
+      // Print regardless of monitor state when it's from another node
+      Serial.print("Node ");
       Serial.print(sourceNodeID);
       Serial.print(" sent sensor type ");
       Serial.print(sensorType);
       Serial.print(" = ");
-      Serial.println(sensorValue, 2);*/
+      Serial.println(sensorValue, 2);
     }
+  }
+  else
+  {
+    critical_section_exit(&commStateLock);
   }
 
   // Debug output if monitoring is enabled
-  if (canMonitorEnabled && msgType != CAN_TYPE_HEARTBEAT)
+  if (canMonitorEnabled)
   {
     Serial.print("DEBUG: Received CAN message, type ");
     Serial.print(msgType);
     Serial.print(", source ");
-    Serial.println(msg.data[0]);
+    Serial.print(msg.data[0]);
   }
 
   // Check if message is addressed to this node or is broadcast
@@ -713,8 +350,7 @@ void processIncomingMessage(const can_frame &msg)
   {
     critical_section_exit(&commStateLock);
     return; // Message not for us, ignore
-  }
-  else
+  } else
   {
     critical_section_exit(&commStateLock);
   }
@@ -731,119 +367,48 @@ void processIncomingMessage(const can_frame &msg)
   //-------------------------------------------------------------------------
   case CAN_TYPE_SENSOR:
   {
-      uint8_t sensorType = msg.data[1];
-      float value = bytesToFloat(&msg.data[2]);
-      uint16_t timestamp = ((uint16_t)msg.data[7] << 8) | msg.data[6];
-  
-      // If we're in calibration process, store readings from other nodes
-      critical_section_enter_blocking(&commStateLock);
-      bool inCalibration = commState.calibrationInProgress && commState.isCalibrationMaster;
-      critical_section_exit(&commStateLock);
-  
-      if (inCalibration && sensorType == 0)
-      { // Lux reading during calibration
-          processCalibrationReading(sourceNode, value);
-  
-          if (canMonitorEnabled)
-          {
-              Serial.print("CALIB: Received lux reading from node ");
-              Serial.print(sourceNode);
-              Serial.print(": ");
-              Serial.println(value);
-          }
-      }
-      else if (sensorType == 1) // Duty cycle update
-      {
-          // Get the source node ID and duty cycle value
-          uint8_t sourceNodeId = msg.data[0];
-          float dutyCycle = bytesToFloat(&msg.data[2]);
-  
-          // Update neighbor info
-          bool neighborFound = false;
-          critical_section_enter_blocking(&commStateLock);
-          // Try to update an existing neighbor
-          for (int i = 0; i < MAX_NEIGHBORS; i++)
-          {
-              if (neighbors[i].nodeId == sourceNodeId)
-              {
-                  neighbors[i].lastDuty = dutyCycle;
-                  neighbors[i].lastUpdate = millis();
-                  neighbors[i].isActive = true;
-                  neighborFound = true;
-                  break;
-              }
-          }
-  
-          // If not found, add as a new neighbor
-          if (!neighborFound)
-          {
-              for (int i = 0; i < MAX_NEIGHBORS; i++)
-              {
-                  if (!neighbors[i].isActive)
-                  {
-                      neighbors[i].nodeId = sourceNodeId;
-                      neighbors[i].lastDuty = dutyCycle;
-                      neighbors[i].lastUpdate = millis();
-                      neighbors[i].isActive = true;
-                      neighbors[i].hasProposal = false; // Initialize proposal flag
-                      break;
-                  }
-              }
-          }
-          critical_section_exit(&commStateLock);
-  
-          if (canMonitorEnabled)
-          {
-              Serial.print("Updated neighbor duty cycle: Node ");
-              Serial.print(sourceNodeId);
-              Serial.print(" = ");
-              Serial.println(dutyCycle, 3);
-          }
-      }
-      else if (sensorType == CAN_SENSOR_DUTY_PROPOSAL) // Duty cycle proposal
-      {
-          // Get the source node ID and proposed duty cycle
-          uint8_t sourceNodeId = msg.data[0];
-          float proposedDuty = bytesToFloat(&msg.data[2]);
-  
-          // Update neighbor proposal info
-          critical_section_enter_blocking(&commStateLock);
-          for (int i = 0; i < MAX_NEIGHBORS; i++)
-          {
-              if (neighbors[i].nodeId == sourceNodeId)
-              {
-                  neighbors[i].pendingDuty = proposedDuty;
-                  neighbors[i].hasProposal = true;
-                  neighbors[i].lastUpdate = millis();
-                  neighbors[i].isActive = true;
-                  break;
-              }
-          }
-          critical_section_exit(&commStateLock);
-  
-          if (canMonitorEnabled)
-          {
-              Serial.print("Received duty cycle proposal from node ");
-              Serial.print(sourceNodeId);
-              Serial.print(": ");
-              Serial.println(proposedDuty, 3);
-          }
-      }
-  
-      // Output debug info if monitoring enabled
-      if (canMonitorEnabled)
-      {
-          Serial.print("CAN: Node ");
-          Serial.print(sourceNode);
-          Serial.print(" sensor ");
-          Serial.print(sensorType);
-          Serial.print(" = ");
-          Serial.print(value);
-          Serial.print(" (ts: ");
-          Serial.print(timestamp);
-          Serial.println(")");
-      }
-      break;
+    uint8_t sensorType = msg.data[1];
+    float value = bytesToFloat(&msg.data[2]);
+    uint16_t timestamp = ((uint16_t)msg.data[7] << 8) | msg.data[6];
+
+    // Output debug info if monitoring enabled
+    if (canMonitorEnabled)
+    {
+      Serial.print("CAN: Node ");
+      Serial.print(sourceNode);
+      Serial.print(" sensor ");
+      Serial.print(sensorType);
+      Serial.print(" = ");
+      Serial.print(value);
+      Serial.print(" (ts: ");
+      Serial.print(timestamp);
+      Serial.println(")");
+    }
+    break;
+  }
+
+  //-------------------------------------------------------------------------
+  // HEARTBEAT MESSAGE HANDLING
+  //-------------------------------------------------------------------------
+  case CAN_TYPE_HEARTBEAT:
+  {
+    uint8_t statusFlags = msg.data[1];
+    uint32_t uptime = ((uint32_t)msg.data[5] << 24) |
+                      ((uint32_t)msg.data[4] << 16) |
+                      ((uint32_t)msg.data[3] << 8) |
+                      msg.data[2];
+
+    // Output debug info if monitoring enabled
+    if (canMonitorEnabled)
+    {
+      Serial.print("CAN: Node ");
+      Serial.print(sourceNode);
+      Serial.print(" heartbeat, uptime ");
+      Serial.print(uptime);
+      Serial.print("s, flags: ");
+      Serial.println(statusFlags, BIN);
+    }
+    break;
   }
 
   //-------------------------------------------------------------------------
@@ -851,7 +416,6 @@ void processIncomingMessage(const can_frame &msg)
   //-------------------------------------------------------------------------
   case CAN_TYPE_CONTROL:
   {
-    uint8_t sourceNodeID = msg.data[0];
     uint8_t controlType = msg.data[1];
     float value = bytesToFloat(&msg.data[2]);
     uint16_t sequence = ((uint16_t)msg.data[7] << 8) | msg.data[6];
@@ -980,11 +544,11 @@ void processIncomingMessage(const can_frame &msg)
       critical_section_enter_blocking(&commStateLock);
       controlState.setpointLux = value;
       critical_section_exit(&commStateLock);
+
       if (canMonitorEnabled)
       {
         Serial.print("CAN: Setting reference illuminance to ");
-        Serial.print(value);
-        Serial.println(" lux");
+        Serial.println(value);
       }
     }
     // Stream control commands
@@ -1019,8 +583,8 @@ void processIncomingMessage(const can_frame &msg)
       for (int i = 0; i < MAX_STREAM_REQUESTS; i++)
       {
         if (commState.remoteStreamRequests[i].active &&
-            commState.remoteStreamRequests[i].requesterNode == sourceNode &&
-            commState.remoteStreamRequests[i].variableType == (int)varCode)
+          commState.remoteStreamRequests[i].requesterNode == sourceNode &&
+          commState.remoteStreamRequests[i].variableType == (int)varCode)
         {
           critical_section_enter_blocking(&commStateLock);
           commState.remoteStreamRequests[i].active = false;
@@ -1049,30 +613,6 @@ void processIncomingMessage(const can_frame &msg)
         Serial.print("CAN: Setting sensor filtering to ");
         Serial.println(sensorState.filterEnabled ? "enabled" : "disabled");
       }
-    }
-    else if (controlType == 15)
-    { // WakeUp command
-      // Exit standby mode
-      critical_section_enter_blocking(&commStateLock);
-      controlState.standbyMode = false;
-
-      // If remote wake-up, we're not the master but need to prepare for calibration
-      if (!controlState.systemAwake)
-      {
-        controlState.systemAwake = true;
-        controlState.discoveryStartTime = millis();
-        commState.isCalibrationMaster = false; // We're not the master, just woken up
-      }
-      critical_section_exit(&commStateLock);
-
-      // Send acknowledgment
-      if (canMonitorEnabled)
-      {
-        Serial.println("Received wakeup command - exiting standby mode");
-      }
-
-      // Respond with acknowledgment
-      sendControlCommand(sourceNodeID, 16, 1.0f); // 16 = wakeup acknowledgment
     }
     // Query commands (types 20-32)
     else if (controlType >= 20 && controlType <= 32)
@@ -1139,55 +679,6 @@ void processIncomingMessage(const can_frame &msg)
       // Send response with requested value
       sendQueryResponse(sourceNode, responseValue);
     }
-    else if (controlType >= 100 && controlType < 110)
-    {
-      // This is a calibration control message
-      handleCalibrationMessage(sourceNodeID, controlType, value);
-    }
-    else if (controlType >= CAL_CMD_INIT && controlType <= CAL_CMD_COMPLETE ||
-             controlType == 120 || controlType == 121)
-    {
-      handleCalibrationMessage(sourceNodeID, controlType, value);
-      return;
-    }
-    else if (controlType == 4)
-    { // Set duty cycle
-      // Handle duty cycle commands in calibration mode
-      critical_section_enter_blocking(&commStateLock);
-      bool isInCalibration = commState.calibrationInProgress;
-      critical_section_exit(&commStateLock);
-
-      if (isInCalibration)
-      {
-        // During calibration, always follow LED commands directly
-        setLEDDutyCycle(value);
-      }
-      // ... existing duty cycle handling ...
-    }
-    break;
-  }
-
-  //-------------------------------------------------------------------------
-  // RESPONSE MESSAGE HANDLING
-  //-------------------------------------------------------------------------
-  case CAN_TYPE_RESPONSE:
-  {
-    uint8_t responseType = msg.data[1];
-    float value = bytesToFloat(&msg.data[2]);
-
-    if (responseType == 2) // Type 2 = query response
-    {
-      // Print response for monitoring
-      // Serial.print("CAN: Received query response from node ");
-      // Serial.print(sourceNode);
-      // Serial.print(", value: ");
-      // Serial.println(value);
-
-      // Set global flag that we got a response
-      responseReceived = true;
-      responseSourceNode = sourceNode;
-      responseValue = value;
-    }
     break;
   }
   }
@@ -1203,22 +694,8 @@ void canCommLoop()
   can_frame msg;
 
   // Check if there's a message waiting
-  MCP2515::ERROR err = can0.readMessage(&msg);
-  if (err == MCP2515::ERROR_OK)
+  if (can0.readMessage(&msg) == MCP2515::ERROR_OK)
   {
-    // Add debug prints to see ALL messages
-    uint8_t msgType, destAddr;
-    parseCANId(msg.can_id, msgType, destAddr);
-    if (canMonitorEnabled && msgType != CAN_TYPE_HEARTBEAT)
-    {
-      Serial.print("RAW CAN: type=");
-      Serial.print(msgType);
-      Serial.print(", dest=");
-      Serial.print(destAddr);
-      Serial.print(", src=");
-      Serial.println(msg.data[0]);
-    }
-
     // Update statistics
     msgReceived++;
 
@@ -1242,6 +719,16 @@ void canCommLoop()
 MCP2515::ERROR readCANMessage(struct can_frame *frame)
 {
   return can0.readMessage(frame);
+}
+
+/**
+ * Register a callback function for CAN message handling
+ *
+ * @param callback Function to call when messages are received
+ */
+void setCANMessageCallback(CANMessageCallback callback)
+{
+  messageCallback = callback;
 }
 
 //==========================================================================================================================================================
@@ -1280,14 +767,13 @@ void resetCANStats()
  * Display CAN communication statistics
  * Shows message counts, error rates, and latency information
  */
-void displayCANStatistics()
-{
+void displayCANStatistics() {
   uint32_t sent, received, errors;
   float avgLatency;
-
+  
   // Get the statistics
   getCANStats(sent, received, errors, avgLatency);
-
+  
   // Display statistics
   Serial.println("CAN Bus Statistics:");
   Serial.print("  Node ID: ");
@@ -1303,134 +789,183 @@ void displayCANStatistics()
   Serial.print("  Average latency: ");
   Serial.print(avgLatency);
   Serial.println(" µs");
-
+  
   // Calculate error rate if messages were sent
-  if (sent > 0)
-  {
-    float errorRate = (float)errors / (float)sent * 100.0f;
-    Serial.print("  Error rate: ");
-    Serial.print(errorRate, 2);
-    Serial.println("%");
+  if (sent > 0) {
+      float errorRate = (float)errors / (float)sent * 100.0f;
+      Serial.print("  Error rate: ");
+      Serial.print(errorRate, 2);
+      Serial.println("%");
   }
-
+  
   Serial.println("ack");
 }
 
 /**
- * Measure round-trip latency to a specific node
- *
- * @param numTokens Number of tokens in command
- * @param tokens Command tokens (tokens[2] should contain node ID if present)
- */
-void measureCANLatency(int numTokens, char tokens[][TOKEN_MAX_LENGTH])
-{
+* Scan the CAN network for active nodes
+* Sends discovery messages and waits for responses
+*/
+void scanCANNetwork() {
+  Serial.println("Scanning CAN network for active nodes...");
+  
+  uint8_t foundNodes[64] = {0}; // Track which nodes responded
+  int foundCount = 0;
+  
+  // Send ping messages to all possible node addresses (1-63)
+  for (int node = 1; node < 64; node++) {
+      Serial.print("Pinging node ");
+      Serial.print(node);
+      Serial.print("... ");
+      
+      // Send ping (discovery) message
+      if (sendControlCommand(node, 3, 0.0f)) {
+          // Wait briefly for response
+          delay(10);
+          
+          // Check for response
+          can_frame frame;
+          bool received = false;
+          
+          // Try to read several times in case of multiple messages
+          for (int attempt = 0; attempt < 5; attempt++) {
+              if (readCANMessage(&frame) == MCP2515::ERROR_OK) {
+                  uint8_t msgType, destAddr;
+                  parseCANId(frame.can_id, msgType, destAddr);
+                  
+                  // Check if this is a response to our discovery
+                  if (msgType == CAN_TYPE_RESPONSE && frame.data[0] == node && frame.data[1] == 1) {
+                      foundNodes[node] = 1;
+                      foundCount++;
+                      received = true;
+                      Serial.println("FOUND");
+                      break;
+                  }
+              }
+              delay(1);
+          }
+          
+          if (!received) {
+              Serial.println("no response");
+          }
+      } else {
+          Serial.println("send failed");
+      }
+  }
+  
+  // Summary of found nodes
+  Serial.print("Found ");
+  Serial.print(foundCount);
+  Serial.println(" active nodes:");
+  
+  for (int i = 1; i < 64; i++) {
+      if (foundNodes[i]) {
+          Serial.print("  Node ");
+          Serial.println(i);
+      }
+  }
+  
+  Serial.println("Scan complete");
+  Serial.println("ack");
+}
+
+/**
+* Measure round-trip latency to a specific node
+* 
+* @param numTokens Number of tokens in command
+* @param tokens Command tokens (tokens[2] should contain node ID if present)
+*/
+void measureCANLatency(int numTokens, char tokens[][TOKEN_MAX_LENGTH]) {
   // Default is to test current node
   uint8_t targetNode = 1;
   int samples = 10;
-
+  
   // Parse target node if provided
-  if (numTokens >= 3)
-  {
-    int node;
-    if (parseIntParam(tokens[2], &node) && node > 0 && node < 64)
-    {
-      targetNode = (uint8_t)node;
-    }
+  if (numTokens >= 3) {
+      int node;
+      if (parseIntParam(tokens[2], &node) && node > 0 && node < 64) {
+          targetNode = (uint8_t)node;
+      }
   }
-
+  
   // Parse sample count if provided
-  if (numTokens >= 4)
-  {
-    int count;
-    if (parseIntParam(tokens[3], &count) && count > 0 && count <= 100)
-    {
-      samples = count;
-    }
+  if (numTokens >= 4) {
+      int count;
+      if (parseIntParam(tokens[3], &count) && count > 0 && count <= 100) {
+          samples = count;
+      }
   }
-
+  
   Serial.print("Measuring latency to node ");
   Serial.print(targetNode);
   Serial.print(" with ");
   Serial.print(samples);
   Serial.println(" samples...");
-
+  
   float totalLatency = 0.0f;
   int successCount = 0;
   unsigned long startTime, endTime;
   const float testValue = 12345.67f; // Unique value to identify our test
-
-  for (int i = 0; i < samples; i++)
-  {
-    Serial.print("  Sample ");
-    Serial.print(i + 1);
-    Serial.print(": ");
-
-    // Record time and send echo request
-    startTime = micros();
-    if (sendControlCommand(targetNode, 2, testValue))
-    {
-      bool validResponse = false;
-
-      // Wait for response with timeout
-      for (int wait = 0; wait < 50; wait++)
-      { // 50ms timeout
-        can_frame frame;
-        if (readCANMessage(&frame) == MCP2515::ERROR_OK)
-        {
-          uint8_t msgType, destAddr;
-          parseCANId(frame.can_id, msgType, destAddr);
-
-          if (msgType == CAN_TYPE_RESPONSE && frame.data[0] == targetNode && frame.data[1] == 0)
-          {
-            float value = bytesToFloat(&frame.data[2]);
-
-            // Make sure it's a response to our test
-            if (fabs(value - testValue) < 0.01f)
-            {
-              endTime = micros();
-              unsigned long latency = endTime - startTime;
-              totalLatency += latency;
-              successCount++;
-              validResponse = true;
-
-              Serial.print(latency);
-              Serial.println(" µs");
-              break;
-            }
+  
+  for (int i = 0; i < samples; i++) {
+      Serial.print("  Sample ");
+      Serial.print(i+1);
+      Serial.print(": ");
+      
+      // Record time and send echo request
+      startTime = micros();
+      if (sendControlCommand(targetNode, 2, testValue)) {
+          bool validResponse = false;
+          
+          // Wait for response with timeout
+          for (int wait = 0; wait < 50; wait++) { // 50ms timeout
+              can_frame frame;
+              if (readCANMessage(&frame) == MCP2515::ERROR_OK) {
+                  uint8_t msgType, destAddr;
+                  parseCANId(frame.can_id, msgType, destAddr);
+                  
+                  if (msgType == CAN_TYPE_RESPONSE && frame.data[0] == targetNode && frame.data[1] == 0) {
+                      float value = bytesToFloat(&frame.data[2]);
+                      
+                      // Make sure it's a response to our test
+                      if (fabs(value - testValue) < 0.01f) {
+                          endTime = micros();
+                          unsigned long latency = endTime - startTime;
+                          totalLatency += latency;
+                          successCount++;
+                          validResponse = true;
+                          
+                          Serial.print(latency);
+                          Serial.println(" µs");
+                          break;
+                      }
+                  }
+              }
+              delay(1);
           }
-        }
-        delay(1);
+          
+          if (!validResponse) {
+              Serial.println("timeout");
+          }
+      } else {
+          Serial.println("send failed");
       }
-
-      if (!validResponse)
-      {
-        Serial.println("timeout");
-      }
-    }
-    else
-    {
-      Serial.println("send failed");
-    }
-
-    // Small delay between samples
-    delay(10);
+      
+      // Small delay between samples
+      delay(10);
   }
-
+  
   // Calculate and display results
-  if (successCount > 0)
-  {
-    float avgLatency = totalLatency / successCount;
-    Serial.print("Average round-trip latency: ");
-    Serial.print(avgLatency);
-    Serial.println(" µs");
-    Serial.print("Success rate: ");
-    Serial.print((float)successCount / samples * 100.0f);
-    Serial.println("%");
+  if (successCount > 0) {
+      float avgLatency = totalLatency / successCount;
+      Serial.print("Average round-trip latency: ");
+      Serial.print(avgLatency);
+      Serial.println(" µs");
+      Serial.print("Success rate: ");
+      Serial.print((float)successCount / samples * 100.0f);
+      Serial.println("%");
+  } else {
+      Serial.println("No successful measurements");
   }
-  else
-  {
-    Serial.println("No successful measurements");
-  }
-
+  
   Serial.println("ack");
 }
