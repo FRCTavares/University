@@ -763,7 +763,6 @@ def run_nearby_model(apply_smoothing=False):
     plt.savefig('Plots/Squares_Reduced/resultados_modelo_injeções_proximas.png', dpi=300)
     plt.show()
 
-
 # ============================================================================================================================================
 # Funções para o modelo de teste de diferentes valores de ruído
 # ============================================================================================================================================
@@ -984,7 +983,8 @@ def compare_temporal_correlation_different_noise():
         for j in range(len(noise_levels)):
             no_smooth = noise_results['no_smoothing'][model]['RMSE'][j]
             smooth = noise_results['smoothing'][model]['RMSE'][j]
-            pct = 100 * (no_smooth - smooth) / no_smooth if no_smooth != 0 else 0
+            epsilon = 1e-6
+            pct = 100 * (no_smooth - smooth) / (no_smooth + epsilon) if no_smooth != 0 else 0
             improvement_pct.append(pct)
         
         plt.plot(noise_levels, improvement_pct, 
@@ -1370,6 +1370,7 @@ def compare_models_by_parameters_and_noise():
     plt.show()
     
     return results
+
 # ============================================================================================================================================
 # Funções para o menu principal e execução de comparações
 # ============================================================================================================================================
@@ -1387,7 +1388,7 @@ def show_menu():
     print("  5. Executar o modelo com X reduzida (squares-reduced)")
     print("  6. Comparar desempenho dos com diferentes níveis de ruído")
     print("  7. Comparar modelos com e sem correlação temporal")
-    print("  8. Comparar modelos por parâmetros e ruído (0 a 0.001)\n")
+    print("  8. Comparar modelos por parâmetros e ruído (0 a 0.001)")
     print("  \nSair do programa: '0'")
     
     try:
@@ -1396,7 +1397,6 @@ def show_menu():
     except ValueError:
         return -1  # Retorna -1 se o usuário inserir um valor não numérico
 
-# Atualizar o bloco de execução principal
 if __name__ == "__main__":
     # Criar diretórios para gráficos se não existirem
     ensure_plot_directories()
