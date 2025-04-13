@@ -17,6 +17,7 @@ from numpy.linalg import inv
 import matplotlib.pyplot as plt
 from sklearn.metrics import mean_squared_error, mean_absolute_error
 import os
+import time
 
 # Definir a semente aleatória para reprodutibilidade
 np.random.seed(42)
@@ -47,7 +48,7 @@ def apply_temporal_smoothing(P, alpha=0.8):
         P_smooth[t] = alpha * P_smooth[t - 1] + (1 - alpha) * P[t]
     return P_smooth
 
-def load_data(file_path='DATA.xlsx', apply_smoothing=False, alpha=0.8):
+def load_data(file_path='DATA.xlsx', apply_smoothing=False, alpha=0.8, time_series_factor=1.0):
     """
     Carrega os dados do arquivo Excel e retorna as informações necessárias.
     
@@ -55,6 +56,10 @@ def load_data(file_path='DATA.xlsx', apply_smoothing=False, alpha=0.8):
         file_path (str): Path to the Excel file containing the data
         apply_smoothing (bool): Whether to apply temporal smoothing
         alpha (float): Smoothing parameter (higher = more smoothing)
+        time_series_factor (float): Factor to adjust the size of the time series data:
+                                    - 1.0 = original size
+                                    - <1.0 = smaller dataset (e.g., 0.5 = 50% of data)
+                                    - >1.0 = larger dataset (e.g., 2.0 = doubled data)
         
     Returns:
         tuple: (SlackBus, Net_Info, P, Ptest) or (None, None, None, None) if error occurs
@@ -69,9 +74,55 @@ def load_data(file_path='DATA.xlsx', apply_smoothing=False, alpha=0.8):
         Power_Test = np.array(pd.read_excel(file_path, sheet_name='Test_Load(t,Bus)'))
         Power_Test = np.delete(Power_Test, [0], 1)
 
-        time = Power_Info.shape[0]
-        P = Power_Info
-        Ptest = Power_Test * PtestFactor
+        # Adjust time series size based on time_series_factor
+        if time_series_factor != 1.0:
+            if time_series_factor < 1.0:
+                # Smaller dataset - take a subset
+                new_size = int(Power_Info.shape[0] * time_series_factor)
+                P = Power_Info[:new_size, :]
+                Ptest = Power_Test[:new_size, :] * PtestFactor
+                print(f"✔️ Using reduced dataset: {new_size} time steps ({time_series_factor*100:.0f}% of original)")
+            else:
+                # Larger dataset - repeat the data with small variations
+                original_size = Power_Info.shape[0]
+                repeats = int(np.ceil(time_series_factor))
+                
+                # Create repeated data with small random variations
+                np.random.seed(42)  # For reproducibility
+                P_repeated = []
+                Ptest_repeated = []
+                
+                for i in range(repeats):
+                    if i == 0:
+                        # First repeat is the original data
+                        P_part = Power_Info.copy()
+                        Ptest_part = Power_Test.copy() * PtestFactor
+                    else:
+                        # Subsequent repeats add small random variations (±5%)
+                        variation = 0.05  # 5% variation
+                        random_factors = 1 + np.random.uniform(-variation, variation, size=Power_Info.shape)
+                        P_part = Power_Info * random_factors
+                        
+                        random_factors_test = 1 + np.random.uniform(-variation, variation, size=Power_Test.shape)
+                        Ptest_part = Power_Test * random_factors_test * PtestFactor
+                    
+                    P_repeated.append(P_part)
+                    Ptest_repeated.append(Ptest_part)
+                
+                # Concatenate all repeats
+                P = np.vstack(P_repeated)
+                Ptest = np.vstack(Ptest_repeated)
+                
+                # Limit to exactly the requested size
+                target_size = int(original_size * time_series_factor)
+                P = P[:target_size, :]
+                Ptest = Ptest[:target_size, :]
+                
+                print(f"✔️ Using expanded dataset: {target_size} time steps ({time_series_factor*100:.0f}% of original)")
+        else:
+            # Original size
+            P = Power_Info
+            Ptest = Power_Test * PtestFactor
         
         # Apply temporal smoothing if requested
         if apply_smoothing:
@@ -543,7 +594,7 @@ def squares_only_X(P_mat):
         
     return X_sq
 
-def run_squared_model(apply_smoothing=False):
+def run_squares_only_model(apply_smoothing=False):
     """Executa o modelo simplificado que considera apenas termos quadráticos (squares only) P_i²."""
     print("\n=== Executando o Modelo Simplificado com Squares-Only)) ===\n")
     
@@ -668,7 +719,7 @@ def squares_reduced_X(P_mat, linha_indices, SlackBus):
 
     return X_nearby
 
-def run_nearby_model(apply_smoothing=False):
+def run_squares_reduced_model(apply_smoothing=False):
     """Executa o modelo simplificado que considera a soma de injeções eletricamente próximas."""
     print("\n=== Executando o Modelo Simplificado com Squares-Reduced ===\n")
     
@@ -1371,6 +1422,269 @@ def compare_models_by_parameters_and_noise():
     
     return results
 
+def comparar_tamanhos_series_temporais():
+    """
+    Compara o desempenho dos modelos com diferentes tamanhos de séries temporais para analisar
+    como a quantidade de dados disponíveis afeta a precisão do modelo.
+    """
+    print("\n=== Comparar Desempenho dos Modelos com Diferentes Tamanhos de Séries Temporais ===\n")
+    
+    # Se deve aplicar suavização temporal
+    aplicar_suavizacao = input("Aplicar suavização temporal aos dados? (s/n): ").lower() == 's'
+    
+    # Definir fatores de séries temporais para testar (percentagem dos dados originais)
+    fatores_tempo = [0.5, 0.75, 1.0, 1.5, 2.0]
+    
+    # Dicionário para armazenar resultados para cada modelo e fator temporal
+    resultados = {
+        modelo: {'RMSE': [], 'Tempo': []} for modelo in 
+        ['Outer-Product', 'Edge-Reduced', 'Squares-Only', 'Squares-Reduced']
+    }
+    
+    # Primeiro, visualizar os dados para diferentes tamanhos de séries temporais
+    print("\nVisualizando injeções de potência para diferentes tamanhos de séries temporais...")
+    
+    # Criar um gráfico para mostrar dados para diferentes tamanhos de séries temporais
+    fig, axes = plt.subplots(4, len(fatores_tempo), figsize=(20, 16))
+    fig.suptitle(f'Injeções de Potência para Diferentes Tamanhos de Séries Temporais {"(com suavização temporal)" if aplicar_suavizacao else ""}', 
+                 fontsize=16)
+    
+    # Carregar cada tamanho de conjunto de dados e plotar
+    for i, fator in enumerate(fatores_tempo):
+        # Carregar dados com o tamanho atual da série temporal
+        SlackBus, Net_Info, P, Ptest = load_data(apply_smoothing=aplicar_suavizacao, time_series_factor=fator)
+        
+        # Definir quantos passos temporais mostrar (máximo 100 para legibilidade)
+        intervalo_tempo = min(100, P.shape[0])
+        passos_tempo = np.arange(intervalo_tempo)
+        
+        # Plotar cada barramento numa linha separada
+        for barramento in range(4):
+            axes[barramento, i].step(passos_tempo, P[:intervalo_tempo, barramento], where='post')
+            axes[barramento, i].set_title(f'{fator*100:.0f}% Tamanho - Barramento {barramento+1}')
+            axes[barramento, i].set_xlabel('Passo Temporal')
+            axes[barramento, i].set_ylabel('Potência [p.u.]')
+            axes[barramento, i].grid(True)
+            
+            # Adicionar texto com tamanho do conjunto de dados
+            axes[barramento, i].text(0.05, 0.05, f"n={P.shape[0]} passos", 
+                              transform=axes[barramento, i].transAxes,
+                              bbox=dict(facecolor='white', alpha=0.7))
+    
+    plt.tight_layout(rect=[0, 0, 1, 0.97])  # Ajustar layout para acomodar o título
+    plt.savefig(f'Plots/Comp/visualizacao_tamanhos_series_temporais{"_suavizado" if aplicar_suavizacao else ""}.png', dpi=300)
+    plt.show()
+    
+    # Executar análise para cada tamanho de série temporal
+    for fator in fatores_tempo:
+        print(f"\nTeste com fator de série temporal: {fator} (tamanho do conjunto de dados: {fator*100:.0f}% do original)")
+        
+        try:
+            # Carregar dados com o tamanho atual da série temporal
+            SlackBus, Net_Info, P, Ptest = load_data(apply_smoothing=aplicar_suavizacao, time_series_factor=fator)
+            
+            # Construir matrizes da rede
+            nBus, nLines, Y, Yl, G, B, C, Cl, Gv, Gd, linha_indices = build_network_matrices(SlackBus, Net_Info)
+            
+            # Calcular perdas reais
+            PL2_train_true = compute_PL2(P, B, Cl, Gv, noiseFactor)
+            PL2_test_true = compute_PL2(Ptest, B, Cl, Gv, noiseFactor)
+            
+            # Registrar tamanhos do conjunto de dados
+            for modelo in resultados:
+                resultados[modelo]['Tempo'].append(P.shape[0])
+            
+            # 1. Modelo Outer-Product
+            try:
+                X_orig = np.column_stack((
+                    P[:, 0]**2, 2*P[:, 0]*P[:, 1], 2*P[:, 0]*P[:, 2], 2*P[:, 0]*P[:, 3],
+                    P[:, 1]**2, 2*P[:, 1]*P[:, 2], 2*P[:, 1]*P[:, 3],
+                    P[:, 2]**2, 2*P[:, 2]*P[:, 3], P[:, 3]**2
+                ))
+                X_orig_test = np.column_stack((
+                    Ptest[:, 0]**2, 2*Ptest[:, 0]*Ptest[:, 1], 2*Ptest[:, 0]*Ptest[:, 2], 2*Ptest[:, 0]*Ptest[:, 3],
+                    Ptest[:, 1]**2, 2*Ptest[:, 1]*Ptest[:, 2], 2*Ptest[:, 1]*Ptest[:, 3],
+                    Ptest[:, 2]**2, 2*Ptest[:, 2]*Ptest[:, 3], Ptest[:, 3]**2
+                ))
+                beta_orig = inv(X_orig.T @ X_orig) @ (X_orig.T @ PL2_train_true)
+                pred_test_orig = X_orig_test @ beta_orig
+                
+                # Calcular RMSE
+                rmse_orig = np.sqrt(mean_squared_error(PL2_test_true, pred_test_orig))
+                resultados['Outer-Product']['RMSE'].append(rmse_orig)
+                
+                print(f"  Modelo Outer-Product - RMSE: {rmse_orig:.6f}")
+            except np.linalg.LinAlgError:
+                print(f"  Modelo Outer-Product - Não é possível calcular (matriz singular)")
+                resultados['Outer-Product']['RMSE'].append(None)
+            
+            # 2. Modelo Edge-Reduced
+            try:
+                X_topo = edge_reduced_X(P, linha_indices, SlackBus)
+                X_topo_test = edge_reduced_X(Ptest, linha_indices, SlackBus)
+                beta_topo = inv(X_topo.T @ X_topo) @ (X_topo.T @ PL2_train_true)
+                pred_test_topo = X_topo_test @ beta_topo
+                
+                # Calcular RMSE
+                rmse_topo = np.sqrt(mean_squared_error(PL2_test_true, pred_test_topo))
+                resultados['Edge-Reduced']['RMSE'].append(rmse_topo)
+                
+                print(f"  Modelo Edge-Reduced - RMSE: {rmse_topo:.6f}")
+            except np.linalg.LinAlgError:
+                print(f"  Modelo Edge-Reduced - Não é possível calcular (matriz singular)")
+                resultados['Edge-Reduced']['RMSE'].append(None)
+            
+            # 3. Modelo Squares-Only
+            try:
+                X_sq = squares_only_X(P)
+                X_sq_test = squares_only_X(Ptest)
+                beta_sq = inv(X_sq.T @ X_sq) @ (X_sq.T @ PL2_train_true)
+                pred_test_sq = X_sq_test @ beta_sq
+                
+                # Calcular RMSE
+                rmse_sq = np.sqrt(mean_squared_error(PL2_test_true, pred_test_sq))
+                resultados['Squares-Only']['RMSE'].append(rmse_sq)
+                
+                print(f"  Modelo Squares-Only - RMSE: {rmse_sq:.6f}")
+            except np.linalg.LinAlgError:
+                print(f"  Modelo Squares-Only - Não é possível calcular (matriz singular)")
+                resultados['Squares-Only']['RMSE'].append(None)
+            
+            # 4. Modelo Squares-Reduced
+            try:
+                X_nearby = squares_reduced_X(P, linha_indices, SlackBus)
+                X_nearby_test = squares_reduced_X(Ptest, linha_indices, SlackBus)
+                beta_nearby = inv(X_nearby.T @ X_nearby) @ (X_nearby.T @ PL2_train_true)
+                pred_test_nearby = X_nearby_test @ beta_nearby
+                
+                # Calcular RMSE
+                rmse_nearby = np.sqrt(mean_squared_error(PL2_test_true, pred_test_nearby))
+                resultados['Squares-Reduced']['RMSE'].append(rmse_nearby)
+                
+                print(f"  Modelo Squares-Reduced - RMSE: {rmse_nearby:.6f}")
+            except np.linalg.LinAlgError:
+                print(f"  Modelo Squares-Reduced - Não é possível calcular (matriz singular)")
+                resultados['Squares-Reduced']['RMSE'].append(None)
+                
+        except Exception as e:
+            print(f"Erro ao processar fator de tempo {fator}: {e}")
+            # Adicionar entradas None para este fator
+            for modelo in resultados:
+                resultados[modelo]['RMSE'].append(None)
+                if len(resultados[modelo]['Tempo']) < len(resultados[modelo]['RMSE']):
+                    resultados[modelo]['Tempo'].append(None)
+    
+    # Filtrar valores None para plotagem
+    resultados_validos = {}
+    for modelo in resultados:
+        tempos_validos = []
+        rmse_validos = []
+        for i, rmse in enumerate(resultados[modelo]['RMSE']):
+            if rmse is not None and resultados[modelo]['Tempo'][i] is not None:
+                tempos_validos.append(resultados[modelo]['Tempo'][i])
+                rmse_validos.append(rmse)
+        resultados_validos[modelo] = {'Tempo': tempos_validos, 'RMSE': rmse_validos}
+    
+    # Visualização - Gráfico de linha de RMSE vs Tamanho da Série Temporal
+    plt.figure(figsize=(12, 8))
+    
+    # Plotar cada modelo
+    modelos = list(resultados.keys())
+    marcadores = ['o', 's', '^', 'd']
+    cores = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728']
+    
+    for i, modelo in enumerate(modelos):
+        if resultados_validos[modelo]['Tempo']:  # Verificar se há dados válidos
+            plt.plot(resultados_validos[modelo]['Tempo'], resultados_validos[modelo]['RMSE'], 
+                     marker=marcadores[i], color=cores[i], linewidth=2, label=modelo)
+    
+    texto_suavizacao = "com" if aplicar_suavizacao else "sem"
+    plt.title(f'Precisão do Modelo vs Tamanho da Série Temporal ({texto_suavizacao} correlação temporal)')
+    plt.xlabel('Número de Passos Temporais')
+    plt.ylabel('RMSE de Teste')
+    plt.grid(True)
+    plt.legend(loc='best')
+    
+    # Guardar a figura
+    plt.tight_layout()
+    plt.savefig(f'Plots/Comp/comparacao_tamanho_serie_temporal_{texto_suavizacao}_correlacao.png', dpi=300)
+    plt.show()
+    
+    # Criar uma tabela resumo
+    print("\nResumo dos Resultados - RMSE por Tamanho da Série Temporal:")
+    print("-" * 100)
+    cabecalho = "Modelo".ljust(20) + " | "
+    for fator in fatores_tempo:
+        cabecalho += f"{fator*100:.0f}% Tamanho".ljust(12) + " | "
+    print(cabecalho)
+    print("-" * 100)
+    
+    for modelo in modelos:
+        linha = modelo.ljust(20) + " | "
+        
+        # RMSE base (fator 1.0)
+        indice_base = fatores_tempo.index(1.0)
+        rmse_base = resultados[modelo]['RMSE'][indice_base] if indice_base < len(resultados[modelo]['RMSE']) else None
+        
+        for i, fator in enumerate(fatores_tempo):
+            if i < len(resultados[modelo]['RMSE']):
+                rmse_atual = resultados[modelo]['RMSE'][i]
+                
+                if rmse_atual is None:
+                    texto_celula = "N/A".ljust(12)
+                else:
+                    # Calcular alteração percentual da base
+                    if fator == 1.0 or rmse_base is None:
+                        texto_pct = ""  # Sem percentagem para a base ou se a base for N/A
+                    else:
+                        alteracao_pct = 100 * (rmse_atual - rmse_base) / rmse_base
+                        texto_pct = f" ({alteracao_pct:+.1f}%)"
+                    
+                    texto_celula = f"{rmse_atual:.6f}{texto_pct}".ljust(12)
+            else:
+                texto_celula = "N/A".ljust(12)
+                
+            linha += texto_celula + " | "
+        
+        print(linha)
+    
+    print("-" * 100)
+    
+    # Fornecer análises
+    print("\nAnálises:")
+    
+    # Melhor modelo para cada tamanho de conjunto de dados
+    for i, fator in enumerate(fatores_tempo):
+        rmse_disponiveis = []
+        modelos_disponiveis = []
+        
+        for modelo in modelos:
+            if i < len(resultados[modelo]['RMSE']) and resultados[modelo]['RMSE'][i] is not None:
+                rmse_disponiveis.append(resultados[modelo]['RMSE'][i])
+                modelos_disponiveis.append(modelo)
+        
+        if modelos_disponiveis:
+            idx_melhor = rmse_disponiveis.index(min(rmse_disponiveis))
+            melhor_modelo = modelos_disponiveis[idx_melhor]
+            print(f"- Para {fator*100:.0f}% do tamanho dos dados: O melhor modelo é {melhor_modelo} " +
+                  f"(RMSE: {min(rmse_disponiveis):.6f})")
+        else:
+            print(f"- Para {fator*100:.0f}% do tamanho dos dados: Nenhum modelo válido pôde ser calculado")
+    
+    # Encontrar o tamanho ótimo do conjunto de dados para cada modelo
+    for modelo in modelos:
+        rmse_validos = [rmse for rmse in resultados[modelo]['RMSE'] if rmse is not None]
+        if rmse_validos:
+            indices_validos = [i for i, rmse in enumerate(resultados[modelo]['RMSE']) if rmse is not None]
+            idx_melhor = rmse_validos.index(min(rmse_validos))
+            melhor_fator = fatores_tempo[indices_validos[idx_melhor]]
+            print(f"- {modelo}: O tamanho ótimo do conjunto de dados é {melhor_fator*100:.0f}% " +
+                  f"(RMSE: {min(rmse_validos):.6f})")
+        else:
+            print(f"- {modelo}: Não foi possível determinar o tamanho ótimo (dados insuficientes)")
+    
+    return resultados
+
 # ============================================================================================================================================
 # Funções para o menu principal e execução de comparações
 # ============================================================================================================================================
@@ -1389,6 +1703,7 @@ def show_menu():
     print("  6. Comparar desempenho dos com diferentes níveis de ruído")
     print("  7. Comparar modelos com e sem correlação temporal")
     print("  8. Comparar modelos por parâmetros e ruído (0 a 0.001)")
+    print("  9. Comparar desempenho dos modelos com diferentes tamanhos de séries temporais")
     print("  \nSair do programa: '0'")
     
     try:
@@ -1420,11 +1735,11 @@ if __name__ == "__main__":
             input("\nPressione Enter para continuar...")
         elif opcao == 4:
             apply_smoothing = input("\nAplicar correlação temporal aos dados? (s/n): ").lower() == 's'
-            run_squared_model(apply_smoothing=apply_smoothing)
+            run_squares_only_model(apply_smoothing=apply_smoothing)
             input("\nPressione Enter para continuar...")
         elif opcao == 5:
             apply_smoothing = input("\nAplicar correlação temporal aos dados? (s/n): ").lower() == 's'
-            run_nearby_model(apply_smoothing=apply_smoothing)
+            run_squares_reduced_model(apply_smoothing=apply_smoothing)
             input("\nPressione Enter para continuar...")
         elif opcao == 6:
             compare_temporal_correlation_different_noise()
@@ -1434,6 +1749,9 @@ if __name__ == "__main__":
             input("\nPressione Enter para continuar...")
         elif opcao == 8:
             compare_models_by_parameters_and_noise()
+            input("\nPressione Enter para continuar...")
+        elif opcao == 9:
+            comparar_tamanhos_series_temporais()
             input("\nPressione Enter para continuar...")
         else:
             print("\nOpção inválida! Por favor, escolha uma opção válida.")
