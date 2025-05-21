@@ -51,6 +51,7 @@ for sysName = fieldnames(systems)'
             % RH gain: K = e1 * (M \ W)
             e1 = [1, zeros(1, H-1)];
             K_RH = e1 * (M \ W);
+            fprintf('System: %s | R = %g | H = %d | K_RH = %.6f\n', sysName{1}, R, H, K_RH);
 
             % Store results
             K_RH_all(rIdx, hIdx) = K_RH;
