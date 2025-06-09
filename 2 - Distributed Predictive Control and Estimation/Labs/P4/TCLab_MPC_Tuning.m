@@ -79,7 +79,7 @@ plot([results.H],[results.avg_solve],'o-','LineWidth',1.5);
 grid on;
 xlabel('Horizon H');
 ylabel('Avg solve time (% of T_s)');
-title('Figure 10: Solver time vs Horizon');
+title('Solver time vs Horizon');
 
 
 %% 2) Closed-loop output & input for H={10,20,50,70} → Fig. 11
@@ -96,13 +96,14 @@ for i = 1:numel(sel)
        'Color',colors(i,:), 'LineWidth',1.5, ...
        'DisplayName',['H=' num2str(sel(i))]);
 end
-yline(y_ss,'k--','\bar{y}',...
-      'LabelHorizontalAlignment','left',...
-      'Interpreter','latex');
-xlabel('Time [s]');
-ylabel('y [\circC]');
-title('Figure 11a: Closed‐loop Output for Various H');
-legend('Location','best');
+% steady-state output (shown in legend)
+yline(y_ss, 'k--', '$\bar y$', ...
+      'Interpreter','latex', ...
+      'LabelHorizontalAlignment','left', ...
+      'DisplayName','$\bar y$');
+xlabel('Time [s]'); ylabel('y [\circC]');
+title('Closed‐loop Output for Various H');
+legend('Interpreter','latex','Location','best');
 
 % 11b) input u
 subplot(2,1,2), hold on, grid on
@@ -112,15 +113,18 @@ for i = 1:numel(sel)
          'Color',colors(i,:), 'LineWidth',1.5, ...
          'DisplayName',['H=' num2str(sel(i))]);
 end
-yline(u_ss,'k--','\bar{u}',...
-      'LabelHorizontalAlignment','left',...
-      'Interpreter','latex');
-yline(0,  'r--','0\%',  'LabelHorizontalAlignment','right');
-yline(100,'r--','100\%','LabelHorizontalAlignment','right');
-xlabel('Time [s]');
-ylabel('u [\%]');
-title('Figure 11b: Control Input for Various H');
-legend('Location','best');
+% steady-state input (shown in legend)
+yline(u_ss, 'k--', '$\bar u$',  'Interpreter','latex', ...
+      'LabelHorizontalAlignment','left', ...
+      'DisplayName','$\bar u$');
+% hide the 0% & 100% bounds from legend
+yline(0,   'r--',    'Interpreter','latex', ...
+      'LabelHorizontalAlignment','right','HandleVisibility','off');
+yline(100, 'r--',   'Interpreter','latex', ...
+      'LabelHorizontalAlignment','right','HandleVisibility','off');
+xlabel('Time [s]'); ylabel('u [\%]');
+title('Control Input for Various H');
+legend('Interpreter','latex','Location','best');
 
 
 %% 3) Closed-loop output & input for R = [0.02 0.05 0.1 0.5 1] → Fig. 12
@@ -150,24 +154,27 @@ for iR = 1:numel(R_values)
   R_results(iR).u_cl = u_cl;
 end
 
+% define cols for the R sweep
+cols = lines(numel(R_values));
+
 % now plot Figure 12
 figure(12);
 
 % 12a) output y
 subplot(2,1,1), hold on, grid on
-cols = lines(numel(R_values));
 for i = 1:numel(R_values)
   plot(t_vec, R_results(i).y_cl, '-', ...
        'Color',cols(i,:), 'LineWidth',1.5, ...
        'DisplayName',['R=' num2str(R_results(i).R)]);
 end
-yline(y_ss,'k--','\bar{y}',...
+% steady-state output (shown in legend)
+yline(y_ss, 'k--', '$\bar y$', ...
+      'Interpreter','latex', ...
       'LabelHorizontalAlignment','left',...
-      'Interpreter','latex');
-xlabel('Time [s]');
-ylabel('y [\circC]');
-title('Figure 12a: Closed‐loop Output for Various R');
-legend('Location','best');
+      'DisplayName','$\bar y$');
+xlabel('Time [s]'); ylabel('y [\circC]');
+title('Closed‐loop Output for Various R');
+legend('Interpreter','latex','Location','best');
 
 % 12b) input u
 subplot(2,1,2), hold on, grid on
@@ -176,15 +183,18 @@ for i = 1:numel(R_values)
          'Color',cols(i,:), 'LineWidth',1.5, ...
          'DisplayName',['R=' num2str(R_results(i).R)]);
 end
-yline(u_ss,'k--','\bar{u}',...
-      'LabelHorizontalAlignment','left',...
-      'Interpreter','latex');
-yline(0,  'r--','0\%',  'LabelHorizontalAlignment','right');
-yline(100,'r--','100\%','LabelHorizontalAlignment','right');
-xlabel('Time [s]');
-ylabel('u [\%]');
-title('Figure 12b: Control Input for Various R');
-legend('Location','best');
+% steady-state input (shown in legend)
+yline(u_ss, 'k--', '$\bar u$', ...
+      'Interpreter','latex','LabelHorizontalAlignment','left', ...
+      'DisplayName','$\bar u$');
+% hide the 0% & 100% bounds from legend
+yline(0,   'r--',   'Interpreter','latex', ...
+      'LabelHorizontalAlignment','right','HandleVisibility','off');
+yline(100, 'r--',  'Interpreter','latex', ...
+      'LabelHorizontalAlignment','right','HandleVisibility','off');
+xlabel('Time [s]'); ylabel('u [\%]');
+title('Control Input for Various R');
+legend('Interpreter','latex','Location','best');
 
 
 %% Local MPC solver (dense, unconstrained)
