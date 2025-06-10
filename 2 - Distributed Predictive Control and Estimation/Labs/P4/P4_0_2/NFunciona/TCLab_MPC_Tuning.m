@@ -23,15 +23,15 @@ Dx0Dy0 = [eye(n)-A, zeros(n,1); C, -1] \ [-B*u_ss; 0];
 Dx0    = Dx0Dy0(1:n);
 
 % Simulation parameters
-T     = 500;                  % duration [s]
+T     = 2000;                  % duration [s]
 N     = T/Ts;                 % number of steps
 t_vec = (0:N-1)*Ts;           % time vector
 
 % MPC tuning parameters
-H_values = [10,20,50,70,100,200];
-R_values = [0.02,0.05,0.1,0.5,1];
-H_fixed  = 50;
-R_fixed  = 0.05;
+H_values = [2,3,5,10,15,20,25,30,35,40,45,50,55,60,65,70,75,80,85,90,95,100];
+R_values = [0.01,0.02,0.05,0.1,0.5];
+H_fixed  = 20;
+R_fixed  = 0.01;
 
 
 %% 1) Horizon sweep (R = 0.05) → Fig. 10
@@ -82,8 +82,8 @@ ylabel('Avg solve time (% of T_s)');
 title('Solver time vs Horizon');
 
 
-%% 2) Closed-loop output & input for H={10,20,50,70} → Fig. 11
-sel    = [10,20,50,70];
+%% 2) Closed-loop output & input for 
+sel    = [2,3,5,10,20,100];
 colors = lines(numel(sel));
 
 figure(11);
