@@ -28,15 +28,8 @@ h1 = @(x,u) A*x + B*u + Ke*e_std*randn + c1; % apply control
 T1C = @(x) C*x + e_std*randn + c2; % read temperature
 
 % Simulation parameters
-T = 4000; % Experiment duration [s]
+T = 500; % Experiment duration [s]
 N = T/Ts; % Number of samples to collect
-
-% Open-loop control profile
-%u = zeros(1,N);
-%u(:,1:200)   = u_ss;
-%u(:,201:400) = u_ss+5;
-%u(:,401:600) = u_ss-5;
-%u(:,601:800) = u_ss;
 
 % Parâmetros MPC
 H = 20;    % horizonte de predição
@@ -88,9 +81,10 @@ for k = 1:N
     Dx_ss=((eye(3)-A)\B)*Du_ss;
     dx=Dx(:,k)-Dx_ss;
     % Calcula controlo com MPC
-    du = mpc_solve(dx, H, R, A, B, C,(u_ss+Du_ss),y(:,k),dy);
-    Du(:,k)=Du_ss+du;
-    u(:,k) = u_ss + Du(:,k);
+    u_cmd      = mpc_solve(dx, H, R, A, B, C,  u_ss + Du_ss);
+    
+    u(:,k)     = u_cmd;                 % absolute [%]
+    Du(:,k)    = u_cmd -  u_ss;         % incremental relative to original u_ss
     
     % Aplica controlo
     x(:,k+1) = h1(x(:,k), u(:,k));
@@ -102,7 +96,7 @@ fprintf(' Done.\n');
 figure('Units','normalized','Position',[0.2 0.5 0.3 0.4])
 subplot(2,1,1), hold on, grid on   
 title('Absolute input/output')
-plot(t,y,'.','MarkerSize',5)
+plot(t,y,'.','MarkerSize',10)
 yl=yline(y_ss,'k--');
 xlabel('Time [s]')
 ylabel('y [°C]')
@@ -120,7 +114,7 @@ legend(yl,'$\bar{u}$','Interpreter','latex','Location','best');
 figure('Units','normalized','Position',[0.5 0.5 0.3 0.4])
 subplot(2,1,1), hold on, grid on   
 title('Incremental input/output')
-plot(t,Dy,'.','MarkerSize',5)
+plot(t,Dy,'.','MarkerSize',10)
 xlabel('Time [s]')
 ylabel('\Delta{y} [°C]')
 subplot(2,1,2), hold on, grid on   

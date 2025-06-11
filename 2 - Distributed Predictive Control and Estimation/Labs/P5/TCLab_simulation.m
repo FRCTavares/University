@@ -65,6 +65,7 @@ k_change = N/2;
 k_change2 = 3*N/4; 
 % Simulate incremental model
 fprintf('Running simulation...')
+r = nan(1,N);      % absolute reference temperature
 Dr=50-y_ss;
 d=0;
 de=1;
@@ -75,14 +76,15 @@ Bd = [B; 0];
 
 Cd = [C,  0];
 
-Q_E = Ke * e_std * Ke';
+Q_E = Ke * e_var * Ke';
 QEd = blkdiag(Q_E, de);
-L = dlqe(Ad,eye(n+1),Cd,QEd,e_std);
+L = dlqe(Ad,eye(n+1),Cd,QEd,e_var);
 xdhat   = zeros(n+1,1);    % [Δx̂; d̂] starts at zero
 
 xdhat(1:n) = pinv(C) * 5;      
 du_prev = 0;               % last Δu
 
+y_max = 55;   % [°C] upper bound
 for k = 1:N
    
     % Computes analog time
@@ -98,6 +100,7 @@ for k = 1:N
         Dr=45-y_ss;
     end
     
+    r(k) = y_ss + Dr;
 
     % Reads the sensor temperature
     y(:,k) = T1C(x(:,k));
@@ -131,11 +134,10 @@ for k = 1:N
     dx=Dx_est-Dx_ss;
 
     % Calcula controlo com MPC
-    %du = mpc_solvep6_7(dx, H, R, A, B, C,(u_ss+Du_ss),y_ss,Dr);
+    du = mpc_solve(dx, H, R, A, B, C,(u_ss+Du_ss),y_ss,Dr);
     Du(:,k)=Du_ss+du;
-    Du(:,k)=0;
     du_prev=Du(:,k);
-    u(:,k) = u_ss;
+    u(:,k) = u_ss + Du(:,k);
     
     
     % Aplica controlo
@@ -144,20 +146,55 @@ for k = 1:N
 end
 fprintf(' Done.\n');
 
+err_rel = abs(y - yhat_abs) ./ y * 100;
+
+%% Plots
+% Plot absolute variables
+figure('Units','normalized','Position',[0.2 0.5 0.3 0.4])
+subplot(2,1,1), hold on, grid on   
+title('Absolute input/output')
+plot(t, y,    '.','MarkerSize',5, 'DisplayName','Measured y')
+plot(t, r,    '--','LineWidth',1.5, 'DisplayName','Reference y^*')
+yline(y_max, 'm--', 'y_{max}', 'LineWidth',1.5, ...
+      'DisplayName','y_{max}');
+xlabel('Time [s]')
+ylabel('y [°C]')
+legend('Location','best')
+subplot(2,1,2), hold on, grid on   
+stairs(t, u, 'LineWidth',2,    'DisplayName','Control u')
+yline(0,'r--')
+yline(100,'r--')
+xlabel('Time [s]')
+ylabel('u [%]')
+legend('Location','best')
+
 %% Plot 1: measured vs. estimated output
 figure; hold on; grid on
-plot(t, y,           'b-',  'LineWidth',1.5, 'DisplayName','Measured y');
-plot(t, yhat_abs,    'r--', 'LineWidth',1.5, 'DisplayName','Estimated ŷ');
+plot(t, y,         'b-',  'LineWidth',1.5, 'DisplayName','Measured y');
+plot(t, yhat_abs,  'r--', 'LineWidth',1.5, 'DisplayName','Estimated ŷ');
+plot(t, r,         'k:',  'LineWidth',1.5, 'DisplayName','Reference y^*');
+yline(y_max, 'm--', 'y_{max}', 'LineWidth',1.5, ...
+      'DisplayName','y_{max}');
 xlabel('Time [s]');
 ylabel('Temperature [°C]');
-title('Measured vs. Estimated Output');
+title('Measured vs. Estimated Output with Reference');
 legend('Location','best');
 
-%% Plot 2: estimated disturbance
-figure; hold on; grid on
-  plot(t, dhat_hist, 'k-',  'LineWidth',1.5, 'DisplayName','Estimated $\hat d$');
+%% Figure X: Output‐error and disturbance estimate
+figure('Units','normalized','Position',[0.1 0.1 0.35 0.35])
 
-xlabel('Time [s]');
-ylabel('Disturbance Estimate');
-title('Kalman‐Filter Estimated Input Disturbance');
-legend('Interpreter','latex','Location','best');
+% 1) Relative error
+subplot(2,1,1), hold on, grid on
+plot(t, err_rel, '.', 'MarkerSize',5, 'DisplayName','|y - ŷ|/y [%]')
+xlabel('Time [s]')
+ylabel('|y - ŷ| / y [%]')
+title('Relative Output Error')
+legend('Location','best')
+
+% 2) Disturbance estimate + bound
+subplot(2,1,2), hold on, grid on
+plot(t, dhat_hist, '.', 'MarkerSize',5, 'DisplayName','Estimated \deltâ')
+xlabel('Time [s]')
+ylabel('\deltâ [%]')
+title('Disturbance Estimate')
+legend('Location','best')
