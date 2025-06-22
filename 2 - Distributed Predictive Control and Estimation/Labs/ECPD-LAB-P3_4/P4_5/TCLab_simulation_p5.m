@@ -27,15 +27,9 @@ h1 = @(x,u) A*x + B*u + Ke*e_std*randn + c1; % apply control
 T1C = @(x) C*x + e_std*randn + c2; % read temperature
 
 % Simulation parameters
-T = 4000; % Experiment duration [s]
+T = 1000; % Experiment duration [s]
 N = T/Ts; % Number of samples to collect
 
-% Open-loop control profile
-%u = zeros(1,N);
-%u(:,1:200)   = u_ss;
-%u(:,201:400) = u_ss+5;
-%u(:,401:600) = u_ss-5;
-%u(:,601:800) = u_ss;
 
 % Parâmetros MPC
 H = 20;    % horizonte de predição
@@ -58,7 +52,6 @@ du=0;
 x(:,1) = Dx0 + x_ss;
 
 k_change = N/2; 
-k_change2 = 3*N/4; 
 % Simulate incremental model
 fprintf('Running simulation...')
 Dr=0;
@@ -68,11 +61,9 @@ for k = 1:N
     t(k) = (k-1)*Ts;
     
     if k==k_change
-        Dr=5;
+        Dr=20;
     end
-    if k==k_change2
-        Dr=5;
-    end
+
 
     % Reads the sensor temperature
     y(:,k) = T1C(x(:,k));
@@ -98,13 +89,24 @@ fprintf(' Done.\n');
 %% Plots
 % Plot absolute variables
 figure('Units','normalized','Position',[0.2 0.5 0.3 0.4])
+
 subplot(2,1,1), hold on, grid on   
 title('Absolute input/output')
-plot(t,y,'.','MarkerSize',5)
-yl=yline(y_ss,'k--');
+plot(t,y,'.','MarkerSize',10)
+
+% Reference line: y_ref = y_ss + Dr (after k_change)
+y_ref = ones(1,N) * y_ss;
+y_ref(k_change:end) = y_ss + Dr;
+plot(t, y_ref, 'b--', 'LineWidth', 1.5, 'DisplayName', '$y_{ref}$')
+
+% Equilibrium and max temp lines
+yline(55, 'm--', 'y_{max}', 'LineWidth',1.5)
+yl = yline(y_ss,'k--');
+
 xlabel('Time [s]')
 ylabel('y [°C]')
-legend(yl,'$\bar{y}$','Interpreter','latex','Location','best')
+legend({'Measured $y$', '$y_{ref}$', '$y_{max}$', '$\bar{y}$'}, ...
+    'Interpreter','latex','Location','best')
 subplot(2,1,2), hold on, grid on   
 stairs(t,u,'LineWidth',2)
 yl=yline(u_ss,'k--');
@@ -114,19 +116,6 @@ xlabel('Time [s]')
 ylabel('u [%]')
 legend(yl,'$\bar{u}$','Interpreter','latex','Location','best');
 
-% Plot incremental variables
-figure('Units','normalized','Position',[0.5 0.5 0.3 0.4])
-subplot(2,1,1), hold on, grid on   
-title('Incremental input/output')
-plot(t,Dy,'.','MarkerSize',5)
-xlabel('Time [s]')
-ylabel('\Delta{y} [°C]')
-subplot(2,1,2), hold on, grid on   
-stairs(t,Du,'LineWidth',2)
-yline(-u_ss,'r--')
-yline(100-u_ss,'r--')
-xlabel('Time [s]')
-ylabel('\Delta{u} [%]')
 
 %--------------------------------------------------------------------------
 % End of File

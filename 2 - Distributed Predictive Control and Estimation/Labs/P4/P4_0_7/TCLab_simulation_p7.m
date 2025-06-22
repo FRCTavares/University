@@ -53,6 +53,7 @@ y = nan(1,N);
 Dy = nan(1,N);
 Du = nan(1,N);
 Dx = nan(n,N+1);
+eta_hist = nan(1, N);  % now a row vector
 
 yhat_inc  = nan(1,N);
 yhat_abs   = nan(1,N);
@@ -134,7 +135,8 @@ for k = 1:N
     dx=Dx_est-Dx_ss;
 
     % Calcula controlo com MPC
-    du = mpc_solvep6_7(dx, H, R, A, B, C,(u_ss+Du_ss),y_ss,Dr);
+    [du, eta_now] = mpc_solvep6_7(dx, H, R, A, B, C,(u_ss+Du_ss),y_ss,Dr);
+    eta_hist(k) = sum(eta_now);
     Du(:,k)=Du_ss+du;
     du_prev=Du(:,k);
     u(:,k) = u_ss + Du(:,k);
@@ -149,24 +151,6 @@ fprintf(' Done.\n');
 err_rel = abs(y - yhat_abs) ./ y * 100;
 
 %% Plots
-% Plot absolute variables
-figure('Units','normalized','Position',[0.2 0.5 0.3 0.4])
-subplot(2,1,1), hold on, grid on   
-title('Absolute input/output')
-plot(t, y,    '.','MarkerSize',5, 'DisplayName','Measured y')
-plot(t, r,    '--','LineWidth',1.5, 'DisplayName','Reference y^*')
-yline(y_max, 'm--', 'y_{max}', 'LineWidth',1.5, ...
-      'DisplayName','y_{max}');
-xlabel('Time [s]')
-ylabel('y [°C]')
-legend('Location','best')
-subplot(2,1,2), hold on, grid on   
-stairs(t, u, 'LineWidth',2,    'DisplayName','Control u')
-yline(0,'r--')
-yline(100,'r--')
-xlabel('Time [s]')
-ylabel('u [%]')
-legend('Location','best')
 
 %% Plot 1: measured vs. estimated output
 figure; hold on; grid on
@@ -198,3 +182,11 @@ xlabel('Time [s]')
 ylabel('\deltâ [%]')
 title('Disturbance Estimate')
 legend('Location','best')
+
+figure; hold on; grid on
+scatter(t, eta_hist, 15, 'filled')
+grid on;
+xlabel('Time [s]')
+ylabel('\eta_i (Constraint Violation)')
+title('Constraint Relaxation Over Time')
+ylim([0 max(eta_hist)*1.1]) % Add a bit of headroom

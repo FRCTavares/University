@@ -1,47 +1,63 @@
 function u0 = mpc_solvep6_7(x0, H, R, A, B, C,u_ss,y_now,dy)
-    % mpc_solve - calcula a primeira ação de controlo do MPC com restrições
-    % usando formulação densa e quadprog
+ % mpc_solve - MPC with soft safety constraint y <= 55°C
+    %   Implements a slack-variable softening of y <= y_max = 55 - y_ss - Dr - dy.
 
     n = size(A,1);  % número de estados
     m = size(B,2);  % número de entradas
     p = size(C,1);  % número de saídas
 
-    % Construção das matrizes W e Pi
+    % Build prediction matrices W and Pi
     W = zeros(H*p, H*m);
     Pi = zeros(H*p, n);
     for i = 1:H
-        Pi((i-1)*p+1:i*p, :) = C * A^i;
+        Pi((i-1)*p+1:i*p, :) = C * (A^i);
         for j = 1:i
-            W((i-1)*p+1:i*p, (j-1)*m+1:j*m) = C * A^(i-j) * B;
+            W((i-1)*p+1:i*p, (j-1)*m+1:j*m) = C * (A^(i-j)) * B;
         end
     end
 
-    % Matriz de custo
-    Q = eye(H*p);
-    Rbar = R * eye(H*m);
-    F = 2 * (W' * Q * W + Rbar);
-    F = (F + F') / 2;  % força simetria numérica
-    f = 2 * (W' * Q * Pi * x0);
+    % Cost matrices: augment slack penalty
+    Qy = eye(H*p);             % output tracking weight
+    Ru = R * eye(H*m);         % control increment weight
+    alpha = 500;               % slack variable penalty (large)
+    H_eta = alpha * eye(H*p);
 
-    % Restrições: garantir u ∈ [0, 100] ⇒ Δu ∈ [-u_ss, 100 - u_ss]
-    lb = (0-u_ss) * ones(H*m, 1);
-    ub = (100 - u_ss) * ones(H*m, 1);
+    % Build Hessian F_z  = 2 * [W'QyW + Ru,      0;
+    %                          0,           H_eta]
+    F = blkdiag(W' * Qy * W + Ru, H_eta);
+    F = (F + F') / 2;  % ensure symmetry
 
-    % Output constraint: y <= 55
-    
-    y_max = 55-y_now+dy;
-    A_ineq = eye(H)*W;
-    b_ineq = (y_max  - eye(H)* Pi * x0);
-    
-    % Resolver com quadprog
+    % Build linear term f_z = 2 * [W'QyPi*x0; zeros(H*p,1)]
+    f = [2 * W' * Qy * Pi * x0; zeros(H*p,1)];
+
+    % Determine safety limits and reference
+    y_max = 55 - y_ss - Dr ;
+
+    % Inequality: W*U + Pi*x0 <= y_max + eta
+    % => [  W,  -I ] * [U; eta] <= y_max - Pi*x0
+    A_ineq = [W, -eye(H*p)];
+    b_ineq = y_max * ones(H*p,1) - Pi * x0;
+
+    % Control bounds: Δu ∈ [ -u_ss, 100-u_ss ]
+    ub_U = (100 - u_ss) * ones(H*m,1);
+    lb_U = (0 - u_ss)   * ones(H*m,1);
+
+    % Slack variables η >= 0
+    lb_eta = zeros(H*p,1);
+    ub_eta = inf(H*p,1);
+
+    % Combine bounds
+    lb = [lb_U; lb_eta];
+    ub = [ub_U; ub_eta];
+
+    % Solve QP via quadprog
     options = optimoptions('quadprog','Display','off');
-    %U = quadprog(F, f, A_ineq, b_ineq, [], [], lb, ub, [], options);
-    %[U, ~, exitflag] = quadprog(F, f, [], [], [], [], lb, ub, [], options);
-    [U, ~, exitflag] = quadprog(F, f, [], [], [], [], [], [], [], options);
-    
+    [z, ~, exitflag] = quadprog(F, f, A_ineq, b_ineq, [], [], lb, ub, [], options);
     if exitflag ~= 1
         warning('MPC optimization failed (exitflag = %d).', exitflag);
     end
-    % Devolver apenas a primeira ação de controlo (Δu(0))
-    u0 = U(1);
+
+    % Extract the first control increment
+    Du_opt = z(1:m);
+    u0 = Du_opt(1);
 end

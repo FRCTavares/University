@@ -15,7 +15,7 @@ c2 = (y_ss - C*x_ss);
 h1 = @(x,u) A*x + B*u + Ke*e_std*randn + c1;
 T1C = @(x) C*x + e_std*randn + c2;
 
-T = 2500;
+T = 1000;
 N = T/Ts;
 H_values = [2, 3, 5, 10, 20,100];
 colors = lines(length(H_values));

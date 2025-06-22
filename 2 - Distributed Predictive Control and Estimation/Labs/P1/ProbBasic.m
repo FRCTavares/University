@@ -73,15 +73,15 @@ hold on
 log_levels = [1e-1 1e0 1e1 1e2 1e3];
 contour(xx1, xx2, ff, log_levels, 'LineColor', 'w', 'LineWidth', 0.8);
 
-% Plot optimization points
-h1 = plot(x0(1), x0(2), 'o', 'Color', 'r', LW, 1.5, 'MarkerSize', 12);  % Initial point
-h2 = plot(xopt(1), xopt(2), 'x', 'Color', 'r', LW, 1.5, 'MarkerSize', 12);  % Unconstrained minimum
-h3 = plot(xoptconstr(1), xoptconstr(2), '*', 'Color', 'r', LW, 1.5, 'MarkerSize', 12);  % Constrained minimum
-
 % Highlight infeasible region (x1 > 0.5) with transparent blue fill
 xfill = [0.5, x1max, x1max, 0.5];
 yfill = [x2min, x2min, x2max, x2max];
 fill(xfill, yfill, [0 0.4 1], 'FaceAlpha', 0.45, 'EdgeColor', 'none');
+
+% Plot optimization points
+h1 = plot(x0(1), x0(2), 'o', 'Color', 'r', LW, 1.5, 'MarkerSize', 15);  % Initial point
+h2 = plot(xopt(1), xopt(2), 'x', 'Color', 'r', LW, 1.5, 'MarkerSize', 15);  % Unconstrained minimum
+h3 = plot(xoptconstr(1), xoptconstr(2), '*', 'Color', 'r', LW, 1.5, 'MarkerSize', 15);  % Constrained minimum
 
 % Add dashed boundary line at x1 = 0.5
 plot([0.5 0.5], [x2min x2max], 'b--', 'LineWidth', 2);  

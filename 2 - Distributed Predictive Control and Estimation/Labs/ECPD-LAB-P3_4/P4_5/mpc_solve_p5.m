@@ -19,7 +19,7 @@ function u0 = mpc_solve_p5(x0, H, R, A, B, C, u_ss, y_ss, Dr, dy)
     % Cost matrices: augment slack penalty
     Qy = eye(H*p);             % output tracking weight
     Ru = R * eye(H*m);         % control increment weight
-    alpha = 1e4;               % slack variable penalty (large)
+    alpha = 500;               % slack variable penalty (large)
     H_eta = alpha * eye(H*p);
 
     % Build Hessian F_z  = 2 * [W'QyW + Ru,      0;

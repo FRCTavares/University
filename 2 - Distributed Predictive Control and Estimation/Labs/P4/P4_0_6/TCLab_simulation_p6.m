@@ -30,13 +30,6 @@ T1C = @(x) C*x + e_std*randn + c2; % read temperature
 T = 4000; % Experiment duration [s]
 N = T/Ts; % Number of samples to collect
 
-% Open-loop control profile
-%u = zeros(1,N);
-%u(:,1:200)   = u_ss;
-%u(:,201:400) = u_ss+5;
-%u(:,401:600) = u_ss-5;
-%u(:,601:800) = u_ss;
-
 % Parâmetros MPC
 H = 20;    % horizonte de predição
 R = 0.01;  % penalização do controlo
@@ -160,4 +153,92 @@ figure; hold on; grid on
 xlabel('Time [s]');
 ylabel('Disturbance Estimate');
 title('Kalman‐Filter Estimated Input Disturbance');
+legend('Interpreter','latex','Location','best');
+
+T=500;
+N = T/Ts; % Number of samples to collect
+
+% Parâmetros MPC
+H = 20;    % horizonte de predição
+R = 0.01;  % penalização do controlo
+
+u = nan(1,N); % vetor de controlo (agora vai ser calculado a cada instante)
+% Initial conditions (start at ambient temperature, i.e. equilibrium for u = 0)
+Dx0Dy0 = [eye(n)-A, zeros(n,1); C, -1]\[-B*u_ss; 0];
+Dx0 = Dx0Dy0(1:n);
+
+% Initialize signals
+t = nan(1,N);
+x = nan(n,N);
+y = nan(1,N);
+Dy = nan(1,N);
+Du = nan(1,N);
+Dx = nan(n,N+1);
+
+yhat_inc  = nan(1,N);
+yhat_abs   = nan(1,N);
+dhat_hist =nan(1,N);
+du=0;            
+x(:,1) = Dx0 + x_ss;
+
+k_chang = N/4; 
+k_change = N/2; 
+k_change2 = 3*N/4; 
+deltaE_values = [0.1, 1, 10] * e_std;
+dhat_all = nan(3,N);  % to store all 3 runs
+
+for v = 1:3
+    delta_e = deltaE_values(v);
+
+    % Reset system state
+    x(:,1) = Dx0 + x_ss;
+    xdhat = zeros(n+1,1);
+    xdhat(1:n) = pinv(C) * 5;
+    du_prev = 0;
+    Dr = 50 - y_ss;
+    
+    for k = 1:N
+        t(k) = (k-1)*Ts;
+
+        % Reference switching
+        if k==k_chang, Dr = 40 - y_ss; end
+        if k==k_change, Dr = 60 - y_ss; end
+        if k==k_change2, Dr = 45 - y_ss; end
+
+        y(:,k) = T1C(x(:,k));
+        Dy(:,k) = y(:,k) - y_ss;
+        Dx(:,k) = x(:,k) - x_ss;
+
+        % Recompute L with current delta_e
+        Q_E = Ke * e_std * Ke';
+        QEd = blkdiag(Q_E, delta_e);
+        L = dlqe(Ad, eye(n+1), Cd, QEd, e_std);
+
+        if k == 1
+            xdhat = pinv(Cd) * (Dy(:,k) + 5);
+        else
+            xdhat = Ad * xdhat + Bd * du_prev;
+            xdhat = xdhat + L * (Dy(:,k) - Cd * xdhat);
+        end
+
+        dhat_all(v,k) = xdhat(end);  % store disturbance
+
+        % Fixed open-loop u = u_ss
+        u(:,k) = u_ss;
+        du_prev = 0;
+
+        x(:,k+1) = h1(x(:,k), u(:,k));
+    end
+end
+
+fprintf(' Done.\n');
+
+%% Plot comparison of disturbance estimates
+figure; hold on; grid on
+plot(t, dhat_all(1,:), 'b-',  'DisplayName', '$\delta_E = 0.1 \cdot e_{\mathrm{std}}$');
+plot(t, dhat_all(2,:), 'k-',  'DisplayName', '$\delta_E = e_{\mathrm{std}}$');
+plot(t, dhat_all(3,:), 'r-',  'DisplayName', '$\delta_E = 10 \cdot e_{\mathrm{std}}$');
+xlabel('Time [s]');
+ylabel('Estimated Disturbance');
+title('Effect of $\delta_E$ on Kalman Disturbance Estimation','Interpreter','latex');
 legend('Interpreter','latex','Location','best');

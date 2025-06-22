@@ -1,4 +1,4 @@
-function u0 = mpc_solve6_7(x0, H, R, A, B, C, u_ss, y_ss, Dr)
+function [u0, eta_used] = mpc_solvep6_7(x0, H, R, A, B, C, u_ss, y_ss, Dr)
     % mpc_solve - MPC with soft safety constraint y <= 55°C
     %   Implements a slack-variable softening of y <= y_max = 55 - y_ss - Dr - dy.
 
@@ -59,5 +59,6 @@ function u0 = mpc_solve6_7(x0, H, R, A, B, C, u_ss, y_ss, Dr)
 
     % Extract the first control increment
     Du_opt = z(1:m);
+    eta_used = z(H*m+1:end);  % the last H*p elements are the slack variables
     u0 = Du_opt(1);
 end

@@ -1,0 +1,664 @@
+\section*{Three-Phase VSC Grid Interface and Control Design}
+
+EX5 - A three-phase Voltage Source Converter (VSC), with an efficiency of \(\eta = \textbf{92\%}\) and rated power \(\textbf{237\,kVA}\), is used to connect a DC microgrid rated at \(\textbf{700\,V}\) and \(\textbf{200\,kW}\) (with \(P_{\text{DC,min}} = \textbf{20\,kW}\)) to the medium-voltage (MV) AC grid at \(\textbf{30\,kV}\). The connection is made via a transformer (\(\textbf{30\,kV / 400\,V}\); \(\textbf{50\,Hz}\)). At the point of common coupling (PCC) of the VSC, the short-circuit power is \(S_{cc} = \textbf{20\,MVA}\). The ripple in the AC current should not exceed \(\textbf{5\%}\) of its rated value.
+
+
+\subsection*{(a) Filter Component Sizing}
+
+\noindent Converter current:\hfill
+\[
+  \mathframebox{I_{\rm conv}
+  = \frac{P}{\eta\,V_{LL}\sqrt3}}
+  = \frac{200\,000}{0.92\cdot400\sqrt3}
+  \approx313.8\ \mathrm{A}
+\]
+
+\noindent Allowed AC current ripple:\hfill
+\[
+  \Delta i_{pp}
+  = 0.05\,I_{\rm conv}
+  = 0.05\cdot313.8
+  \approx15.7\ \mathrm{A}
+\]
+
+\noindent Switching parameters:\hfill
+\[
+  \mathframebox{f_s = p\cdot f }= 237\cdot50 = 11.85\ \mathrm{kHz},\quad
+  T_s = \frac1{f_s}\approx84.4\ \mu\mathrm{s},\quad
+  \Delta t = 0.02
+\]
+
+\noindent DC‐link voltage limits:\hfill
+\[
+  \Delta V_{DC} = 0.10\cdot700 = 70\ \mathrm{V}
+  \;\Longrightarrow\;
+  U_{\max}=700+\tfrac{70}{2}=735\ \mathrm{V},\;
+  U_{\min}=700-\tfrac{70}{2}=665\ \mathrm{V}
+\]
+
+\noindent Filter inductance (per phase):\hfill
+\[
+ \mathframebox{ L \ge \frac{U_{\max}}{6\,\Delta i_{pp}\,f_s}}
+    = \frac{735}{6\cdot15.7\cdot11850}
+    \approx659\ \mu\mathrm{H}
+\]
+
+\noindent DC‐link capacitance:\hfill
+\[
+  \mathframebox{C \ge \frac{2\,P\,\Delta t}{U_{\max}^2 - U_{\min}^2}
+    }= \frac{2\cdot200\,000\cdot0.02}{735^2-665^2}
+    \approx81.6\ \mathrm{mF}
+\]
+\newpage
+
+\subsection*{(b) Controller Design}
+
+\subsubsection*{Current‐loop controller (d‐ and q‐axes):}
+
+\[
+\mathframebox{R_{eq}
+=\frac{V_{DC}}{I_{\rm conv}}}
+=\frac{220}{313.8}
+\approx0.701\;\Omega
+\quad
+\alpha_i=1
+\]
+\[
+\mathframebox{T_z
+=\frac{L}{R_{eq}}}
+=\frac{659\times10^{-6}}{0.701}
+\approx0.79\;\mathrm{ms},
+\qquad
+\mathframebox{T_p
+=\frac{2\alpha_iT_d}{R_{eq}}
+=\frac{1}{f_s\,R_{eq}}}
+=\frac{1}{11850\cdot0.701}
+\approx0.115\;\mathrm{ms}
+\]
+\[
+id_{ref} \approx \sqrt{3} \times i_{conv} = 535 A
+\quad
+iq_{ref}=0
+\]
+\[
+\mathframebox{\omega L=2\pi f L}= 2\pi \times 50 \times 659 \times 10^{-6} = 0.2 \Omega
+\]
+\[
+v_d \approx \sqrt{3} \times 230
+\quad
+v_q =0
+\]
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1\linewidth]{Images/Controller3-LinearCurrent.png}
+    %\caption{Current‐loop PI controller structure}
+    \label{fig:current-controller}
+\end{figure}
+
+\newpage
+\subsubsection*{DC‐link voltage controller (outer loop):}
+
+\[
+\eta(v_di_d+v_qi_q) = V_{DC}\times I_{DC}
+\]
+\[
+\mathframebox{G_i = \frac{I_{DC}}{i_d}=\frac{\eta v_d}{V_{DC}}}=0.92\frac{\sqrt{3}\times 230}{700} =0.52
+\]
+\[
+\mathframebox{K_{pv}=-\frac{2.15\times C\times \alpha_i}{1.75^{2}\times \alpha_v \times G_i \times T_{dv}}} = - \frac{2.15 \times 81.6 \times 10^{-3}}{1.75^{2}\times 0.52 \times 0.01} = -11
+\]
+\[
+\mathframebox{K_{iv}=-\frac{C\times \alpha_i}{1.75^{2}\times \alpha_v \times G_i \times T_{dv}^2} }= - \frac{81.6 \times 10^{-3}}{1.75^{2}\times 0.52 \times 0.01^2} = -512
+\]
+
+\textbf{General Control Structure}
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1\linewidth]{Images/Controller4-DCvoltage.png}
+    %\caption{Overall VSC control architecture}
+    \label{fig:general-control}
+\end{figure}
+
+
+
+\newpage
+\subsection*{(c) Voltage Drop at the PCC}
+
+An AC load is connected at the transformer secondary side . When the load starts the peak current reaches 1500A, and then drops to 250A after 30s. \textbf{Estimate the maximum voltage drop at the PCC}.
+\vspace{1.0em}
+
+Maximum current drawn is 
+\[
+  I_{\mathrm{max}}\approx1500 + 313 = \SI{1800}{\ampere}.
+\]
+\[
+Z_{cc}=\frac{V^2}{S_{cc}}=\frac{400^2}{20\times 10^6}=\SI{8}{m\ohm}
+\]
+
+\begin{figure}[H]
+  \centering
+  \begin{minipage}{0.45\textwidth}
+    \centering
+    \includegraphics[width=0.7\linewidth]{Images/PCC.png}
+  \end{minipage}\hfill
+  \begin{minipage}{0.52\textwidth}
+    \small
+    This voltage drop occurs momentarily and represents a worst-case transient under peak current draw.
+
+    The maximum instantaneous voltage drop across the PCC is
+    \[
+      \Delta V = I_{\mathrm{max}}\;Z_{cc}
+      = \SI{1800}{\ampere} \times \SI{8e-3}{\ohm}
+      = \SI{14.4}{\volt}.
+    \]
+  \end{minipage}
+  \label{fig:PCC-voltage-drop}
+\end{figure}
+
+\newpage
+
+\section*{Current and Voltage Control of the Three-Phase VSC}
+
+EX6 - This exercise considers the same three-phase VSC setup as designed in Problem 5.
+
+\subsection*{(a) Nonlinear Controller for the AC Currents}
+
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\linewidth]{Images/Controller1-NonLinear.png}
+    \label{fig:enter-label}
+\end{figure}
+
+\paragraph{Nutshell of the Nonlinear AC‐Current Controller}
+
+Starting from the left of the block diagram:
+
+\begin{itemize}[noitemsep,left=0pt]
+  \item \textbf{dq→$\alpha\beta$ transform:}  Converts the \emph{d/q} current references $(i_{d,\rm ref},i_{q,\rm ref})$ into stationary‐frame set‐points $(i_{\alpha,\rm ref},\,i_{\beta,\rm ref})$.
+  \item \textbf{Error comparators (hysteresis):}  Each of the two error signals
+    \[
+      e_\alpha = i_{\alpha,\rm ref}-i_{\alpha}, 
+      \quad
+      e_\beta  = i_{\beta,\rm ref}-i_{\beta}
+    \]
+    is fed into a $\pm1$ hysteresis comparator, which produces two-level switching commands.
+  \item \textbf{Look‐Up Table (LUT) \& Encoder:}  The pair of comparator outputs addresses a small LUT that maps each $(\pm1,\pm1)$ combination to the appropriate six‐step switching pattern.  The encoder then sequences and adds any required dead‐time to produce the final gate signals.
+  \item \textbf{VSC \& Filter:}  Those gate signals drive the voltage‐source converter; its output currents pass through the L‐filter into the grid.
+  \item \textbf{Feedback path:}  The three measured phase currents $i_a,i_b,i_c$ are Clarke‐transformed back to $(i_\alpha,i_\beta)$ and fed into the hysteresis comparators.
+\end{itemize}
+
+It achieves very fast current tracking (nonlinear but simple), at the cost of variable switching frequency.  
+
+
+\subsection*{(b) Linear Controller for the DC Link Voltage}
+
+Exactly the same as in Exercise 5 b).
+
+\newpage
+\section*{Exercise 7 – Storage System Sizing for an AC Microgrid}
+
+Size a \textbf{storage system} for an AC microgrid to \textbf{supply a \SI{200}{\kilo\watt} load during 2 full days}, considering that only \textbf{75\% of the energy can be retrieved} and the \textbf{power‐conversion efficiency is 92\%}.
+
+\subsection*{(a) Estimate the total energy to be stored}
+
+\[
+  \mathframebox{E_{\mathrm{load}}
+  = P_{\mathrm{load}}\times t
+  }= \SI{200}{\kilo\watt}\times (2\times24\ \mathrm{h})
+  = \SI{9600}{\kilo\watt\hour}
+\]
+
+\[
+  \mathframebox{E_{\mathrm{stored}}
+  = \frac{E_{\mathrm{load}}}
+         {\eta_{\mathrm{retrieval}}\;\times\;\eta_{\mathrm{conv}}}
+  }= \frac{\SI{9600}{\kilo\watt\hour}}
+         {0.75 \times 0.92}
+  \approx \SI{13\,150}{\kilo\watt\hour}
+\]
+
+\subsection*{(b) Considering energy and power requirements, compare energy storage solutions}
+\[
+\mathframebox{Kg_E=\frac{E_{stored}}{D_E}\quad Kg_P=\frac{P}{D_P \cdot\eta_{conv}}}
+\]
+
+\begin{table}[ht]
+  \centering
+  \caption{Mass required for energy and power demands}
+  \label{tab:storage-comparison}
+  \begin{tabularx}{\textwidth}{
+    @{}l
+    >{\centering\arraybackslash}X
+    >{\centering\arraybackslash}X
+    >{\centering\arraybackslash}X
+    >{\centering\arraybackslash}X
+    @{}
+  }
+    \toprule
+    Technology       & {Energy density } & {Power density}  & {$Kg_E$}     & {$Kg_P$}     \\
+                     & ($D_E$)\si{\watt\hour\per\kilogram}
+                     & ($D_P$)\si{\watt\per\kilogram}
+                     & \si{\kilogram}
+                     & \si{\kilogram}  \\
+    \midrule
+    Li‐ion battery    & 300    & 300     & \num{4.638e4} & \num{724}    \\
+    Supercapacitor    &   2    & 1200    & \num{7.00e6} & \num{181}    \\
+    Flywheel (carbon) & 200    & 300000  & \num{6.96e4} & \num{0.72}   \\
+    Fuel cell         &  75    & 100     & \num{1.855e5} & \num{2.17e6} \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+\noindent Considering the weight, the best solution would be Li-ion batteries. If the batteries efficiency ($70 \% - 95 \%$) would be considered, the weight would slightly increase.
+
+\newpage
+\subsection*{(c) Consider that when some heavier loads are connected to the microgrid, the peak power consumption may reach 300kW during 30s. Calculate the new requirements for the energy storage system. Consider an additional storage system to guarantee the additional 100kW during 30s.}
+
+When the load spikes to \(\SI{300}{\kilo\watt}\) for \(t=\SI{30}{\second}\), the extra energy required is
+\[
+ \mathframebox{ E_{\rm peak}
+  = P \times t }
+  = \SI{300}{\kilo\watt}\;\times\;\Bigl(\frac{\SI{30}{\second}}{\SI{3600}{\second\per\hour}}\Bigr)
+  = \SI{2.50}{\kilo\watt\hour}.
+\]
+Accounting for \(75\%\) depth of discharge and \(92\%\) conversion efficiency gives
+\[
+  E_{\rm stored}
+  = \frac{E_{\rm peak}}
+         {0.75 \times 0.92}
+  \approx \SI{3.62}{\kilo\watt\hour}.
+\]
+This additional \(\approx\SI{3.6}{\kilo\watt\hour}\) is negligible compared to the main sizing in part (a) (\(\sim\SI{13}{\kilo\watt\hour}\)). 
+
+
+\begin{table}[ht]
+  \centering
+  \caption{Mass required for energy and power demands}
+  \label{tab:storage-comparison}
+  \begin{tabularx}{\textwidth}{
+    @{}l
+    >{\centering\arraybackslash}X
+    >{\centering\arraybackslash}X
+    @{}
+  }
+    \toprule
+    Technology       & {$Kg_E$} [\si{\kilogram}]   & {$Kg_P$} [\si{\kilogram}]\\
+    \midrule
+    Li‐ion battery    &  \num{12} & \num{1.09e3}    \\
+    Supercapacitor    &  \num{1.8e3} & \num{271.7}    \\
+    Flywheel (carbon) &  \num{18} & \num{1}   \\
+    Fuel cell         &  \num{48.3} & \num{3.26e3} \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+\medskip
+
+\noindent
+\textbf{Recommended hybrid solutions:}
+\begin{itemize}[noitemsep,left=1em]
+  \item \emph{Batteries + supercapacitors}:  
+    batteries for bulk energy, supercaps for the 30 s high-power pulse.
+  \item \emph{Batteries + flywheel}:  
+    flywheel for short bursts, batteries for sustained energy.
+  \item Single DC–DC interface for batteries + supercaps reduces conversion stages and cost.
+\end{itemize}
+
+\medskip
+
+\noindent
+\textbf{Sizing check:}
+\[
+  46.38\times10^3\ \text{kg}_{\rm batt} + 12\ \text{kg}_{\rm sc}
+  \approx 46.4\times10^3\ \text{kg total},
+\]
+and for the remaining \(100\)\,kW peak:
+\[
+  m_{\rm sc}
+  = \frac{100\times10^3}{1.2\times10^3 \times 0.92}
+  \approx \SI{90.6}{\kilogram}.
+\]
+
+
+\subsection*{(d) Design linear controllers for the three phase AC voltages}
+
+\subsubsection*{1. AC‐Current Loop Controllers}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\linewidth]{Images/Controller3-LinearCurrent.png}
+  \caption{Detailed \(d\)/\(q\)–axis current controllers with \(\omega L\) decoupling and current limiting.}
+  \label{fig:current-controller}
+\end{figure}
+
+The cross‐coupling term is
+\[
+  \omega L = 2\pi\cdot50\,L.
+\]
+Define the key time‐constants:
+\[
+  T_z = \frac{L}{R}, 
+  \quad
+  T_d = \frac{T_{\text{switching}}}{2}, 
+  \quad
+  T_p = \frac{2\,\alpha_i\,T_d}{R}.
+\]
+
+\subsubsection*{2. Outer Voltage Loop Controllers}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\linewidth]{Images/Controller2-Voltage.png}
+  \caption{DC‐link voltage controller generating \(i_{d,\mathrm{ref}}\) and \(i_{q,\mathrm{ref}}\).}
+  \label{fig:voltage-controller}
+\end{figure}
+
+With small‐signal gain \(G_i\), the PI gains are
+\[
+  G_i = 1,
+  \qquad
+  K_{pv}
+  = \frac{2.15\,C\,\alpha_i}
+         {1.75^2\,\alpha_v\,G_i\,T_{dv}},
+  \qquad
+  K_{iv}
+  = \frac{C\,\alpha_i}
+         {1.75^2\,\alpha_v\,G_i\,T_{dv}^2}
+\]
+The voltage‐loop cross term (if you feed‐forward the capacitor dynamics) is
+\[
+  \omega C = 2\pi\cdot50\,C.
+\]
+
+\newpage
+\section*{MAP 21--22 A}
+
+A DC microgrid rated at \SI{150}{\kilo\watt}
+(\(P_{DC,\min}=\SI{15}{\kilo\watt}\)),
+\(\SI{700}{\volt}\pm\SI{10}{\percent}\),
+is connected to the MV AC grid at \SI{15}{\kilo\volt}
+through a transformer (\SI{15}{\kilo\volt}/\SI{400}{\volt};
+\(\SI{50}{\hertz}\)) and a three-phase VSC
+\(\bigl(\eta=\SI{92}{\percent},\,p=3(2n-1),\,n=60\bigr)\).
+At the PCC of the VSC, \(S_{cc}=\SI{10}{\mega\volt\ampere}\).
+The AC current ripple must not exceed \(\SI{10}{\percent}\)
+of the converter’s rated current.
+
+
+\subsection*{a) Represent the converter and size the AC and DC filtering components.}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\linewidth]{Images/Converter2.png}
+\end{figure}
+
+\paragraph{Switching frequency}
+\[
+\mathframebox{p = 3\,(2n - 1)}, \qquad
+\mathframebox{f_s = p\,f_{\mathrm{grid}}}, \qquad
+\mathframebox{\Delta t=0.02}
+\]
+Numerically:
+\[
+n = 60\;\Rightarrow\;p = 3\,(2\cdot60 - 1) = 357,\qquad
+f_s = 357\times50\;\mathrm{Hz} = 17\,850\;\mathrm{Hz}.
+\]
+
+\paragraph{Converter current}
+\[
+\mathframebox{I_{\rm conv}
+= \frac{P_{DC,\max}}{\eta\,\bigl(\sqrt3\,U_{AC,LL}\bigr)}}
+\;=\;\frac{150\,000}{0.92\,(\sqrt3\times400)}
+\;\approx\;235.5\;\mathrm{A}.
+\]
+
+\paragraph{AC‐side inductance \(L\)}
+\[
+\mathframebox{L \ge \frac{U_{\max}}{6\,\Delta i_{pp}\,f_s}}, 
+\quad\mathframebox{\Delta i_{pp} = 0.1\,I_{\rm conv}}, 
+\quad\mathframebox{U_{\max} = U_{DC} + \tfrac{\Delta U_{DC}}{2}}
+\]
+Substitution:
+\[
+\Delta i_{pp}=0.1\times235.5\approx23.6\;\mathrm{A},\quad
+U_{\max}=700+35=735\;\mathrm{V},
+\]
+\[
+L \ge \frac{735}{6\cdot23.6\cdot17\,850}
+\approx 290\;\mu\mathrm{H\ per\ phase}.
+\]
+
+\paragraph{DC‐link capacitance \(C_{dc}\)}
+\[
+\mathframebox{C_{dc}
+\ge \frac{2\,P_{DC,\max}\,\Delta t}{U_{\max}^2 - U_{\min}^2}}, 
+\quad\mathframebox{\Delta t = 0.02}, 
+\quad\mathframebox{U_{\min} = U_{DC} - \tfrac{\Delta U_{DC}}{2}}
+\]
+Substitution:
+\[
+U_{\min}=700-35=665\;\mathrm{V},\quad
+\Delta t = \tfrac1{2\times17850}\approx28.0\;\mu\mathrm{s},
+\]
+\[
+C_{dc}\ge\frac{2\cdot150\,000\cdot0.02}{735^2-665^2}
+\approx61.2\;\mathrm{mF}.
+\]
+
+
+\newpage
+
+
+\subsection*{b) Controller design for DC‐link voltage and AC current loops}
+
+\paragraph{Current‐loop PI design}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.9\textwidth]{Images/Controller3-LinearCurrent.png}
+  \label{fig:current_ctrl}
+\end{figure}
+
+\[
+\mathframebox{R_{\rm eq} = \frac{v_{d}/\sqrt{3}}{I_{\rm conv}}},
+\quad
+\mathframebox{T_z = \frac{L}{R_{\rm eq}}},
+\quad
+\mathframebox{T_d = \frac{T_s}{2}},
+\quad
+\mathframebox{T_p = \frac{2\,\alpha_i\,T_d}{R_{\rm eq}} = \frac{1}{f_s \cdot R_{eq}}}
+\]
+Substitution (using $v_d =\sqrt3 \cdot230\,$V, $I_{\rm conv}\approx235.5\,$A, $L=290\,\mu$H, $f_s=17\,850\,$Hz, $\alpha_i=1$):
+\[
+R_{\rm eq}=\frac{230}{235.5}\approx0.977\,\Omega,\quad
+T_z=\frac{290\times10^{-6}}{0.977}\approx0.297\,\mathrm{ms},
+\]
+\[
+T_d=\frac1{2\cdot17850}\approx28.0\,\mu\mathrm{s},\quad
+T_p=\frac{2\cdot1\cdot28.0\times10^{-6}}{0.977}\approx57.34\,\mu\mathrm{s}.
+\]
+Reference currents and cross‐coupling:
+\[
+i_{d,\rm ref}\approx\sqrt3\,I_{\rm conv}\approx408\,\mathrm{A},\quad
+i_{q,\rm ref}=0,\quad
+\omega L=2\pi\cdot50\cdot290\times10^{-6}\approx0.0911\,\Omega.
+\]
+
+\paragraph{DC‐link voltage PI design}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.9\textwidth]{Images/Controller4-DCvoltage.png}
+  \label{fig:voltage_ctrl}
+\end{figure}
+
+\[
+\mathframebox{G_i = \frac{I_{DC}}{i_d} = \frac{\eta\,v_d}{V_{DC}}},
+\quad
+\mathframebox{T_{dv}=\Delta t/2}, 
+\quad
+\mathframebox{K_{pv} = -\,\frac{2.15\,C\,\alpha_i}{1.752^2\,\alpha_v\,G_i\,T_{dv}}},
+\quad
+\mathframebox{K_{iv} = -\,\frac{C\,\alpha_i}{1.752^2\alpha_v\,G_i\,T_{dv}^2}}
+\]
+Substitution (with $v_d =\sqrt3 \cdot230\,$V, $C=61.2\,$mF, $\alpha_v=1$, $T_{dv}=0.01$):
+\[
+G_i=\frac{0.92\times \sqrt{3} \cdot230}{700}\approx0.52,\quad
+K_{pv}=-\frac{2.15\times61.2\times10^{-3}}{1.752^2\times1\times0.52\times0.01}\approx-8,
+\]
+\[
+K_{iv}=-\frac{61.2\times10^{-3}}{1.752^2\times1\times0.52\times(0.01)^2}\approx-338,
+\quad
+\omega C=2\pi\cdot50\cdot61.2\times10^{-3}\approx19.23\,\Omega.
+\]
+
+
+\newpage
+\subsection*{c) The microgrid should be autonomous for 3 days. Considering energy and power requirements, compare and discuss energy storage solutions.}
+
+
+\paragraph{Energy and power requirements}
+\[
+\mathframebox{E_{\mathrm{req}} = P_{\mathrm{load}}\times72\;\mathrm{h}}, 
+\qquad
+\mathframebox{P_{\mathrm{req}} = P_{\mathrm{load}}}
+\qquad 
+\mathframebox{E_{\mathrm{stored}} = \frac{E_{\mathrm{req}}}{\eta_{\mathrm{conv}}}}
+\]
+\[
+\mathframebox{Kg_E = \frac{E_{\mathrm{stored}}}{D_E}}, 
+\qquad
+\mathframebox{Kg_P = \frac{P_{\mathrm{req}}}{D_P\cdot \eta_{\mathrm{conv}}}}
+\]
+where:
+
+\(P_{\mathrm{load}}=\SI{150}{\kilo\watt}\), \(E_{\mathrm{req}}=\SI{150}{\kilo\watt}\times72\;\mathrm{h}=\SI{10800}{\kilo\watt\hour}\) and \(E_{\mathrm{stored}}=\frac{10800}{0.92}=\SI{11739}{\kilo\watt\hour}\).
+
+\begin{table}[ht]
+  \centering
+  \caption{Mass required to meet 3 days energy and 150 kW power demands}
+  \label{tab:storage-comparison}
+  \sisetup{per-mode=symbol}
+  \begin{tabularx}{\linewidth}{
+    @{}l
+    >{\centering\arraybackslash}X
+    >{\centering\arraybackslash}X
+    >{\centering\arraybackslash}X
+    >{\centering\arraybackslash}X
+    @{}
+  }
+    \toprule
+    Technology       & $D_E$ (\si{\watt\hour\per\kilogram}) 
+                     & $D_P$ (\si{\watt\per\kilogram}) 
+                     & $Kg_E$ (\si{\kilogram}) 
+                     & $Kg_P$ (\si{\kilogram})     \\
+    \midrule
+    Li‐ion battery    & 300    & 300      &  \num{3.91e4}  & \num{5.43e2}   \\
+    Supercapacitor    & 2      & 1200     &  \num{5.87e6}  & \num{1.36e2}   \\
+    Flywheel (carbon) & 200    & 300000   &  \num{5.87e4}  & \num{5.44e-1}  \\
+    Fuel cell         & 75     & 100      &  \num{1.57e5}  & \num{1.63e3}   \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+\paragraph{Discussion}
+\begin{itemize}
+  \item \textbf{Energy mass (\(m_E\))}:  
+    Supercapacitors require prohibitively large mass, fuel cells also heavy; Li‐ion and flywheel are in the \(10^4\)\,\si{\kilogram} range.
+  \item \textbf{Power mass (\(m_P\))}:  
+    Flywheels excel with sub‐kg mass, Li‐ion and supercaps moderate, fuel cells heavy.
+  \item \textbf{Trade‐off}:  
+    Li‐ion batteries offer the best overall compromise for multi‐day autonomy; hybridization with a small flywheel or supercapacitor can cover peak power demands.
+\end{itemize}
+\newpage
+
+
+\subsection*{d) An additional storage system is required to guarantee the microgrid stability when an heavy load is started. The additional storage system should be sized to guarantee 400kW during 1s, and a response time lower than 100 \(\mu\)s. Size and discuss possible solutions.}
+
+\paragraph{Sizing formulas}
+\[
+\mathframebox{E_{\mathrm{peak}} = P_{\mathrm{peak}}\times \frac{t_{\mathrm{peak}}}{3600}},
+\quad
+\quad 
+\mathframebox{E_{\mathrm{stored}} = \frac{E_{\mathrm{peak}}}{\eta_{\mathrm{conv}}}},
+\quad
+\mathframebox{Kg_E = \frac{E_{\mathrm{stored}}}{D_E}}, 
+\quad
+\mathframebox{Kg_P = \frac{P_{\mathrm{peak}}}{D_P\cdot \eta_{\mathrm{conv}}}}
+\]
+where \(P_{\mathrm{peak}}=\SI{400}{\kilo\watt}\), \(t_{\mathrm{rt}}=\SI{1}{\second}\), hence \(E_{\mathrm{peak}}=\SI{111.1}{\watt\hour}.\) and \(E_{\mathrm{stored}}=\SI{120.8}{\watt\hour}\)
+
+\begin{table}[ht]
+  \centering
+  \caption{Mass to supply 400 kW for 1 s (with \(\eta=0.92\))}
+  \label{tab:ride-through}
+  \sisetup{per-mode=symbol}
+  \begin{tabularx}{\linewidth}{
+    @{}l
+    >{\centering\arraybackslash}X
+    >{\centering\arraybackslash}X
+    >{\centering\arraybackslash}X
+    >{\centering\arraybackslash}X
+    @{}
+  }
+    \toprule
+    Technology       & $D_E$ (\si{\watt\hour\per\kilogram}) 
+                     & $D_P$ (\si{\watt\per\kilogram}) 
+                     & $Kg_E$ (\si{\kilogram}) 
+                     & $Kg_P$ (\si{\kilogram})     \\
+    \midrule
+    Li‐ion battery    & 300    & 300      & \num{0.403}   & \num{1449}   \\
+    Supercapacitor    & 2      & 1200     & \num{60.4}    & \num{362}    \\
+    Flywheel (carbon) & 200    & 300000   & \num{0.604}   & \num{1.45}   \\
+    Fuel cell         & 75     & 100      & \num{1.61}    & \num{4348}   \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+\paragraph{Discussion}
+\begin{itemize}
+  \item \textbf{Energy mass (\(Kg_E\))}:  
+    Li‐ion batteries and flywheels require under \SI{1}{kg} (\SI{0.40}{kg} and \SI{0.60}{kg}, respectively), supercapacitors are heavy (\SI{60.4}{kg}), and fuel cells moderate (\SI{1.61}{kg}).
+  \item \textbf{Power mass (\(Kg_P\))}:  
+    Flywheels excel (\(\approx\)\SI{1.45}{kg}), supercapacitors moderate (\(\approx\)\SI{362}{kg}), Li‐ion batteries heavy (\(\approx\)\SI{1449}{kg}), and fuel cells are prohibitive (\(\approx\)\SI{4348}{kg}).
+  \item \textbf{Response time}:  
+    \begin{itemize}
+      \item \emph{Supercapacitors} switch in \(\mu\)s, easily meeting the $<$100 µs requirement.
+      \item \emph{Flywheels} have ms‐scale inertia and control latency $>$1 ms.
+      \item \emph{Li‐ion batteries} and \emph{fuel cells} respond in ms–s, too slow.
+    \end{itemize}
+  \item \textbf{Recommendation}:  
+    A bank of \emph{supercapacitors} provides the fastest response ($<$100 µs) and sufficient energy (\SI{60.4}{kg}) for the 1 s ride-through, but with substantial mass. Pairing them with a small \emph{flywheel} (\SI{0.60}{kg} energy mass, \SI{1.45}{kg} power mass) can offload high-power demand slightly slower but with minimal additional mass, yielding a compact, fast, and robust solution.
+\end{itemize}
+\newpage
+\subsection*{e) Estimate the short circuit impedance in the PCC. For the rated power, estimate the maximum voltage drop at the PCC.}
+
+\paragraph{Sizing formulas}
+\[
+\mathframebox{Z_{sc} = \frac{U_{AC,LL}^2}{S_{cc}}},
+\qquad
+\mathframebox{\Delta V = I_{\rm conv}\,Z_{sc}}
+\]
+where \(U_{AC,LL}=\SI{400}{\volt}\), \(S_{cc}=\SI{10}{\mega\volt\ampere}\), and \(I_{\rm conv}\approx\SI{235.5}{\ampere}.\)
+
+\paragraph{Calculation}
+\[
+Z_{sc} = \frac{(400)^2}{10\times10^6}
+= \SI{0.016}{\ohm}.
+\]
+\[
+\Delta V 
+= 235.5 \times 0.016
+\approx \SI{3.77}{\volt}
+\quad\bigl(\approx0.94\%\text{ of }400\,\mathrm V\bigr).
+\]
+
+\paragraph{Discussion}
+\begin{itemize}
+  \item The short‐circuit impedance at the PCC is very low (\(\SI{0.016}{\ohm}\)), reflecting the strong grid connection (10 MVA fault level).
+  \item Under full converter load (\(\SI{235.5}{A}\)), the maximum line‐to‐line voltage drop is only \(\SI{3.77}{V}\), i.e.\ about 0.94 % of the nominal \(\SI{400}{V}\).
+  \item This small voltage drop confirms that voltage regulation at the PCC will not be significantly impacted by the converter’s rated current.  
+\end{itemize}
+\newpage
