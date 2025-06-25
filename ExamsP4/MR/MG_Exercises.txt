@@ -662,3 +662,268 @@ Z_{sc} = \frac{(400)^2}{10\times10^6}
   \item This small voltage drop confirms that voltage regulation at the PCC will not be significantly impacted by the converter’s rated current.  
 \end{itemize}
 \newpage
+
+\section*{MAP 21-22 B}
+
+
+A DC microgrid rated at \SI{700}{\volt}\(\pm10\%\), \(\SI{100}{\kilo\watt}\) 
+(\(P_{DC,\min}=\SI{10}{\kilo\watt}\)) is connected to the MV AC grid at \SI{15}{\kilo\volt} 
+through a transformer (\SI{15}{\kilo\volt}/\SI{400}{\volt}; \(\SI{50}{\hertz}\)) and a three‐phase VSC 
+\(\bigl(\eta=\SI{95}{\percent},\,p=3(2n-1),\,n=50\bigr)\).  
+At the PCC, \(S_{cc}=\SI{10}{\mega\volt\ampere}\).  
+AC current ripple \(\le10\%\) of rated.
+
+\subsection*{a) Converter representation \& filter sizing}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.6\textwidth]{Images/Converter2.png}
+  \caption{Simplified VSC with DC‐link capacitance \(C_{dc}\) and per‐phase inductance \(L\).}
+  \label{fig:blockB}
+\end{figure}
+
+\paragraph{Switching frequency}
+\[
+\mathframebox{p = 3\,(2n - 1)},
+\quad
+\mathframebox{f_s = p\,f_{\mathrm{grid}}},
+\quad
+\mathframebox{\Delta t = 0.02}
+\]
+Numerically:
+\[
+n=50\;\Rightarrow\;p=3(2\cdot50-1)=297,\quad
+f_s=297\times50=\SI{14850}{\hertz}
+\]
+
+\paragraph{Converter current}
+\[
+\mathframebox{I_{\rm conv}
+= \frac{P_{DC,\max}}{\eta\,(\sqrt3\,U_{AC,LL})}}
+= \frac{\SI{100e3}{\watt}}{0.95\,(400\sqrt3)}
+\approx\SI{152.0}{\ampere}.
+\]
+
+\paragraph{AC‐side inductance \(L\)}
+\[
+\mathframebox{L \ge \frac{U_{\max}}{6\,\Delta i_{pp}\,f_s}},
+\quad
+\mathframebox{\Delta i_{pp} = 0.1\,I_{\rm conv}},
+\quad
+\mathframebox{U_{\max} = U_{DC} + \tfrac{\Delta U_{DC}}{2}}
+\]
+Substitution:
+\[
+\Delta i_{pp}=0.1\times152.0\approx\SI{15.2}{A},\quad
+U_{\max}=700+35=\SI{735}{V},
+\]
+\[
+L \ge \frac{735}{6\cdot15.2\cdot14850}
+\approx \SI{543}{\micro\henry\ (per\ phase)}.
+\]
+
+\paragraph{DC‐link capacitance \(C_{dc}\)}
+\[
+\mathframebox{C_{dc}
+\ge \frac{2\,P_{DC,\max}\,\Delta t}{U_{\max}^2 - U_{\min}^2}},
+\quad
+\mathframebox{U_{\min} = U_{DC} - \tfrac{\Delta U_{DC}}{2}}
+\]
+\[
+U_{\min}=700-35=\SI{665}{V},\quad
+\Delta t=\SI{0.02}{\second},
+\]
+\[
+C_{dc}\ge\frac{2\cdot100\cdot 10^3\cdot0.02}{735^2-665^2}
+\approx\SI{40.82}{\milli\farad}.
+\]
+
+\newpage
+\subsection*{b) Short‐circuit impedance and voltage drop at PCC}
+
+\paragraph{Formulas}
+\[
+\mathframebox{Z_{sc} = \frac{U_{AC,LL}^2}{S_{cc}}},
+\quad
+\mathframebox{\Delta V = I_{\rm conv}\,Z_{sc}}
+\]
+\[
+Z_{sc}=\frac{400^2}{10\times10^6}=\SI{0.016}{\ohm},\quad
+\Delta V=152.0\times0.016\approx\SI{2.43}{\volt}
+\quad(\approx0.61\%\text{ of }400 V).
+\]
+
+\paragraph{Discussion}
+\begin{itemize}
+  \item \(Z_{sc}\approx\SI{0.016}{\ohm}\) (10 MVA fault level)—very stiff grid.
+  \item Voltage drop \(\Delta V\approx\SI{2.43}{V}\) at \(\SI{152}{A}\) full load.
+  \item Impact on PCC voltage \(\ll1\%\): negligible for regulation.
+\end{itemize}
+
+\newpage
+\subsection*{c) Linear controllers: DC‐link voltage \& AC current loops}
+
+\paragraph{Current‐loop PI design}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.8\textwidth]{Images/Controller3-LinearCurrent.png}
+  \caption{\(d/q\) current‐loop PI with \(\omega L\) decoupling.}
+  \label{fig:c_i}
+\end{figure}
+
+\[
+\mathframebox{R_{\rm eq} = \frac{v_{d}/\sqrt{3}}{I_{\rm conv}}},
+\quad
+\mathframebox{T_z = \frac{L}{R_{\rm eq}}},
+\quad
+\mathframebox{T_d = \frac{T_s}{2} = \frac{1}{2\cdot f_s}},
+\quad
+\mathframebox{T_p = \frac{2\alpha_i T_d}{R_{\mathrm{eq}}}= \frac{1}{f_s\,R_{\rm eq}}}
+\]
+\[
+R_{\rm eq}=\frac{230}{152.0}\approx\SI{1.51}{\ohm},\quad
+T_z=\frac{543\times10^{-6}}{1.51}\approx\SI{0.359}{\milli\second},
+\]
+\[
+T_d=\frac{1}{2 \cdot14850}\SI{33.7}{\micro\second},\quad
+T_p=\frac1{14850\cdot1.51}\approx\SI{58.56}{\micro\second},
+\]
+\[
+i_{d,\rm ref}=\sqrt3\,I_{\rm conv}\approx\SI{263.3}{A},\quad
+i_{q,\rm ref}=0,\quad
+\omega L=2\pi\cdot50\cdot543\times10^{-6}\approx\SI{0.171}{\ohm}.
+\]
+
+\paragraph{DC‐link voltage PI design}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.8\textwidth]{Images/Controller4-DCvoltage.png}
+  \caption{Outer PI for \(V_{DC}\to i_d\).}
+  \label{fig:c_v}
+\end{figure}
+
+\[
+\mathframebox{G_i = \frac{\eta\,v_d}{V_{DC}}},
+\quad
+\mathframebox{T_{dv} = \Delta t /2},
+\quad
+\mathframebox{K_{pv} = -\frac{2.15\,C\,\alpha_i}{1.752^2\,\alpha_v\,G_i\,T_{dv}}},
+\quad
+\mathframebox{K_{iv} = -\frac{C\,\alpha_i}{1.752^2\,\alpha_v\,G_i\,T_{dv}^2}}
+\]
+\[
+v_d=230\cdot \sqrt3\approx\SI{400}{V},\quad
+G_i=\frac{0.95\cdot400}{700}\approx0.543,\quad
+C=\SI{40.82}{\micro\farad},\quad
+T_{dv}=\SI{0.01}{\second},
+\]
+\[
+K_{pv}=-\frac{2.15\cdot40.82\times10^{-3}}{1.752^2\cdot1\cdot0.543\cdot0.01}
+\approx -5.27,
+\]
+\[
+K_{iv}=-\frac{40.82\times10^{-3}}{1.752^2\cdot1\cdot0.543\cdot(0.01)^2}
+\approx -244.9
+\]
+
+\newpage
+\subsection*{d) Storage for 3 days autonomy: compare solutions}
+
+\paragraph{Sizing formulas}
+\[
+\mathframebox{E_{\mathrm{req}} = P_{\mathrm{load}}\times72\;\mathrm{h}},
+\quad
+\mathframebox{E_{\mathrm{stored}} = \frac{E_{\mathrm{req}}}{\eta_{\mathrm{conv}}}},
+\]
+\[
+\mathframebox{Kg_E = \frac{E_{\mathrm{stored}}}{D_E}},
+\quad
+\mathframebox{Kg_P = \frac{P_{\mathrm{req}}}{D_P\,\eta_{\mathrm{conv}}}}
+\]
+\[
+P_{\mathrm{load}}=\SI{100}{\kilo\watt},\quad
+E_{\mathrm{req}}=\SI{7200}{\kilo\watt\hour},\quad
+E_{\mathrm{stored}}=\frac{7200}{0.95}\approx\SI{7579}{\kilo\watt\hour}.
+\]
+
+\begin{table}[ht]
+  \centering
+  \caption{Mass for 3 days autonomy (100 kW)}
+  \label{tab:dB}
+  \sisetup{per-mode=symbol}
+  \begin{tabularx}{\linewidth}{
+    @{}l
+    >{\centering\arraybackslash}X
+    >{\centering\arraybackslash}X
+    >{\centering\arraybackslash}X
+    >{\centering\arraybackslash}X
+    @{}
+  }
+    \toprule
+    Technology       & $D_E$ (\si{\watt\hour\per\kilogram})
+                     & $D_P$ (\si{\watt\per\kilogram})
+                     & $Kg_E$ (\si{\kilogram})
+                     & $Kg_P$ (\si{\kilogram}) \\
+    \midrule
+    Li‐ion battery    & 300    & 300      & \num{2.53e4}  & \num{350.9}  \\
+    Supercapacitor    & 2      & 1200     & \num{3.79e6}  & \num{87.7}   \\
+    Flywheel (carbon) & 200    & 300000 & \num{3.79e4}  & \num{0.351}  \\
+    Fuel cell         & 75     & 100      & \num{1.01e5}  & \num{1052.6}\\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+\paragraph{Discussion}
+\begin{itemize}
+  \item \textbf{Energy mass}:  
+    Supercaps (\SI{3.79e6}{kg}) and fuel cells (\SI{1.01e5}{kg}) impractical;  
+    Li‐ion and flywheel \(\sim10^4\)\,kg.
+  \item \textbf{Power mass}:  
+    Flywheel excels (sub‐kg), supercaps moderate, Li‐ion hundreds of kg,  
+    fuel cells $>$1t.
+  \item \textbf{Conclusion}:  
+    Li‐ion batteries best compromise; add small flywheel/supercap for peaks.
+\end{itemize}
+
+\newpage
+\subsection*{e) Linear controllers: AC currents \& AC voltages}
+
+\paragraph{Current‐loop (d/q axes)}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.8\textwidth]{Images/Controller3-LinearCurrent.png}
+  \label{fig:e_i}
+\end{figure}
+
+\paragraph{Voltage‐loop for AC side}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.8\textwidth]{Images/Controller2-ACvoltage.png}
+  \label{fig:e_v}
+\end{figure}
+
+\[
+\mathframebox{G_v = \frac{V_{DC}}{V_{AC}}},
+\quad
+\mathframebox{K_{pv} = \frac{2.15\,L\,\alpha_v}{1.75^2\,G_v\,T_{dv}}},
+\quad
+\mathframebox{K_{iv} = \frac{L\,\alpha_v}{1.75^2\,G_v\,T_{dv}^2}}
+\]
+\[
+V_{AC}=\SI{400}{V},\;
+V_{DC}=\SI{700}{V},\;
+L=\SI{543}{\micro\henry},\;
+G_v=\frac{700}{400}=1.75,\;
+T_{dv}=\SI{33.7}{\micro\second},\;\alpha_v=1,
+\]
+\[
+K_{pv}=\frac{2.15\cdot543\times10^{-6}}{1.75^2\cdot1.75\cdot33.7\times10^{-6}}
+\approx6.46,\quad
+K_{iv}=\frac{543\times10^{-6}}{1.75^2\cdot1.75\cdot(33.7\times10^{-6})^2}
+\approx8.93\times10^4\;\mathrm{s^{-1}}.
+\]
+\newpage
