@@ -11,11 +11,12 @@ void setup() {
 }
 
 void loop() {
-  msg.id = 0x100;
+  msg.id = 0x65;
   msg.len = 1;
   msg.buf[0] = 42;
   can1.write(msg);
-
+  can1.
+  Serial.println(c)
   Serial.println("Sent message");
   delay(1000);
 }

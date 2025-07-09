@@ -1,0 +1,13 @@
+apiVersion: 1
+
+datasources:
+  - name: TimescaleDB
+    type: postgres
+    access: proxy
+    url: timescaledb:5432
+    database: satellite_telemetry
+    user: youruser
+    secureJsonData:
+      password: yourpassword
+    jsonData:
+      sslmode: disable

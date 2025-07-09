@@ -1,0 +1,82 @@
+{
+  "id": null,
+  "title": "Satellite Telemetry - Sensors Only",
+  "timezone": "browser",
+  "schemaVersion": 36,
+  "version": 1,
+  "refresh": "5s",
+  "panels": [
+    {
+      "type": "timeseries",
+      "title": "Magnetometer (µT)",
+      "datasource": "Your_TimescaleDB_Datasource",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "µT"
+        }
+      },
+      "targets": [
+        {
+          "format": "time_series",
+          "rawSql": "SELECT time AS \"time\", magno_x AS \"X\", magno_y AS \"Y\", magno_z AS \"Z\" FROM magnetometer WHERE $__timeFilter(time) ORDER BY time ASC",
+          "refId": "A"
+        }
+      ],
+      "gridPos": { "x": 0, "y": 0, "w": 24, "h": 6 }
+    },
+    {
+      "type": "timeseries",
+      "title": "Gyroscope (°/s)",
+      "datasource": "Your_TimescaleDB_Datasource",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "degree/s"
+        }
+      },
+      "targets": [
+        {
+          "format": "time_series",
+          "rawSql": "SELECT time AS \"time\", roll_rate AS \"Roll\", pitch_rate AS \"Pitch\", yaw_rate AS \"Yaw\" FROM gyroscope WHERE $__timeFilter(time) ORDER BY time ASC",
+          "refId": "B"
+        }
+      ],
+      "gridPos": { "x": 0, "y": 6, "w": 24, "h": 6 }
+    },
+    {
+      "type": "timeseries",
+      "title": "Accelerometer (m/s²)",
+      "datasource": "Your_TimescaleDB_Datasource",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "accMS2"
+        }
+      },
+      "targets": [
+        {
+          "format": "time_series",
+          "rawSql": "SELECT time AS \"time\", acel_x AS \"X\", acel_y AS \"Y\", acel_z AS \"Z\" FROM accelerometer WHERE $__timeFilter(time) ORDER BY time ASC",
+          "refId": "C"
+        }
+      ],
+      "gridPos": { "x": 0, "y": 12, "w": 24, "h": 6 }
+    },
+    {
+      "type": "timeseries",
+      "title": "Power Telemetry (V)",
+      "datasource": "Your_TimescaleDB_Datasource",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "volt"
+        }
+      },
+      "targets": [
+        {
+          "format": "time_series",
+          "rawSql": "SELECT time AS \"time\", volt_x AS \"Volt X\", volt_y AS \"Volt Y\", volt_z AS \"Volt Z\", volt_pos_y AS \"Volt +Y\", battery_voltage AS \"Battery Voltage\" FROM power_telemetry WHERE $__timeFilter(time) ORDER BY time ASC",
+          "refId": "D"
+        }
+      ],
+      "gridPos": { "x": 0, "y": 18, "w": 24, "h": 6 }
+    }
+  ]
+}

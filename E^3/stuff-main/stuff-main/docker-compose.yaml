@@ -1,0 +1,29 @@
+services:
+  grafana:
+    image: grafana/grafana-oss
+    container_name: grafana
+    restart: unless-stopped
+    ports:
+      - '3000:3000'
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning/dashboards.yaml:/etc/grafana/provisioning/dashboards/dashboards.yaml
+      - ./grafana/provisioning/datasources:/etc/grafana/provisioning/datasources
+      - ./grafana/dashboards:/var/lib/grafana/dashboards
+
+  timescaledb:
+    image: timescale/timescaledb:latest-pg14
+    container_name: timescaledb
+    restart: unless-stopped
+    environment:
+      POSTGRES_PASSWORD: yourpassword
+      POSTGRES_USER: youruser
+      POSTGRES_DB: satellite_telemetry
+    ports:
+      - '5432:5432'
+    volumes:
+      - timescale_data:/var/lib/postgresql/data
+
+volumes:
+  grafana_data:
+  timescale_data:
