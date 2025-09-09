@@ -1,0 +1,159 @@
+---------------------------------------------
+| EXAM 1 - some ideas for nice solutions :) |
+---------------------------------------------
+
+--------------
+| Question 1 |
+--------------
+
+1.a 
+- nothing : main code (not ISPC)
+- nothing : main code (not ISPC)
+- nothing : main code (not ISPC)
+- uniform : ISPC function arguments must be scalars (uniform)
+- uniform : ISPC function arguments must be scalars (uniform)
+- uniform : ISPC function arguments must be scalars (uniform)
+- varying/nothing : Varying is default in ISPC. Each instance must have its own count, top and j!
+- varying/nothing : Varying is default in ISPC. Each instance must have its own count, top and j!
+- varying/nothing : Varying is default in ISPC. Each instance must have its own count, top and j!
+
+1.b
+    8 ALUOps/clk
+
+1.c
+    For every gang of of 8 instances: 1xLD + 8xFOR_LOOP + 1xST = 28 clock cycles => T = 28 x N/8
+    For every "j" loop: each lane delivers 1 flop => ALUOps = 8 (loops) x 8 (lanes) x N/8  = 64 x N/8 ALUOps
+	Perf = 64 / 28 = 16/7 > 2
+	Performance is slightly huge than 2, far away from maximum (8). LD/ST dominate execution, not enough flops per memeory ops
+
+1.d
+    For every gang of of 8 instances: 1xLD + 1MxFOR_LOOP + 1xST = around 1M clock cycles => (T = 1M + 20) x N/8
+    For every "j" loop: one one lane delivers 1 flop => ALUOps = 1M (loops) x N/8  = 1M x N/8 ALUOps
+	Perf = 1M / (1M+20) < 1 
+	Ye is right - we need to compute more to hide the memory access time. 
+	However, Dre is also right, Ye's code has very poor utilisation of vector lanes => poor performance.
+
+1.e
+    Swift code can be a combination of Dre's and Ye's: for (int i = 0; i > N; i++) A[I] = 1M;
+    For every gang of of 8 instances: 1xLD + 1MxFOR_LOOP + 1xST = 1M+20 clock cycles => T = (1M + 20) x N/8
+    For every "j" loop: each lane delivers 1M flops => ALUOps = 1M (loops) x 8 (lanes) x N/8  = 8 x 1M x N/8 ALUOps
+	Perf = 8 x 1M / (1M + 20) = very close to 8x (maximum) => more than 3x better than Dre and it exploits architecture maximums!
+	
+1.f
+    1) in main.cpp we need to "launch" at least 64 treads (32x2), but probably even higher number in order to allow for better load balancing with the dynamic ISPC task scheduler 
+    2) myFun ISPC function needs to be changed in order to provide for processing different part of the A array in different tasks.
+	We can add one more argument (howMany) to the myFunc that will specify the amount of elements to process within a task. In the function, we will use howMany and built-in ISPC taskIndex in order to decide which element of the array will be processed within a specific task. 
+	For example, assuming that all tasks will receive the same amount of howMany = N / #tasks:
+	i_start = taskIndex * howMany;
+	i_end = i_start + howMany;
+	foreach (i = i_start .... i_end) ...
+	
+--------------
+| Question 2 |
+--------------
+
+2.a 
+    32 ALUOps/clk
+
+2.b 
+    DRE: For each iteration: 1xLD + 1xFOR_LOOP (1 per core) + 1xST = 21 clock cycles => T = 21 * N, ALUOps = 8 * N 
+	=> Perf = 8/21 << 32 | poor performance due to few computations per memory operations in each core + only 8 cores are used (24 out of 32 are completely), since the inner for loop is paralleled
+    YE: For each iteration: 7 x (1LD + 1ST) + 1 x ( 1xLD + 1M/32xFOR_LOOPs (1M/32 per core) + 1xST ) = 7x20 + 1x(20 + 1M/32) clock cycles => T = (160 + 1M/32) * N/8, ALUOps = 1M * N/8
+	=> Perf = 1M / (160 + 1M/32) = very close to 32x! 
+    Indeed, YE's code achieved the maximum performance, while DRE's less than 1!
+    Harry's code problem: there is a race condition over the tmp variable. Needs a thread-private "tmp" that will be "reduced" after the for loop. Easiest solution is to add reduction(*: tmp) at the end of the line with omp #pragma. 
+    
+	
+2.c 
+    #pragma omp parallel for should be placed on the first for lop (i) and removed from the inner one. Different schedule clause should be added, like (dynamic, 1), to ensure load balancing.
+    DRE: There are 1024/32 = 32 elements per core, each core: 32 x (1xLD + 8xFOR_LOOP + 1xST) = 32 x 28 clock cycles (overall exe time), ALUOps = 8 * N = 8 * 1024
+	=> Perf = 8*1024/(32*28) = 64/7 => speedup: 21 * 1024 / 32 * 28 = 24x
+
+--------------
+| Question 3 |
+--------------
+
+3.1
+__global__ void myMask(int N, int *A, int *mask)
+{
+   int i = blockIdx.x*blockDim.x + threadIdx.x;
+
+   if ((i > 0) && (i < N-1))
+   {
+	int tmp = 0;
+	if (A[i] < (A[i-1] + A[i+1])>>1)
+	{
+	      tmp = 1;
+	}
+	mask[i] = tmp;
+   }
+}
+
+__global__ void myMask(int N, int *A, int *mask)
+{
+   int gId = blockIdx.x*blockDim.x + threadIdx.x;
+   int lId = threadIdx.x;
+   __shared__ int shA[130];
+
+   shA[lId] = A[gID];
+   if ( lid == 0 && gid != 0) {
+      shA[0] = A[gId-1];
+   }
+   if ( lid == (blockDim.x-1) && gid != (N-1) ) {
+      shA[129] = A[gId+1];
+   }
+   _syncthreads();
+
+   if (i < N-1)
+   {
+	int tmp = 0;
+	if (shA[lId+1] < (shA[lId] + shA[lId +2])>>1)
+	{
+	      tmp = 1;
+	}
+	mask[gID+1] = tmp;
+   }
+}
+
+3.b
+    Run cudaScan(N, mask) on mask array and pick the last element of mask array after the scan operation!
+
+3.c
+N=32768=2^15 and T=128=2^7 => It will be required 2^15/2^7=2^8=256 blocks (B)! Each block runs 128 threads => 8 warps (128/16) per block are running concurrently!
+Given that this GPU supports only 2 concurrent wraps => this code would not run on this GPU, i.e., not enough resources to keep execution contexts of 8 warps!
+
+
+--------------
+| Question 4 |
+------------ --
+4.a
+
+__vint vTen = _vbcast(10);
+__vint vOne = _vbcast(1);					
+for (int i=0; i<N; i+=8)					
+{
+   __vint vA = _vload(&A[i]);					
+   __vint vB = _vload(&B[i]);	
+   __vint vVal = _vadd(vA, vB);
+   vVal = _vshr(vVal, vTen);
+   __vbool mask = _vlt(vB, vTen);
+   int doMore = _vpopcnt(mask);
+   while (doMore)
+   {
+      vVal = _vmul(vVal, vVal);
+      vB = _vadd(vB, vOne);
+      mask = _vlt(vB, vTen);
+      doMore = _vpopcnt(mask);
+   }
+   _vstore(&B[i], vVal);						
+} 
+
+--------------
+| Question 5 |
+--------------
+5.a - Working set fits in the cache hierarchy of each processor
+5.b - 9 cores
+5.c - Reduce the system’s energy consumption by moving less data
+5.d - The maximum power consumption is obtained at the ridge point
+5.e - It represents the artifactual communication due to the cache line communication granularity
+5.f - Runtime implements abstractions with a locality-aware work stealing scheduler

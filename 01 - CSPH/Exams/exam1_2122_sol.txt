@@ -1,0 +1,175 @@
+---------------------------------------------
+| EXAM 1 - some ideas for nice solutions :) |
+---------------------------------------------
+
+--------------
+| Question 1 |
+--------------
+
+1.1 
+     I0
+     |
+     I1
+   /    \
+  I2     I3 
+  | \  /   \ 
+  I4 I5    I6
+  \  /     /
+   I7     /
+   |  \  /
+   I9  I8
+    \ / |
+    I10 I11
+
+1.2 
+    Processor A: 
+	1 thread  : 20 (load, I0) + 6 (tree depth) = 26 cycles
+	total time: 8 threads x 26 = 208 cycles
+    Processor B: 
+	group of 8 threads: 20 + 8x11 = 108 cycles
+        total time: 108 cycles (1 group per core)
+    Processor C:
+	worst case: 8 x (20 + 8x6) = 544 cycles
+          best case: 20 + 64x7 = 468 cycles
+
+1.3 Cache will not help. Each thread accesses very distant elements A[i*8000]. Also, cache line size of 4 byte (1 float) does not allow any reuse (no spatial locality).
+
+
+--------------
+| Question 2 |
+--------------
+
+2.1
+__vbool  maskLane = _vset({1,0,0,0,1,0,0,0,1,0,0,0,1,0,0,0});  	
+__vfloat vThree = _vbcast(3.0);					
+for (int i=0; i<N; i+=16)					
+{
+   __vfloat vA = _vload(&A[i]);					
+   __vfloat vB = _vload(&B[i]);	
+   __vbool  maskA = _vge(vA, vThree);
+   __vbool mask = _vand(maskA, maskLane);
+   __vfloat vTmp = _vmul(vA, vB);
+   vA = _vadd(vA, vTmp, mask);
+   maskA = _vnot(maskA);
+   mask = _vand(maskA, maskLane);
+   vB = _vcopy(vThree, mask);			
+   _vstore(&A[i], vA);	
+   _vstore(&B[i], vB);						
+} 
+
+2.2
+For each group of 16 elements, only 4 will be considered: one less than three and 3 elements greater than three.
+Overall, mainly 3/16 lanes will be active when producing elements of A, while 1/16 lanes will be active when producing elements of B. Expected speedup will be less than 4.
+
+
+2.3 
+export void myISPCFun (...)
+{
+   uniform int count = N/programCount;
+   int start = programIndex*count;  // uniform was wrong!!!
+
+   for (uniform int i=0; i<count; i++)
+   {
+      int idx = start+i;    // uniform was wrong!!!
+      if (idx % 4 == 0) {   // programCount was wrong - here: can also be programIndex
+        float tmp = A[idx];          // uniform was wrong!!!
+        if (tmp >= 3.0) {
+          tmp += tmp*B[idx];
+	 A[idx] = tmp;
+        } else { 
+          B[idx] = 3.0;     
+        }
+      }
+    }
+}
+
+Performance will be poor due to many gathers/scatters (block assignment). The solution is an interleaved assignment:
+
+export void myISPCFun (...)
+{
+   for (uniform int i=programIndex; i<N; i+=programCount)
+   {
+      if (i % 4 == 0) {   // this divergency still provokes performance problems, but it is needed for correctness!
+        float tmp = A[i];         
+        if (tmp >= 3.0) {
+          tmp += tmp*B[i];
+	 A[i] = tmp;
+        } else { 
+          B[i] = 3.0;     
+        }
+      }
+    }
+}
+
+
+--------------
+| Question 3 |
+--------------
+
+3.1
+__global__ void myKernel(int N1, float *A)
+{
+   int j = blockIdx.x*blockDim.x + threadIdx.x;
+   int i = blockIdx.y*blockDim.y + threadIdx.y;
+   if (i < N1 && j < N1)
+      A[i*N1+j] = i + j;
+}
+
+3.2
+__global__ void myKernel(...)
+{
+   int tid = blockIdx.x*blockDim.x + threadIdx.x;
+   __shared__ float shB[blockDim.x + 4];
+   shB[threadIdx.x] = B[tid];
+   if (threadIdx.x < 4)
+      shB[blockDim.x + threadIdx.x] = B[tid + blockDim.x];
+
+   __syncthreads();
+
+   float myA = 0.0;        //keep it in registers
+   for (int j=0; j<3; j++)
+      myA += shB[threadIdx.x + 2*j] / 0.2;
+   A[tid] = myA;
+}
+
+3.3
+N=20x1024 and T2=128 => num blocks B2 is 20x1024/128=20x8=160 blocks!
+Each block runs 128 threads => 4 warps (128/32) are running concurrently!
+Each thread takes 3 iterations of 10 cycles each, i.e., one warp takes 30 cycles => 1 block takes 4 (warps) x 30 cycles = 4x30 = 120 cycles.
+As we have 20 SMs, each will take 8 blocks: blocks will concurrently run on a single SM and in parallel across all SMs
+=> total time: 8 x (4x3x10) = 960 cycles
+
+
+--------------
+| Question 4 |
+------------ --
+4.1  
+
+This code has several performance problems:
+  - "omp parallel for" loop is parallelized over songs. There are 10 songs => 10 threads on 16-core CPU => some cores are under-utilized (fix: parallelize loop over fans)
+  - accesses to FANS structure are causing a lot of cache trashing -- there are 1M fans and 10 songs, and inner loop goes over fans => no way to exploit data locality ion caches 
+  - potential false sharing on localScore: threads from different cores are writing to the same cache line
+  - for loops to initialise localScore and to reduce localScores in totalScore are serial
+
+4.3
+
+// initialisation is the same as in the original code
+int totalScore = 0;
+
+#pragma omp parallel for schedule(static) reduction(+:totalScore)
+for (int fid=0; fid<NUM_FANS; fid++) {
+   for (int sid=0; sid<NUM_SONGS; sid++)
+      totalScore += FANS[fid].score[sid];
+}
+
+float avgScore = totalScore/(NUM_SONGS*NUM_FANS);
+
+--------------
+| Question 5 |
+--------------
+5.1 - 750
+5.2 - 1.5x
+5.3 - None of the above
+5.4 - 1/24
+5.5 - None of the above
+5.6 - Synchronization between processors is attained via messages
