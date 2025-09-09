@@ -1,6 +1,4 @@
-# IASD Assignment #1 - Autonomous Gardening Robot
-
-## Project Roadmap and Task Distribution
+# IASD Assignment #1 - Lean Project Plan
 
 **Team:** Francisco, Marta and Diogo  
 **Start Date:** September 9, 2025  
@@ -11,452 +9,96 @@
 
 # Project Summary
 
-## Overview
+We are implementing an AI system for an autonomous gardening robot on Mars that must efficiently navigate a grid to water plants before their deadlines while managing limited water resources. This is essentially a **path planning and constraint satisfaction problem** where the robot moves in 4 directions (U/D/L/R) or waters plants (W), starting from position (0,0) which serves as the water refill station.
 
-We are developing an AI system to control an autonomous gardening robot in a Martian settlement. This is essentially a **path planning and scheduling problem** where the robot must efficiently navigate a grid world to water plants before their deadlines while managing limited water resources.
+The core deliverable is a `GardenerProblem` class with two critical methods: `load(fh)` to parse input files containing grid layouts and plant specifications, and `check_solution(plan, verbose=False)` to validate action sequences against all constraints (boundaries, obstacles, water capacity, plant deadlines). We have 10 official test cases (ex0.dat through ex9.dat with corresponding .plan files) that our solution must pass.
 
-## Core Problem Elements
+Our approach focuses on clean, working code that handles the core requirements and edge cases without overengineering. The emphasis is on getting a robust solution that passes all official tests and handles basic error scenarios.
 
-**Environment:**
+# Lean Roadmap (Sep 9 → Sep 26)
 
-- Rectangular grid (N×M cells) representing the Martian settlement
-- Cell types: obstacles (-1), empty spaces (0), plants (positive integers representing plant types)
-- Robot starts at position (0,0) which is always empty and serves as the water refill station
+## Week 1: Core Implementation (Sep 9-15)
 
-**Plants:**
+- **Sep 9-10**: Project setup, analyze official test files, design basic architecture
+- **Sep 11-13**: Implement `load()` method and `check_solution()` method in parallel
+- **Sep 14-15**: Basic integration testing, fix initial bugs
 
-- Each plant type `k` has two critical parameters:
-  - `wk`: water units required to water this plant
-  - `dk`: deadline (in time steps) by which it must be watered
-- Plants can only be watered **once** and **before their deadline**
+## Week 2: Testing & Validation (Sep 16-22)
 
-**Robot Capabilities:**
-
-- Actions: Move in 4 directions (U/D/L/R) or Water (W)
-- Each action consumes exactly 1 time step
-- Water capacity: W0 units (refills automatically when returning to (0,0))
-- Cannot water if insufficient water remaining
-
-**Constraints:**
-
-- Must stay within grid boundaries
-- Cannot move through obstacles
-- Must respect plant deadlines
-- Must have sufficient water to water each plant
-
-## Technical Requirements
-
-We must implement a `GardenerProblem` class inheriting from `search.Problem` with two key methods:
-
-1. **`load(fh)`**: Parse input files with the specified format
-2. **`check_solution(plan, verbose=False)`**: Validate solution plans
-
-The solution must output a string sequence of actions (e.g., "DDWRRWUWUW").
-
-### Input File Format
-
-```
-N M W0                    # Grid dimensions and water capacity
-[N lines of grid data]    # Grid with -1=obstacle, 0=empty, k=plant type
-[K lines of plant data]   # wk dk for each plant type k
-```
-
-### Output Format
-
-- String of actions from {U, D, L, R, W}
-- Example: "DDWRRWUWUW"
-
----
-
-# Roadmap (September 9 → September 26, 2025)
-
-## Week 1: Foundation & Core Implementation (Sep 9-15)
-
-### Sep 9-10 (Mon-Tue): Project Setup & Analysis
-
-- [ ] **Francisco, Marta, Diogo:** Set up development environment and Git repository
-- [ ] **Francisco, Marta, Diogo:** Analyze sample input files and expected outputs
-- [ ] **Francisco, Marta, Diogo:** Design overall architecture and data structures
-- [ ] **Francisco, Marta, Diogo:** Create project skeleton with proper file structure
-
-**Deliverables:**
-
-- [ ] Git repository setup
-- [ ] Basic project structure
-- [ ] Architecture design document
-- [ ] Sample input/output files for testing
-
-### Sep 11-12 (Wed-Thu): Core Implementation Phase 1
-
-- [ ] **Francisco:** Implement `load()` method with robust input parsing
-- [ ] **Francisco:** Design internal state representation for the problem
-- [ ] **Diogo:** Create basic grid visualization for debugging
-- [ ] **Marta:** Start designing robot simulation framework
-
-**Deliverables:**
-
-- [ ] Working `load()` method
-- [ ] Internal data structures defined
-- [ ] Basic debugging tools
-
-### Sep 13-15 (Fri-Sun): Core Implementation Phase 2
-
-- [ ] **Marta:** Implement `check_solution()` method with comprehensive validation
-- [ ] **Marta:** Build robot simulation engine
-- [ ] **Diogo:** Create initial test cases
-- [ ] **Francisco:** Refine parsing and add error handling
-
-**Deliverables:**
-
-- [ ] Working `check_solution()` method
-- [ ] Robot simulation engine
-- [ ] Initial test suite
-
-## Week 2: Testing & Optimization (Sep 16-22)
-
-### Sep 16-17 (Mon-Tue): Comprehensive Testing
-
-- [ ] **Diogo:** Develop extensive test suite covering edge cases
-- [ ] **Diogo:** Test with various grid sizes and plant configurations
-- [ ] **Francisco, Marta, Diogo:** Validate deadline handling and water management
-- [ ] **Francisco, Marta:** Bug fixes from testing
-
-**Deliverables:**
-
-- [ ] Comprehensive test suite
-- [ ] Bug fixes and improvements
-- [ ] Edge case handling
-
-### Sep 18-19 (Wed-Thu): Code Review & Refinement
-
-- [ ] **Francisco, Marta, Diogo:** Code review session with all team members
-- [ ] **Francisco, Marta, Diogo:** Optimize performance and clean up code
-- [ ] **Francisco, Marta, Diogo:** Add proper documentation and comments
-- [ ] **Diogo:** Performance benchmarking
-
-**Deliverables:**
-
-- [ ] Reviewed and optimized code
-- [ ] Complete documentation
-- [ ] Performance analysis
-
-### Sep 20-22 (Fri-Sun): Integration Testing
-
-- [ ] **Francisco, Marta, Diogo:** End-to-end testing with complex scenarios
-- [ ] **Diogo:** Stress testing with large grids and tight deadlines
-- [ ] **Francisco, Marta:** Bug fixes and final optimizations
-- [ ] **Francisco, Marta, Diogo:** Final integration testing
-
-**Deliverables:**
-
-- [ ] Fully integrated and tested solution
-- [ ] Performance optimizations
-- [ ] Complete bug fixes
+- **Sep 16-18**: Test against all 10 official test cases (ex0-ex9), create basic edge case tests
+- **Sep 19-20**: Bug fixes and refinements based on test results
+- **Sep 21-22**: Code review, cleanup, and integration verification
 
 ## Week 3: Final Polish & Submission (Sep 23-26)
 
-### Sep 23-24 (Mon-Tue): Final Testing & Documentation
-
-- [ ] **Francisco, Marta, Diogo:** Final validation against project requirements
-- [ ] **Francisco, Marta, Diogo:** Complete code documentation
-- [ ] **Diogo:** Prepare submission package
-- [ ] **Francisco, Marta, Diogo:** Final testing round
-
-**Deliverables:**
-
-- [ ] Final solution ready for submission
-- [ ] Complete documentation
-- [ ] Submission package prepared
-
-### Sep 25 (Wed): Pre-submission Review
-
-- [ ] **Francisco, Marta, Diogo:** Final team review of complete solution
-- [ ] **Francisco, Marta, Diogo:** Last-minute testing and bug fixes
-- [ ] **Francisco, Marta, Diogo:** Prepare for Moodle submission
-- [ ] **Francisco, Marta, Diogo:** Create backup copies
-
-**Deliverables:**
-
-- [ ] Final reviewed solution
-- [ ] Backup documentation
-- [ ] Submission checklist completed
-
-### Sep 26 (Thu): Submission Day
-
-- [ ] **Francisco, Marta, Diogo:** Final code review and testing
-- [ ] **Francisco:** Submit `solution.py` to Moodle before deadline
-- [ ] **Francisco, Marta, Diogo:** Backup submission and documentation
-
-**Deliverables:**
-
-- [ ] `solution.py` submitted
-- [ ] Complete project archive
-
----
+- **Sep 23-24**: Final testing round, handle any remaining edge cases
+- **Sep 25**: Complete code review, prepare submission package
+- **Sep 26**: Final validation and submit `solution.py` to Moodle
 
 # Task Distribution
 
-## 🧑‍💻 Francisco: Input/Output & Data Structures Specialist
+## Francisco: Input Parsing & Data Structures
 
-### Primary Responsibilities
+**Primary Focus**: Implement `load(fh)` method and internal data representation
 
-- [ ] Implement `load(fh)` method with robust error handling
-- [ ] Design and implement internal data structures (grid representation, plant database, robot state)
-- [ ] Create input file parser that handles comments, blank lines, and edge cases
-- [ ] Develop utility functions for grid operations and bounds checking
+**Key Tasks**:
 
-### Specific Tasks - Week 1 (Sep 9-15)
+- Parse input file format (grid dimensions, grid data, plant specifications)
+- Create robust data structures for grid, plant types, and robot state
+- Handle file I/O with basic error checking
+- Test parsing with all 10 official .dat files
+- Integrate with Marta's validation logic
 
-- [ ] **Parse grid dimensions and water capacity from first line**  
-  Parse the first line of input files to extract grid dimensions (N×M) and robot's water capacity (W0). Handle whitespace and validate integer values.
+**Week 1**: Complete `load()` method with basic error handling
+**Week 2**: Refine parsing based on integration testing
+**Week 3**: Final validation and documentation
 
-- [ ] **Build 2D grid structure from input data**  
-  Create a 2D list/array to represent the grid. Parse N lines after the first line, converting string input to integers. Handle obstacles (-1), empty cells (0), and plant types (k>0).
+## Marta: Solution Validation & Robot Simulation
 
-- [ ] **Create plant type dictionary with water requirements and deadlines**  
-  Parse plant type definitions (K lines) after grid data. Create a dictionary mapping plant type k to tuple (wk, dk) where wk=water needed, dk=deadline.
+**Primary Focus**: Implement `check_solution(plan, verbose=False)` method
 
-- [ ] **Implement file reading with proper exception handling**  
-  Handle file I/O with try-catch blocks. Skip comment lines (starting with #) and blank lines. Raise appropriate exceptions for malformed input.
+**Key Tasks**:
 
-- [ ] **Write unit tests for parsing functionality**  
-  Create unit tests for load() method using pytest. Test valid inputs, edge cases (empty grids, single cell), and invalid inputs (negative dimensions, malformed files).
+- Build robot simulation engine (position tracking, water management, time steps)
+- Implement action execution (U/D/L/R moves and W watering)
+- Validate all constraints (boundaries, obstacles, deadlines, water capacity)
+- Provide clear error messages for invalid plans
+- Test validation with all 10 official .plan files
 
-### Specific Tasks - Week 2 (Sep 16-22)
+**Week 1**: Complete core validation logic and robot simulation
+**Week 2**: Refine constraint checking based on test results
+**Week 3**: Final error handling and edge case management
 
-- [ ] **Optimize parsing and improve error handling**  
-  Refactor parsing code for better performance. Add comprehensive error messages for debugging. Implement input sanitization and validation.
+## Diogo: Testing & Quality Assurance
 
-- [ ] **Add robust input format validation**  
-  Validate grid dimensions are positive, water capacity > 0, plant types are consistent, and deadlines are reasonable. Check for missing or extra data.
+**Primary Focus**: Ensure solution works correctly with official test cases
 
-- [ ] **Support code reviews of other components**  
-  Review Marta's robot simulation logic and Diogo's test cases. Provide feedback on integration points and data structure usage.
+**Key Tasks**:
 
-- [ ] **Refine data structures based on team feedback**  
-  Optimize data structures based on team feedback. Consider memory efficiency, access patterns, and ease of use for robot simulation.
+- Create automated test framework using official ex0-ex9 test pairs
+- Design and implement basic edge case tests (empty grids, invalid actions, etc.)
+- Coordinate integration testing between Francisco and Marta's components
+- Track and document any failing test cases
+- Prepare final submission validation
 
-### Specific Tasks - Week 3 (Sep 23-26)
+**Week 1**: Set up testing framework and run initial tests
+**Week 2**: Comprehensive testing with all official cases, create edge case tests
+**Week 3**: Final validation and submission preparation
 
-- [ ] **Final testing of parsing components**  
-  Conduct thorough testing of all parsing functionality. Ensure robustness against edge cases and malformed inputs.
+## Joint Responsibilities (All Team Members)
 
-- [ ] **Complete documentation of load() method**  
-  Write comprehensive documentation including method signatures, parameter descriptions, return values, and usage examples.
+- **Architecture decisions**: Collaborative design of class interfaces and data flow
+- **Code reviews**: Each major component reviewed by other team members  
+- **Integration debugging**: Joint sessions to resolve interface issues
+- **Final submission**: All members verify final `solution.py` before submission
+- **Emergency support**: Help other team members if they encounter blockers
 
-- [ ] **Final integration with Marta and Diogo's components**  
-  Ensure seamless integration between parsing, simulation, and testing components. Resolve any interface issues.
+**Key Coordination Points**:
 
-- [ ] **Submission preparation**  
-  Prepare final code for submission, ensure clean code structure, and verify all requirements are met.
-
-### Deliverables
-
-- [ ] Complete and functional `load()` method
-- [ ] Well-defined grid and plant data structures
-- [ ] Input validation and error handling system
-- [ ] Unit tests for parsing functionality
-
----
-
-## 👩‍💻 Marta: Solution Validation & Robot Logic Specialist
-
-### Primary Responsibilities
-
-- [ ] Implement `check_solution(plan, verbose=False)` method
-- [ ] Develop robot simulation engine to execute action sequences
-- [ ] Create comprehensive plan validation logic
-- [ ] Handle all constraint checking (bounds, obstacles, deadlines, water)
-
-### Specific Tasks - Week 1 (Sep 9-15)
-
-- [ ] **Design robot simulation engine architecture**  
-  Design the robot simulation engine architecture. Define classes for robot state, action execution, and state transitions. Plan how to track position, water level, and time.
-
-- [ ] **Build robot state tracking (position, water level, time)**  
-  Implement RobotState class with position (x,y), water_level, and current_time attributes. Include methods to update state and check validity.
-
-- [ ] **Implement action execution for moves (U/D/L/R) and watering (W)**  
-  Create action execution methods: move_up(), move_down(), move_left(), move_right(), water_plant(). Each method updates robot state and validates the action.
-
-- [ ] **Create basic movement validation and grid bounds checking**  
-  Implement boundary checking to ensure robot stays within grid limits. Validate moves don't go through obstacles (-1 cells). Return error messages for invalid moves.
-
-### Specific Tasks - Week 2 (Sep 16-22)
-
-- [ ] **Complete deadline and water management validation logic**  
-  Implement comprehensive deadline checking for all plants. Validate water consumption and availability. Ensure plants are watered before deadlines.
-
-- [ ] **Validate plan against all constraints**  
-  Check plans against grid boundaries, water capacity, obstacle avoidance, plant deadlines, and action validity. Provide detailed constraint violation reports.
-
-- [ ] **Create detailed error reports for invalid plans**  
-  Design comprehensive error reporting system that identifies specific constraint violations, invalid actions, and provides helpful debugging information.
-
-- [ ] **Optimize simulation engine performance**  
-  Profile and optimize simulation code for performance. Consider efficient data structures and algorithms for large grids and long action sequences.
-
-### Specific Tasks - Week 3 (Sep 23-26)
-
-- [ ] **Handle edge cases (empty plans, invalid actions, timing issues)**  
-  Implement robust handling of edge cases including empty action sequences, invalid action characters, impossible scenarios, and timing conflicts.
-
-- [ ] **Final testing and integration of validation system**  
-  Conduct comprehensive testing of validation system with Diogo's test cases. Ensure all edge cases are properly handled.
-
-- [ ] **Complete documentation of check_solution() method**  
-  Write detailed documentation including method behavior, constraint checking logic, error handling, and usage examples.
-
-- [ ] **Final validation with Diogo's test cases**  
-  Work with Diogo to validate the system against all test cases. Ensure proper integration and consistent behavior.
-
-### Deliverables
-
-- [ ] Complete and robust `check_solution()` method
-- [ ] Fully functional robot simulation engine
-- [ ] Comprehensive constraint validation system
-- [ ] Unit tests for validation functionality
-
----
-
-## 🧪 Diogo: Testing & Quality Assurance Specialist
-
-### Primary Responsibilities
-
-- [ ] Design comprehensive test suite covering all scenarios
-- [ ] Create test data files with various complexity levels
-- [ ] Develop automated testing framework
-- [ ] Coordinate integration testing and final validation
-
-### Specific Tasks - Week 1 (Sep 9-15)
-
-- [ ] **Create basic test input files (simple grids)**  
-  Design and create simple test cases with small grids, few plants, and straightforward scenarios to validate basic functionality.
-
-- [ ] **Develop test cases for complex scenarios**  
-  Create complex test scenarios with large grids, multiple plant types, tight deadlines, and challenging constraint combinations.
-
-- [ ] **Create basic automated testing framework**  
-  Set up automated testing infrastructure using pytest. Create test runners and result reporting mechanisms.
-
-- [ ] **Establish test cases for edge cases**  
-  Design test cases for edge scenarios including empty grids, single cells, impossible scenarios, and boundary conditions.
-
-### Specific Tasks - Week 2 (Sep 16-22)
-
-- [ ] **Write unit tests for load() and check_solution() methods**  
-  Create comprehensive unit tests for both main methods. Test various input scenarios, edge cases, and error conditions.
-
-- [ ] **Develop integration tests for complete workflow**  
-  Create end-to-end tests that validate the complete workflow from file loading to solution validation.
-
-- [ ] **Create performance benchmarks and stress tests**  
-  Design performance tests with large grids, many plants, and long action sequences. Establish performance baselines and identify bottlenecks.
-
-- [ ] **Test with various grid sizes and plant configurations**  
-  Create systematic tests covering different grid dimensions, plant distributions, water requirements, and deadline scenarios.
-
-### Specific Tasks - Week 3 (Sep 23-26)
-
-- [ ] **Final validation of all components**  
-  Conduct comprehensive testing of the integrated system. Verify all components work together correctly.
-
-- [ ] **Stress testing with large grids and tight deadlines**  
-  Test system limits with very large grids, many plants, complex scenarios, and performance-critical situations.
-
-- [ ] **Document test cases and expected behaviors**  
-  Create comprehensive test documentation including test case descriptions, expected results, and coverage analysis.
-
-- [ ] **Prepare submission package and final validation**  
-  Prepare final submission package with all necessary files, documentation, and validation reports.
-
-### Deliverables
-
-- [ ] Comprehensive and automated test suite
-- [ ] Test data files and expected outputs
-- [ ] Functional automated testing framework
-- [ ] Performance analysis and complete documentation
-
----
-
-## 🤝 Joint Tasks (All Team Members)
-
-### Architecture Design (Sep 9-10)
-
-- [ ] **Francisco, Marta, Diogo:** Collaborative design of class structure and interfaces
-- [ ] **Francisco, Marta, Diogo:** Agreement on coding standards and conventions
-- [ ] **Francisco, Marta, Diogo:** Establish Git workflow and collaboration protocols
-
-### Code Reviews (Sep 18-19)
-
-- [ ] **Francisco, Marta, Diogo:** Peer review of each component
-- [ ] **Francisco, Marta, Diogo:** Integration testing and joint debugging
-- [ ] **Francisco, Marta, Diogo:** Performance optimization discussions
-
-### Final Integration (Sep 23-26)
-
-- [ ] **Francisco, Marta, Diogo:** Complete system testing
-- [ ] **Francisco, Marta, Diogo:** Documentation review and completion
-- [ ] **Francisco, Marta, Diogo:** Submission preparation and final validation
-- [ ] **Francisco:** Official Moodle submission (designated responsible)
-
----
-
-# Communication & Coordination
-
-## Daily Workflow
-
-- **Daily Check-ins:** Brief status updates via team chat
-- **Progress Tracking:** Update shared task board with completed items
-- **Issue Resolution:** Quick problem-solving sessions as needed
-
-## Weekly Structure
-
-- **Weekly Meetings:** In-depth progress reviews and planning sessions
-- **Code Reviews:** Structured peer review sessions
-- **Integration Points:** Regular testing of combined components
-
-## Tools & Platforms
-
-- **Code Repository:** Use private GitHub repository for version control
-- **Documentation:** Maintain shared documentation for decisions and progress
-- **Communication:** Team chat for daily coordination
-- **Testing:** Shared testing environment and results
-
-## Quality Assurance
-
-- **Code Standards:** Consistent formatting and documentation
-- **Testing Requirements:** Minimum test coverage for all components
-- **Review Process:** All major changes require peer review
-- **Final Validation:** Complete system testing before submission
-
----
-
-# Success Criteria
-
-## Technical Requirements
-
-- ✅ Complete `GardenerProblem` class implementation
-- ✅ Working `load()` method handling all input formats
-- ✅ Working `check_solution()` method with comprehensive validation
-- ✅ Proper error handling and edge case management
-- ✅ Clean, documented, and maintainable code
-
-## Testing Requirements
-
-- ✅ Comprehensive test suite covering all functionality
-- ✅ Edge case testing (empty grids, impossible scenarios, etc.)
-- ✅ Performance testing with large inputs
-- ✅ Integration testing of complete workflow
-
-## Submission Requirements
-
-- ✅ Single file `solution.py` submitted to Moodle
-- ✅ Code passes all internal tests
-- ✅ Complete and accessible documentation
-- ✅ Submitted before September 26, 2025 deadline
-
-This roadmap ensures each team member has clear, specific responsibilities while maintaining collaborative oversight for overall project success. The timeline provides adequate buffer time for testing and refinement before the September 26 deadline.
+- Daily brief check-ins via team chat
+- Wednesday mid-week integration sessions
+- Friday end-of-week progress reviews
+- Final submission preparation on Sep 25-26
 
 ---
 
@@ -486,6 +128,108 @@ class GardenerProblem(search.Problem):
         pass
 ```
 
+## Critical Implementation Rules
+
+### 1. Deadline Semantics
+
+- **Deadline validation**: Watering at time `t = dk` is **valid** (use `≤`, not `<`)
+- **Time progression**: Each action consumes exactly one time step
+- **Order**: Apply action → update state → increment time → check refill
+
+### 2. Watering Rules
+
+- **Valid watering**: Can only `W` on a cell that currently has an **unwatered plant**
+- **Water capacity check**: Before watering, ensure `current_water ≥ wk`
+- **Cell-specific tracking**: Mark that **specific cell** as watered (not just the plant type)
+- **Water consumption**: Subtract `wk` from current water after successful watering
+
+### 3. Refill Mechanics
+
+- **Refill trigger**: Refill to `W0` when robot **arrives** at (0,0) after a move action
+- **No refill on**: `W` actions or while stationary at (0,0)
+
+### 4. Plan Validation
+
+- **Valid alphabet**: Plan must contain only `{U, D, L, R, W}`
+- **Normalization**: Recommend `.strip()` whitespace and `.upper()` case
+- **Rejection**: Any invalid characters should cause validation failure
+
+### 5. Movement Mapping
+
+- **Direction vectors**:
+  - `U = (-1, 0)` (up = decrease row)
+  - `D = (+1, 0)` (down = increase row)
+  - `L = (0, -1)` (left = decrease col)
+  - `R = (0, +1)` (right = increase col)
+- **Boundary checking**: Reject moves that go out of bounds
+- **Obstacle checking**: Reject moves into cells with value `-1`
+
+### 6. Complete Plant Coverage
+
+- **Individual cells**: Must water **every plant cell**, not just one per type
+- **Multiple instances**: Same plant type can appear in multiple cells
+- **Tracking**: Use `set[(r,c)]` to track watered positions
+
+### 7. Input Parsing Rules
+
+- **Grid consistency**: Compute `K = max(grid)` (max positive value)
+- **Type definitions**: Read exactly `K` lines of `(wk, dk)` pairs
+- **Origin constraint**: Enforce that `(0,0)` is always `0` (empty)
+- **Comment handling**: Skip lines starting with `#` and blank lines everywhere
+- **Row/column validation**: Enforce exactly `N` rows and `M` items per row; reject otherwise
+- **Label bounds**: Every grid cell must be `-1`, `0`, or in `1..K` where `K = max(grid)`
+- **Zero plants case**: If `K=0` (no plants), accept `0` type definition lines
+- **File handle**: Never call `close()` on `fh` in `load()` (harness manages it)
+
+### 8. Plan Processing
+
+- **Normalization**: Apply `plan = plan.strip().upper()` before validation
+- **Character validation**: Reject if any character not in `{U,D,L,R,W}` remains
+- **Timing precision**: Increment time after action, then check `time ≤ dk` for watering
+- **Refill timing**: Only refill after move actions that place robot at `(0,0)`
+- **Cell tracking**: Track watered cells by coordinates `set[(r,c)]`, not by plant type
+
+### 9. Return Values
+
+- **check_solution return**: Must return `bool` only
+- **Verbosity**: If `verbose=True`, print diagnostics but still return `bool`
+- **No origin return**: Don't require robot to end at (0,0)
+
+### 10. Edge Cases & Robustness
+
+- **Empty plants case**: If `K=0` (no plants), empty plan `""` is valid; any non-empty plan must still follow movement rules
+- **K consistency**: If grid's max label is `Kgrid`, must read exactly `Kgrid` type lines; reject if more/fewer appear
+- **Value domains**: Enforce integers everywhere; reject malformed tokens; accept `W0 ≥ 0` (don't assume `> 0`)
+- **Exact water consumption**: On `W` action, subtract exactly `wk`; never allow negative water levels
+- **Single-pass validation**: Don't pre-scan or modify plan beyond `.strip().upper()`; validate streaming to avoid O(n²) logic
+- **Standard library only**: No external imports beyond `search.py` (provided by grader); use only built-in Python libraries
+
+### 11. Final Micro-Clarifications
+
+- **No optimality check**: `check_solution` validates correctness only; must not require shortest plans; extra moves after all plants watered are allowed if valid
+- **Watering doesn't move**: `W` action only affects water/time/plant state; robot position stays the same
+- **Finish condition**: Plan valid iff every plant cell watered exactly once within deadline—return `True` even if plan continues with valid moves
+- **Parsing tolerance**: Accept arbitrary spacing (multiple spaces/tabs) and trailing spaces; still enforce strict integer tokens
+- **Verbose contract**: Only print diagnostics when `verbose=True`; always return a `bool`
+
+## Time Update Order
+
+```
+for each action in plan:
+    1. Apply action (move/water)
+    2. Update state (position/water/plants)
+    3. time += 1
+    4. If at (0,0) after a move, refill to W0
+```
+
+## Data Structures to Track
+
+```python
+watered = set()           # set[(r,c)] - watered plant positions
+plants = {}               # dict[(r,c)] -> plant_type
+types = {}                # dict[plant_type] -> (wk, dk)
+```
+
 ## Expected Input/Output Examples
 
 Based on the `public1/` test files, our system must handle:
@@ -509,258 +253,90 @@ DDWRRWUWUW              # Action sequence: Down,Down,Water,Right,Right,Water,Up,
 
 ## Validation Requirements
 
+### Positive Tests (Must Return True)
+
 All solutions must pass the 10 test cases in `public1/`:
 
 - `ex0.dat` → `ex0.plan`
 - `ex1.dat` → `ex1.plan`
-- ...
+- `ex2.dat` → `ex2.plan`
+- `ex3.dat` → `ex3.plan`
+- `ex4.dat` → `ex4.plan`
+- `ex5.dat` → `ex5.plan`
+- `ex6.dat` → `ex6.plan`
+- `ex7.dat` → `ex7.plan`
+- `ex8.dat` → `ex8.plan`
 - `ex9.dat` → `ex9.plan`
 
----
+### Negative Tests (Must Return False)
 
-# Team Coordination Specifics
+Your `check_solution()` must correctly reject invalid plans:
 
-## Daily Standups
+**Invalid Characters:**
 
-- **Time**: 9:00 AM daily (15 minutes max)
-- **Format**: What I did yesterday, what I'm doing today, any blockers
-- **Platform**: Discord team channel
-- **Backup**: Async updates if someone can't attend
+- Plan containing illegal characters (e.g., `"DDWRXUW"` with `X`)
+- Plans with lowercase letters if not normalized
+- Plans with whitespace if not stripped
 
-## Git Workflow
+**Invalid Watering:**
 
-- **Main branch**: Protected, requires PR review
-- **Branch naming**:
-  - `feature/load-method` (Francisco)
-  - `feature/validation` (Marta)
-  - `feature/tests` (Diogo)
-- **Commit convention**: `[Component] Brief description`
-  - Examples: `[Parser] Add input validation`, `[Simulation] Fix water tracking`
-- **Code review**: Minimum 1 approval before merge
-- **Integration**: Daily merges to avoid conflicts
+- `W` action on empty cell (value `0`)
+- `W` action on obstacle cell (value `-1`)
+- `W` action on already watered plant cell
+- `W` action with insufficient water (`current_water < wk`)
 
-## Communication Channels
+**Invalid Movement:**
 
-- **Daily coordination**: Discord #iasd-project channel
-- **Code discussions**: GitHub PR comments and issues
-- **Emergency contact**: WhatsApp group
-- **File sharing**: GitHub repository + Google Drive backup
-- **Documentation**: GitHub Wiki for architecture decisions
+- Move that goes out of grid boundaries
+- Move into obstacle cell (value `-1`)
 
-## Meeting Schedule
+**Constraint Violations:**
 
-- **Weekly sync**: Mondays 2:00 PM (1 hour)
-- **Code review sessions**: Wednesdays 4:00 PM (30 minutes)
-- **Integration testing**: Fridays 3:00 PM (45 minutes)
-- **Emergency sessions**: As needed, minimum 2 hours notice
+- Missing any plant cell (not watering all required plants)
+- Watering past deadline (`time > dk` when watering)
+- Plan that leaves plants unwatered
+- Watering the same cell twice
+- Moving out of grid boundaries
+- Moving into obstacle cells (value `-1`)
 
----
+**Edge Cases:**
 
-# Enhanced Testing Strategy
+- Empty plan string `""`
+- Plan with only invalid actions
 
-## Test Categories
+### Additional Sanity Checks
 
-### 1. Unit Tests (Each person tests their components)
+**Critical Rejections:**
 
-**Francisco - Parser Tests:**
+- Reject plans that leave any plant unwatered
+- Reject plans that water any cell twice  
+- Reject plans that water with insufficient water
+- Reject plans that move out of bounds
+- Reject plans that move into obstacles (`-1` cells)
+- Reject plans that miss any deadline
 
-- Valid input parsing
-- Malformed file handling
-- Comment and blank line skipping
-- Edge cases: empty grids, single cell, negative values
-- Performance: files up to 100KB
+**Critical Acceptances:**
 
-**Marta - Validation Tests:**
-
-- Robot movement in all directions
-- Water consumption tracking
-- Deadline enforcement
-- Obstacle collision detection
-- Boundary checking
-- Integration with Francisco's data structures
-
-**Diogo - System Tests:**
-
-- End-to-end workflow testing
-- Performance benchmarks
-- Stress testing with large scenarios
-- Validation against project requirements
-
-### 2. Integration Tests Using public1/ Data
-
-- **Acceptance Criteria**: All 10 test cases must pass
-- **Test Files**: ex0.dat through ex9.dat with corresponding .plan files
-- **Automated Testing**: Run all tests on every PR
-- **Performance Target**: Complete test suite in < 30 seconds
-
-### 3. Performance Requirements
-
-- **load() method**: < 1 second for files up to 100KB
-- **check_solution()**: < 5 seconds for action sequences up to 10,000 steps
-- **Memory usage**: Efficient for grids up to 1000×1000
-- **Test coverage**: Minimum 90% code coverage
-
-## Test Automation Framework
-
-```python
-# Example test structure
-def test_load_basic_grid():
-    problem = GardenerProblem()
-    with open('ex0.dat', 'r') as fh:
-        problem.load(fh)
-    assert problem.grid_size == (3, 4)
-    assert problem.water_capacity == 100
-
-def test_check_solution_valid():
-    problem = GardenerProblem()
-    # Load test data
-    result = problem.check_solution("DDWRRWUWUW")
-    assert result == True
-```
+- Accept plans that water exactly at deadline (`time ≤ dk`, not `time < dk`)
+- Accept plans with valid normalization after `.strip().upper()`
 
 ---
 
-# Risk Management & Contingencies
+# Success Criteria
 
-## Technical Risks
+## Essential Requirements
 
-### Integration Issues
+- ✅ Complete `GardenerProblem` class implementation
+- ✅ Working `load()` method handling all input formats
+- ✅ Working `check_solution()` method with comprehensive validation
+- ✅ All 10 official test cases pass
+- ✅ Basic edge case handling (empty plans, invalid actions, etc.)
 
-- **Prevention**: Weekly integration checkpoints
-- **Detection**: Automated integration tests on every merge
-- **Mitigation**: Clear component interfaces, mock objects for testing
+## Submission Requirements
 
-### Performance Problems
+- ✅ Single file `solution.py` submitted to Moodle
+- ✅ Code passes all official tests
+- ✅ Clean, readable code with basic documentation
+- ✅ Submitted before September 26, 2025 deadline
 
-- **Prevention**: Profile early with realistic data sizes
-- **Detection**: Automated performance tests
-- **Mitigation**: Optimize critical paths, consider algorithm improvements
-
-### Complex Edge Cases
-
-- **Prevention**: Start with simple tests, gradually increase complexity
-- **Detection**: Comprehensive test suite including boundary conditions
-- **Mitigation**: Systematic debugging, team problem-solving sessions
-
-## Team Risks
-
-### Member Unavailability
-
-- **Prevention**: Cross-training on critical components
-- **Detection**: Daily check-ins and progress tracking
-- **Mitigation**: Detailed documentation, pair programming sessions
-
-### Deadline Pressure
-
-- **Prevention**: Daily progress tracking with early warning system
-- **Detection**: Weekly milestone reviews
-- **Mitigation**: Scope reduction, parallel development, extended work sessions
-
-### Merge Conflicts
-
-- **Prevention**: Clear component boundaries, frequent small merges
-- **Detection**: Git conflict detection
-- **Mitigation**: Dedicated merge conflict resolution sessions
-
-## Contingency Plans
-
-### Week 1 Delays
-
-- **Action**: Reduce optimization scope, focus on core functionality
-- **Responsibility**: All team members work in parallel on critical path items
-- **Escalation**: Daily extended sessions if > 1 day behind
-
-### Week 2 Delays
-
-- **Action**: Parallel development, reduce documentation scope
-- **Responsibility**: Focus on essential features only
-- **Escalation**: Weekend work sessions, external help if needed
-
-### Week 3 Critical Issues
-
-- **Action**: Emergency team sessions, simplified submission
-- **Responsibility**: All hands on deck, cancel other commitments
-- **Escalation**: Submit minimal viable solution if necessary
-
----
-
-# Tools & Environment Setup
-
-## Development Environment
-
-- **IDE**: VS Code with Python extension pack
-- **Python Version**: 3.8+ (check compatibility with search module)
-- **Virtual Environment**: Use `venv` or `conda` for dependencies
-- **Code Formatter**: Black for consistent formatting
-- **Linter**: flake8 for style checking
-
-## Version Control Setup
-
-```bash
-# Repository structure
-IASD-Project/
-├── solution.py          # Final submission file
-├── src/                 # Development modules
-│   ├── parser.py       # Francisco's parsing logic
-│   ├── validator.py    # Marta's validation logic
-│   └── utils.py        # Shared utilities
-├── tests/              # Test files
-│   ├── test_parser.py  # Francisco's tests
-│   ├── test_validator.py # Marta's tests
-│   └── test_integration.py # Diogo's tests
-├── data/               # Test data
-│   └── public1/        # Official test cases
-└── docs/               # Documentation
-```
-
-## Testing Infrastructure
-
-- **Framework**: pytest for test execution
-- **Coverage**: pytest-cov for coverage measurement
-- **CI/CD**: GitHub Actions for automated testing
-- **Performance**: pytest-benchmark for performance tests
-
-## Communication Tools
-
-- **Chat**: Discord server with dedicated channels
-- **Video**: Zoom for meetings and pair programming
-- **Documentation**: GitHub Wiki + Google Docs for collaborative editing
-- **Task Tracking**: GitHub Projects with Kanban board
-
----
-
-# Final Submission Checklist
-
-## Code Quality Requirements
-
-- [ ] Single file `solution.py` contains complete `GardenerProblem` class
-- [ ] Code follows PEP 8 style guidelines
-- [ ] All functions have docstrings with clear descriptions
-- [ ] No external dependencies beyond standard library and `search` module
-- [ ] Code is clean, readable, and maintainable
-
-## Testing Requirements
-
-- [ ] All 10 public test cases pass (ex0.dat through ex9.dat)
-- [ ] Unit tests achieve >90% code coverage
-- [ ] Performance requirements met (load <1s, check_solution <5s)
-- [ ] Edge cases handled properly (empty plans, invalid actions, etc.)
-- [ ] Integration tests pass for complete workflow
-
-## Documentation Requirements
-
-- [ ] README.md with usage instructions
-- [ ] Code comments explain complex algorithms
-- [ ] Architecture decisions documented
-- [ ] Test case descriptions and expected behaviors
-- [ ] Performance analysis and optimization notes
-
-## Submission Process
-
-- [ ] Final code review by all team members
-- [ ] Backup copies created in multiple locations
-- [ ] Submission file tested on clean environment
-- [ ] Moodle submission completed before deadline
-- [ ] Confirmation email received and verified
-
-This enhanced roadmap provides the missing technical details, coordination specifics, and risk management that will ensure your team's success!
+This lean approach focuses on the essential deliverables while maintaining quality through systematic testing with the provided official test cases. The timeline provides adequate buffer for testing and integration without unnecessary complexity.
