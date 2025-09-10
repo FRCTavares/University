@@ -104,6 +104,65 @@ Our approach focuses on clean, working code that handles the core requirements a
 
 # Technical Implementation Details
 
+## Environment Setup
+
+### Quick Setup (5 minutes)
+
+**1. Create Virtual Environment:**
+
+```bash
+cd /path/to/your/Ass1/directory
+python3 -m venv venv
+```
+
+**2. Activate Environment:**
+
+```bash
+# On macOS/Linux:
+source venv/bin/activate
+
+# On Windows:
+venv\Scripts\activate
+```
+
+**3. Verify Setup:**
+
+```bash
+python --version  # Should show Python 3.8+
+python -c "import search; print('search.py loaded successfully')"
+```
+
+**4. Deactivate (when done):**
+
+```bash
+deactivate
+```
+
+### Project Dependencies
+
+- **Core**: Python standard library + `search.py` + `utils.py` (provided)
+- **Required**: `numpy` (dependency of utils.py)  
+- **Optional**: pytest, black, flake8 (for development only)
+
+### Development Workflow
+
+```bash
+# Start working
+source venv/bin/activate
+
+# Install dependencies (first time only)
+pip install -r requirements.txt
+
+# Test setup works
+python -c "import search; print('Setup OK!')"
+
+# Run your solution
+python solution.py
+
+# Stop working
+deactivate
+```
+
 ## Required Class Structure
 
 ```python
