@@ -1,7 +1,31 @@
 #include "fake_intrinsics.h"
+#include <string>
 
-int main()
+// Define the global VECTOR_LENGTH variable
+int VECTOR_LENGTH = 8; // Default value
+
+int main(int argc, char *argv[])
 {
+    // Parse command line arguments
+    for (int i = 1; i < argc; i++)
+    {
+        if (std::string(argv[i]) == "--vl" && i + 1 < argc)
+        {
+            int vl = std::stoi(argv[i + 1]);
+            if (vl == 4 || vl == 8 || vl == 16)
+            {
+                VECTOR_LENGTH = vl;
+                std::cout << "Vector length set to: " << VECTOR_LENGTH << std::endl;
+            }
+            else
+            {
+                std::cerr << "Error: Invalid vector length. Must be 4, 8, or 16." << std::endl;
+                return 1;
+            }
+            i++; // Skip the next argument since we used it as the value
+        }
+    }
+
     // Input for Problem 1 | N = 80
     /* float in[N] = {-1,-1,-1,-1,-1,-1,-1,-1,
                     -1,-1,1,1,-1,-1,1,1,
@@ -24,6 +48,8 @@ int main()
                         5, 1, 4, 9, 0, 5, 0, 3};
 
     float out[N] = {0};
+
+    std::cout << "Processing with vector length: " << VECTOR_LENGTH << std::endl;
 
     // Problem 1: Absolute Value
     /*for (int i=0; i<N; i+=VECTOR_LENGTH)

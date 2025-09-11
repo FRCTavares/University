@@ -1,3 +1,27 @@
+/*
+ * fake_intrinsics.h - Configurable Vector Length SIMD Intrinsics
+ *
+ * CHANGES MADE:
+ * 1. Modified VECTOR_LENGTH from 'const int' to 'extern int' to support runtime configuration
+ *    - Now accepts vector lengths of 4, 8, or 16 via command line argument --vl
+ *    - Default vector length remains 8
+ *
+ * 2. Replaced static TRUE_MASK constant with getTrueMask() function
+ *    - Static mask creation caused issues with dynamic vector lengths
+ *    - Function creates mask lazily after VECTOR_LENGTH is set
+ *
+ * 3. Updated all intrinsic function signatures to use function overloading
+ *    - Removed default parameter TRUE_MASK from function signatures
+ *    - Added overloaded versions without mask parameter that call getTrueMask()
+ *    - Affects: _vcopy, _vadd, _vsub, _vmul, _vnot, _vand, _vor
+ *
+ * 4. All vector operations now properly adapt to the configured VECTOR_LENGTH
+ *    - Vector constructors, loops, and operations scale with VECTOR_LENGTH
+ *    - Statistics and output formatting adjust accordingly
+ *
+ * Usage: Compile and run with ./my_program --vl <4|8|16>
+ */
+
 #include <iostream>
 #include <array>
 #include <vector>
@@ -6,8 +30,8 @@
 #include <type_traits>
 #include "stats.h"
 
-const int VECTOR_LENGTH = 8; // Length of our fake vectors
-const int N = 80;            // Size of the input
+extern int VECTOR_LENGTH; // Length of our fake vectors (now configurable)
+const int N = 80;         // Size of the input
 stats code_stats;
 
 template <typename T>
@@ -65,8 +89,18 @@ __vector<T> _maskConstructor(T scalar)
     return vVar;
 }
 
-// Necessary for the default mask format
-const __vbool TRUE_MASK = _maskConstructor(true);
+// Function to get the default mask format
+__vbool getTrueMask()
+{
+    static bool initialized = false;
+    static __vbool trueMask;
+    if (!initialized)
+    {
+        trueMask = _maskConstructor(true);
+        initialized = true;
+    }
+    return trueMask;
+}
 
 // Instrisics Start Here
 // Assignment
@@ -135,7 +169,7 @@ void _vstore(T *mem_addr, const __vector<T> &vVar)
 }
 
 template <typename T>
-__vector<T> _vcopy(__vector<T> &vDes, const __vector<T> &vSrc, const __vbool &mask = TRUE_MASK)
+__vector<T> _vcopy(__vector<T> &vDes, const __vector<T> &vSrc, const __vbool &mask)
 {
     for (int i = 0; i < VECTOR_LENGTH; i++)
     {
@@ -155,9 +189,15 @@ __vector<T> _vcopy(__vector<T> &vDes, const __vector<T> &vSrc, const __vbool &ma
     return vDes; // Simple copy of array
 }
 
+template <typename T>
+__vector<T> _vcopy(__vector<T> &vDes, const __vector<T> &vSrc)
+{
+    return _vcopy(vDes, vSrc, getTrueMask());
+}
+
 // Arithmetic operations
 template <typename T>
-__vector<T> _vadd(__vector<T> &v1, __vector<T> &v2, const __vbool &mask = TRUE_MASK)
+__vector<T> _vadd(__vector<T> &v1, __vector<T> &v2, const __vbool &mask)
 {
     __vector<T> vVar;
     for (int i = 0; i < VECTOR_LENGTH; i++)
@@ -182,7 +222,13 @@ __vector<T> _vadd(__vector<T> &v1, __vector<T> &v2, const __vbool &mask = TRUE_M
 }
 
 template <typename T>
-__vector<T> _vsub(__vector<T> &v1, __vector<T> &v2, const __vbool &mask = TRUE_MASK)
+__vector<T> _vadd(__vector<T> &v1, __vector<T> &v2)
+{
+    return _vadd(v1, v2, getTrueMask());
+}
+
+template <typename T>
+__vector<T> _vsub(__vector<T> &v1, __vector<T> &v2, const __vbool &mask)
 {
     __vector<T> vVar;
     for (int i = 0; i < VECTOR_LENGTH; i++)
@@ -207,7 +253,13 @@ __vector<T> _vsub(__vector<T> &v1, __vector<T> &v2, const __vbool &mask = TRUE_M
 }
 
 template <typename T>
-__vector<T> _vmul(__vector<T> &v1, __vector<T> &v2, const __vbool &mask = TRUE_MASK)
+__vector<T> _vsub(__vector<T> &v1, __vector<T> &v2)
+{
+    return _vsub(v1, v2, getTrueMask());
+}
+
+template <typename T>
+__vector<T> _vmul(__vector<T> &v1, __vector<T> &v2, const __vbool &mask)
 {
     __vector<T> vVar;
     for (int i = 0; i < VECTOR_LENGTH; i++)
@@ -231,8 +283,14 @@ __vector<T> _vmul(__vector<T> &v1, __vector<T> &v2, const __vbool &mask = TRUE_M
     return vVar;
 }
 
+template <typename T>
+__vector<T> _vmul(__vector<T> &v1, __vector<T> &v2)
+{
+    return _vmul(v1, v2, getTrueMask());
+}
+
 // Logic operations
-__vbool _vnot(__vbool &v1, const __vbool &mask = TRUE_MASK)
+__vbool _vnot(__vbool &v1, const __vbool &mask)
 {
     __vbool vVar;
     for (int i = 0; i < VECTOR_LENGTH; i++)
@@ -256,7 +314,12 @@ __vbool _vnot(__vbool &v1, const __vbool &mask = TRUE_MASK)
     return vVar;
 }
 
-__vbool _vand(__vbool &v1, __vbool &v2, const __vbool &mask = TRUE_MASK)
+__vbool _vnot(__vbool &v1)
+{
+    return _vnot(v1, getTrueMask());
+}
+
+__vbool _vand(__vbool &v1, __vbool &v2, const __vbool &mask)
 {
     __vbool vVar;
     for (int i = 0; i < VECTOR_LENGTH; i++)
@@ -280,7 +343,12 @@ __vbool _vand(__vbool &v1, __vbool &v2, const __vbool &mask = TRUE_MASK)
     return vVar;
 }
 
-__vbool _vor(__vbool &v1, __vbool &v2, const __vbool &mask = TRUE_MASK)
+__vbool _vand(__vbool &v1, __vbool &v2)
+{
+    return _vand(v1, v2, getTrueMask());
+}
+
+__vbool _vor(__vbool &v1, __vbool &v2, const __vbool &mask)
 {
     __vbool vVar;
     for (int i = 0; i < VECTOR_LENGTH; i++)
@@ -302,6 +370,11 @@ __vbool _vor(__vbool &v1, __vbool &v2, const __vbool &mask = TRUE_MASK)
     code_stats.vector_ins += 1;
     code_stats.max_active += VECTOR_LENGTH;
     return vVar;
+}
+
+__vbool _vor(__vbool &v1, __vbool &v2)
+{
+    return _vor(v1, v2, getTrueMask());
 }
 
 // Control operations
