@@ -5,7 +5,7 @@ CFLAGS = -std=c++20
 EXECUTABLE = my_program
 
 all: main.cpp fake_intrinsics.h stats.h
-	$(CC) $(CFLAGS) main.cpp -o $(EXECUTABLE)
+	$(CC) $(CFLAGS) main.cpp -o $(EXECUTABLE)  
 
 run:
 	./$(EXECUTABLE)

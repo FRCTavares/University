@@ -54,21 +54,29 @@ int main()
         __vfloat result = one_f;
 
         // For exp > 0, set result = x and count = exp - 1
-        __vbool mNZ = _vgt(exps, zero_i);   // lanes with exponent > 0
-        result = _vcopy(result, vals, mNZ); // result = x where exp>0
+        __vbool mNZ = _veq(exps, zero_i); // mask for exps != 0
+        mNZ = _vnot(mNZ);
+
+        result = _vcopy(result, vals, mNZ); // result = vals if exp > 0
         exps = _vsub(exps, one_i, mNZ);     // count = exp - 1 (note: vector - vector)
 
         // Loop while any lane still needs multiplies
-        __vbool mActive = _vgt(exps, zero_i);
+        __vbool mActive = _veq(exps, zero_i);
+        mActive = _vnot(mActive); // mask for exps > 0
+
+        // What does popcount do?
+        // It counts the number of active lanes (lanes where the exponent > 0)
         while (_vpopcnt(mActive) > 0)
         {
-            result = _vmul(result, vals, mActive); // result *= x on active lanes
-            exps = _vsub(exps, one_i, mActive);    // exps-- on active lanes
-            mActive = _vgt(exps, zero_i);          // recompute activity
+            result = _vmul(result, vals, mActive); // multiply on active lanes
+            exps = _vsub(exps, one_i, mActive);    // decrement exps where active
+
+            mActive = _veq(exps, zero_i); // recompute activity
+            mActive = _vnot(mActive);
         }
 
         // Clamp to 9.999999
-        __vbool mClamp = _vgt(result, clamp_f);
+        __vbool mClamp = _vlt(clamp_f, result);
         result = _vcopy(result, clamp_f, mClamp);
 
         // Store
