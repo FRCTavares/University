@@ -6,8 +6,8 @@
 #include <type_traits>
 #include "stats.h"
 
-const int VECTOR_LENGTH = 16; // Length of our fake vectors
-const int N = 80;             // Size of the input
+const int VECTOR_LENGTH = ; // Length of our fake vectors
+const int N = 80;           // Size of the input
 stats code_stats;
 
 template <typename T>
