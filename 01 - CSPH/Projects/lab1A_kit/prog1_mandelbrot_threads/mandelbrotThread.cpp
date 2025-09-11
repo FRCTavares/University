@@ -31,6 +31,11 @@ void workerThreadStart(WorkerArgs *const args)
     // Record start time for this thread
     double startTime = CycleTimer::currentSeconds();
 
+    // OLD IMPLEMENTATION (COMMENTED OUT): Contiguous block assignment
+    // This approach assigns contiguous blocks of rows to each thread,
+    // but leads to load imbalance due to varying computational complexity
+    // across different regions of the Mandelbrot set.
+    /*
     int rowsPerThread = args->height / args->numThreads;
     int startRow = args->threadId * rowsPerThread;
 
@@ -46,14 +51,32 @@ void workerThreadStart(WorkerArgs *const args)
                      args->width, args->height,
                      startRow, numRows,
                      args->maxIterations, args->output);
+    */
+
+    // NEW IMPLEMENTATION: Interleaved row assignment
+    // Each thread processes rows in round-robin fashion for better load balancing
+    // Thread 0: rows 0, 4, 8, 12, ...
+    // Thread 1: rows 1, 5, 9, 13, ...
+    // Thread 2: rows 2, 6, 10, 14, ...
+    // etc.
+    int rowsProcessed = 0;
+    for (int row = args->threadId; row < args->height; row += args->numThreads)
+    {
+        // Call the serial function to compute one row at a time
+        mandelbrotSerial(args->x0, args->y0, args->x1, args->y1,
+                         args->width, args->height,
+                         row, 1, // startRow = row, numRows = 1
+                         args->maxIterations, args->output);
+        rowsProcessed++;
+    }
 
     // Record end time and calculate elapsed time for this thread
     double endTime = CycleTimer::currentSeconds();
     double elapsedTime = (endTime - startTime) * 1000; // Convert to milliseconds
 
     // Print timing information for this thread
-    printf("Thread %d: computed rows [%d-%d] in %.3f ms\n",
-           args->threadId, startRow, startRow + numRows - 1, elapsedTime);
+    printf("Thread %d: computed %d rows (interleaved) in %.3f ms\n",
+           args->threadId, rowsProcessed, elapsedTime);
 }
 
 //
