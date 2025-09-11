@@ -1,4 +1,3 @@
-
 # Problem 1: Absolute value of an array
 
 ## 1.1 Mapping Scalar → Vector Code
@@ -52,54 +51,51 @@ for (int i = 0; i < N; i += VECTOR_LENGTH) {
 ## 2.1 - Vectorize the function
 
 ```cpp
- for (int i = 0; i < N; i += VECTOR_LENGTH)
-    {
-        // Load one SIMD block
-        __vfloat vals = _vload(&values[i]);  // bases (float)
-        __vint exps = _vload(&exponents[i]); // exponents (int)
-
-        // Constants
-        const __vfloat one_f = _vbcast(1.0f);
-        const __vfloat clamp_f = _vbcast(9.999999f);
-        const __vint zero_i = _vbcast(0);
-        __vint one_i = _vbcast(1);
-
-        // Start: result = 1.0 for all lanes (covers exp == 0 case)
-        __vfloat result = one_f;
-
-        // For exp > 0, set result = x and count = exp - 1
-        __vbool mNZ = _veq(exps, zero_i); // mask for exps != 0
-        mNZ = _vnot(mNZ);
-
-        result = _vcopy(result, vals, mNZ); // result = vals if exp > 0
-        exps = _vsub(exps, one_i, mNZ);     // count = exp - 1 (note: vector - vector)
-
-        // Loop while any lane still needs multiplies
-        __vbool mActive = _veq(exps, zero_i);
-        mActive = _vnot(mActive); // mask for exps > 0
-
-        // What does popcount do?
-        // It counts the number of active lanes (lanes where the exponent > 0)
-        while (_vpopcnt(mActive) > 0)
-        {
-            result = _vmul(result, vals, mActive); // multiply on active lanes
-            exps = _vsub(exps, one_i, mActive);    // decrement exps where active
-
-            mActive = _veq(exps, zero_i); // recompute activity
-            mActive = _vnot(mActive);
-        }
-
-        // Clamp to 9.999999
-        __vbool mClamp = _vlt(clamp_f, result);
-        result = _vcopy(result, clamp_f, mClamp);
-
-        // Store
-        _vstore(&out[i], result);
-    }
-
+for (int i = 0; i < N; i += VECTOR_LENGTH){
+ // Load one SIMD block
+ __vfloat vals = _vload(&values[i]); // bases (float)
+ __vint exps = _vload(&exponents[i]); // exponents (int)
+ 
+ // Constants
+ const __vfloat one_f = _vbcast(1.0f);
+ const __vfloat clamp_f = _vbcast(9.999999f);
+ const __vint zero_i = _vbcast(0);
+ __vint one_i = _vbcast(1);
+ 
+ // Start: result = 1.0 for all lanes (covers exp == 0 case)
+ __vfloat result = one_f;
+ 
+ // For exp > 0, set result = x and count = exp - 1
+ __vbool mNZ = _veq(exps, zero_i); // mask for exps != 0
+ mNZ = _vnot(mNZ);
+ 
+ result = _vcopy(result, vals, mNZ); // result = vals if exp > 0
+ exps = _vsub(exps, one_i, mNZ); // count = exp - 1 (note: vector - vector)
+ 
+ // Loop while any lane still needs multiplies
+ __vbool mActive = _veq(exps, zero_i);
+ mActive = _vnot(mActive); // mask for exps > 0
+   
+ // What does popcount do?
+ // It counts the number of active lanes (lanes where the exponent > 0)
+ while (_vpopcnt(mActive) > 0){
+  result = _vmul(result, vals, mActive); // multiply on active lanes
+  exps = _vsub(exps, one_i, mActive); // decrement exps where active
+  
+  mActive = _veq(exps, zero_i); // recompute activity
+  mActive = _vnot(mActive);
+ }
+ 
+ // Clamp to 9.999999
+ __vbool mClamp = _vlt(clamp_f, result);
+ result = _vcopy(result, clamp_f, mClamp);
+ 
+ // Store
+ _vstore(&out[i], result);
+}
 ```
 
-With VECTOR_LENGTH = 8, we implemented clampedExpVector using masked SIMD and `_vpopcnt` for loop termination, plus a final clamp at 9.999999. On the provided 16-element input, the simulator reports **Total Vector Instructions = 96** and **Vector Utilization ≈ 0.717**. Utilization is lower than in Problem 1 due to intra-block divergence (lanes finish at different times), while execution time benefits from processing 8 elements per iteration.
+With `VECTOR_LENGTH = 8`, we implemented `clampedExpVector` using masked SIMD and `_vpopcnt` for loop termination, plus a final clamp at `9.999999`. On the provided 16-element input, the simulator reports **Total Vector Instructions = 117**, **Cycles = 127**, and **Vector Utilization ≈ 0.768**.  
 
 ---
 
@@ -107,12 +103,12 @@ With VECTOR_LENGTH = 8, we implemented clampedExpVector using masked SIMD and `_
 
 | VECTOR_LENGTH | Total Vector Instructions | Cycles | Max Active Lanes | Total Active Lanes | Vector Utilization |
 |---------------|---------------------------|--------|------------------|--------------------|--------------------|
-| **4**         | 152                       | 172    | 608              | 471                | ~0.775             |
-| **8**         | 96                        | 106    | 768              | 551                | ~0.717             |
-| **16**        | 50                        | 55     | 800              | 567                | ~0.709             |
+| **4**         | 184                       | 204    | 736              | 599                | ~0.814             |
+| **8**         | 117                       | 127    | 936              | 719                | ~0.768             |
+| **16**        | 61                        | 66     | 976              | 743                | ~0.761             |
 
 **Observations**
 
-- **Vector Utilization:** stays roughly constant (≈ 0.7–0.8). This happens because divergence (different exponents needing different numbers of multiplications) causes some SIMD lanes to go idle, and that fraction doesn’t improve with a wider vector.  
-- **Speedup (execution time):** increases with wider vectors. Larger VL reduces the number of loop iterations and vector instructions, so the total cycles drop significantly (e.g., 172 → 55).  
-- **Takeaway:** SIMD utilization is limited by divergence, but throughput (speed) still scales with vector width since more elements are processed in parallel per instruction.
+- **Vector Utilization:** decreases slightly as VL increases (≈0.81 → 0.76) due to divergence—wider vectors pack more heterogeneous exponents, so more lanes idle while the slowest lane finishes.  
+- **Speedup (execution time):** improves with larger VL (cycles drop 204 → 127 → 66) because more elements are processed per instruction and setup costs are paid fewer times.  
+- **Takeaway:** Utilization is bounded by divergence, but throughput still scales with vector width.
