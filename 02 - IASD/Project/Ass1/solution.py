@@ -97,9 +97,10 @@ class GardenerProblem(search.Problem):
         """
         print(f"Checking solution: {solution[:20]}..." if len(solution) > 20 else f"Checking solution: {solution}")
         return True  # Placeholder - always return True for now
+    
 if __name__ == "__main__":
-    # Specify which example to test here
-    example_to_test = "ex0"  # Change this to test different examples: ex0, ex1, ex2, etc.
+    # Which example to test
+    example_to_test = "ex0"  # ex0, ex1, ex2, etc.
     
     # Test the specified example
     dat_file = Path(f"public1/{example_to_test}.dat")
@@ -140,7 +141,7 @@ if __name__ == "__main__":
         print(f"   Water capacity: {problem.water_capacity}")
         print(f"   Plants: {len(problem.plants)}")
         print(f"   Obstacles: {len(problem.obstacles)}")
-        print(f"   Plan length: {len(plan)} actions")
+        print(f"   Plan length: {len(plan)} actions; Plan: {plan}")
         print(f"   Result: {'VALID' if result else 'INVALID'}")
         
     except Exception as e:
