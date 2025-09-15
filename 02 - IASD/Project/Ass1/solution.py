@@ -11,13 +11,10 @@
 
 import search
 from pathlib import Path
-from typing import Dict, List, Any
-import os
 
 # Define the problem class
 class GardenerProblem(search.Problem):
-    def __init__(self, initial_state=None, goal=None):
-        super().__init__(initial_state, goal)
+    def __init__(self):
         self.initial_state = None
         self.map = None
         self.water_capacity = None
@@ -25,39 +22,26 @@ class GardenerProblem(search.Problem):
         self.obstacles = set()
         self.plant_types = {}  # Maps plant type number to (water_needed, deadline)
         
-    def load(self, filename):
+    def load(self, fh):
         """
         Load problem from file with the correct format:
         Line 1: N M W0 (rows, cols, water capacity)
         Next N lines: The map (0=empty, -1=obstacle, 1,2,3...=plant types)
         Next line: K (number of plant types)
         Next K lines: wk dk (water needed, deadline for each plant type)
-        """
-    
-        """
-        FIXES APPLIED:
-        - Changed parse_file to @staticmethod and corrected method call
-        - Now parsing all required sections: water capacity, plants, obstacles
-        - Storing all parsed data in class attributes for later use in simulation
         
-        WHAT WAS WRONG:
-        - parse_file was defined as regular function but called as instance method
-        - Only parsed map section, missing water capacity, plants, and obstacles
-        
-        WHAT'S NOW RIGHT:
-        - parse_file is properly defined as @staticmethod
-        - All required data is parsed and stored in class attributes
-        - Data structure is ready for simulation and validation
+        Args:
+            fh: File handle (already opened file pointer)
         """
-        print(f"Loading problem from {filename}")
+
+        print(f"Loading problem from file handle")
         
-        with open(filename, 'r') as f:
-            lines = []
-            for line in f:
-                line = line.strip()
-                # Skip blank lines and comments
-                if line and not line.startswith('#'):
-                    lines.append(line)
+        lines = []
+        for line in fh:
+            line = line.strip()
+            # Skip blank lines and comments
+            if line and not line.startswith('#'):
+                lines.append(line)
         
         if not lines:
             print("No valid lines found in file")
@@ -113,66 +97,51 @@ class GardenerProblem(search.Problem):
         """
         print(f"Checking solution: {solution[:20]}..." if len(solution) > 20 else f"Checking solution: {solution}")
         return True  # Placeholder - always return True for now
-        
-def test_all_examples():
-    """Test all example files in the public1 folder"""
-    public1_path = Path("public1")
-    
-    if not public1_path.exists():
-        print("public1 folder not found!")
-        return
-    
-    # Find all .dat files
-    dat_files = sorted(public1_path.glob("*.dat"))
-    
-    if not dat_files:
-        print("No .dat files found in public1 folder!")
-        return
-    
-    print(f"Found {len(dat_files)} test files")
-    print("=" * 60)
-    
-    for dat_file in dat_files:
-        # Get corresponding .plan file
-        plan_file = dat_file.with_suffix('.plan')
-        
-        if not plan_file.exists():
-            print(f"❌ No plan file found for {dat_file.name}")
-            continue
-        
-        print(f"\nTesting {dat_file.name}")
-        print("-" * 40)
-        
-        try:
-            # Create problem instance
-            problem = GardenerProblem()
-            
-            # Load the problem
-            problem.load(str(dat_file))
-            
-            # Read the solution
-            with open(plan_file, 'r') as f:
-                plan = f.read().strip()
-            
-            # Test the solution
-            result = problem.check_solution(plan)
-            
-            # Print summary
-            print(f"Summary for {dat_file.name}:")
-            if problem.map is not None:
-                print(f"   Grid: {len(problem.map)}x{len(problem.map[0]) if problem.map and len(problem.map) > 0 else 0}")
-            else:
-                print("   Grid: 0x0")
-            print(f"   Water capacity: {problem.water_capacity}")
-            print(f"   Plants: {len(problem.plants)}")
-            print(f"   Obstacles: {len(problem.obstacles)}")
-            print(f"   Plan length: {len(plan)} actions")
-            print(f"   Result: {'✅ VALID' if result else '❌ INVALID'}")
-            
-        except Exception as e:
-            print(f"❌ Error testing {dat_file.name}: {e}")
-        
-        print("-" * 40)
-
 if __name__ == "__main__":
-    test_all_examples()
+    # Specify which example to test here
+    example_to_test = "ex0"  # Change this to test different examples: ex0, ex1, ex2, etc.
+    
+    # Test the specified example
+    dat_file = Path(f"public1/{example_to_test}.dat")
+    plan_file = Path(f"public1/{example_to_test}.plan")
+    
+    if not dat_file.exists():
+        print(f"File {dat_file} not found!")
+        exit(1)
+    
+    if not plan_file.exists():
+        print(f"Plan file {plan_file} not found!")
+        exit(1)
+    
+    print(f" Testing {example_to_test}")
+    print("=" * 50)
+    
+    try:
+        # Create problem instance
+        problem = GardenerProblem()
+        
+        # Load the problem with file handle
+        with open(dat_file, 'r') as f:
+            problem.load(f)
+        
+        # Read the solution
+        with open(plan_file, 'r') as f:
+            plan = f.read().strip()
+        
+        # Test the solution
+        result = problem.check_solution(plan)
+        
+        # Print summary
+        print(f"\n Summary for {example_to_test}:")
+        if problem.map is not None:
+            print(f"   Grid: {len(problem.map)}x{len(problem.map[0]) if problem.map and len(problem.map) > 0 else 0}")
+        else:
+            print("   Grid: 0x0")
+        print(f"   Water capacity: {problem.water_capacity}")
+        print(f"   Plants: {len(problem.plants)}")
+        print(f"   Obstacles: {len(problem.obstacles)}")
+        print(f"   Plan length: {len(plan)} actions")
+        print(f"   Result: {'VALID' if result else 'INVALID'}")
+        
+    except Exception as e:
+        print(f"Error testing {example_to_test}: {e}")
