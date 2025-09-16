@@ -224,9 +224,9 @@ class GardenerProblem(search.Problem):
 
                 if verbose:
                     print(f"Watered plant at {robot_pos}, used {water_needed} water, remaining={water}")
-    
-        time += 1  # Each action takes 1 time unit
-        
+
+            time += 1  # Each action takes 1 time unit
+
         # Final validation: all plants must be watered exactly once
         if len(watered_plants) != len(self.plants):
             if verbose:
