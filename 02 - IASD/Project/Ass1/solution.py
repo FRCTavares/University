@@ -132,7 +132,6 @@ class GardenerProblem(search.Problem):
     
         # Simulate each action: It will cycle trough every action in soltuion file
         for i, action in enumerate(solution):
-            time += 1  # Each action takes 1 time unit
             
             if verbose:
                 print(f"Step {i+1}: Action '{action}' at time {time}")
@@ -226,6 +225,8 @@ class GardenerProblem(search.Problem):
                 if verbose:
                     print(f"Watered plant at {robot_pos}, used {water_needed} water, remaining={water}")
     
+        time += 1  # Each action takes 1 time unit
+        
         # Final validation: all plants must be watered exactly once
         if len(watered_plants) != len(self.plants):
             if verbose:

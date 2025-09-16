@@ -1,32 +1,23 @@
 #include <FlexCAN_T4.h>
-FlexCAN_T4<CAN2, RX_SIZE_256, TX_SIZE_16> can2;
-CAN_message_t msg;
+// Teensy 4.0 CAN1 pins: TX=22, RX=23
+FlexCAN_T4<CAN1, RX_SIZE_256, TX_SIZE_16> can1;
+CAN_message_t tx;
 
-void setup()
-{
-    Serial.begin(115200);
-    delay(1000); // Give serial time to initialize
-
-    can2.begin();
-    can2.setBaudRate(125000);
-
-    Serial.println("CAN2 sender ready");
+void setup() {
+  Serial.begin(115200);
+  while (!Serial && millis() < 1500) {}
+  can1.begin();
+  can1.setBaudRate(125000);
+  Serial.println("CAN1 Sender @125k ready");
 }
 
-void loop()
-{
-    msg.id = 0x123;  // CAN ID
-    msg.len = 1;     // Data length (1 byte)
-    msg.buf[0] = 42; // Data to send
-
-    if (can2.write(msg))
-    {
-        Serial.println("Sent!");
-    }
-    else
-    {
-        Serial.println("Failed!");
-    }
-
-    delay(1000);
+void loop() {
+  tx = {};
+  tx.id = 0x123;          // standard 11-bit ID
+  tx.len = 1;
+  tx.flags.extended = 0;  // explicit: standard frame
+  tx.buf[0] = 0x2A;       // 42
+  if (can1.write(tx)) Serial.println("TX 0x123 [2A]");
+  else                Serial.println("TX failed");
+  delay(500);
 }
