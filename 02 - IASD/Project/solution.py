@@ -90,7 +90,7 @@ class GardenerProblem(search.Problem):
                         water_needed, deadline = self.plant_types[cell_value]
                         self.plants[(col, row)] = deadline  # Store deadline for this plant position
 
-    def check_solution(self, solution, verbose=False):
+    def check_solution(self, solution):
         """
         Simulate the solution step by step and validate all constraints.
         
@@ -101,15 +101,11 @@ class GardenerProblem(search.Problem):
         Returns:
             True if valid, False otherwise
         """
-        if verbose:
-            print(f"Starting solution validation for plan: {solution}")
 
         # Validate solution contains only valid characters
         valid_actions = {'U', 'D', 'L', 'R', 'W'}
         for char in solution:
             if char not in valid_actions:
-                if verbose:
-                    print(f"Invalid action character: {char}")
                 return False
             
         # Initialize simulation state
@@ -120,21 +116,13 @@ class GardenerProblem(search.Problem):
         
         # Get map dimensions
         if not self.map:
-            if verbose:
-                print("No map loaded")
             return False
         
         height = len(self.map)
         width = len(self.map[0]) if height > 0 else 0
-
-        if verbose:
-            print(f"Initial state: pos={robot_pos}, water={water}, time={time}")
     
         # Simulate each action: It will cycle trough every action in soltuion file
         for i, action in enumerate(solution):
-            
-            if verbose:
-                print(f"Step {i+1}: Action '{action}' at time {time}")
             
             if action in 'UDLR':
                 # Movement actions
@@ -153,14 +141,10 @@ class GardenerProblem(search.Problem):
 
                 # Check bounds
                 if new_x < 0 or new_x >= width or new_y < 0 or new_y >= height:
-                    if verbose:
-                        print(f"Movement out of bounds: {robot_pos} -> {new_pos}")
                     return False
                 
                 # Check obstacles
                 if new_pos in self.obstacles:
-                    if verbose:
-                        print(f"Movement into obstacle at {new_pos}")
                     return False
                 
                 # Valid move
@@ -169,25 +153,16 @@ class GardenerProblem(search.Problem):
                 # Check if back at origin - refill water
                 if robot_pos == (0, 0):
                     water = self.water_capacity
-                    if verbose:
-                        print(f"Refilled water at origin, water={water}")
-                
-                if verbose:
-                    print(f"Moved to {robot_pos}, water={water}")
 
             elif action == 'W':
                 # Watering action
             
                 # Check if there's a plant at current position
                 if robot_pos not in self.plants:
-                    if verbose:
-                        print(f"Tried to water at {robot_pos} but no plant there")
                     return False
                 
                 # Check if plant already watered
                 if robot_pos in watered_plants:
-                    if verbose:
-                        print(f"Plant at {robot_pos} already watered")
                     return False
                 
                 # Get plant info
@@ -200,43 +175,27 @@ class GardenerProblem(search.Problem):
                     plant_type = self.map[map_row][map_col]
                 
                 if plant_type is None or plant_type not in self.plant_types:
-                    if verbose:
-                        print(f"Invalid plant type at {robot_pos}")
                     return False
                 
                 water_needed, _ = self.plant_types[plant_type]
             
                 # Check if enough water
                 if water < water_needed:
-                    if verbose:
-                        print(f"Not enough water: need {water_needed}, have {water}")
                     return False
                 
                 # Check deadline
                 if time > plant_deadline:
-                    if verbose:
-                        print(f"Missed deadline for plant at {robot_pos}: time {time} > deadline {plant_deadline}")
                     return False
                 
                 # Water the plant
                 watered_plants.add(robot_pos)
                 water -= water_needed
 
-                if verbose:
-                    print(f"Watered plant at {robot_pos}, used {water_needed} water, remaining={water}")
-
             time += 1  # Each action takes 1 time unit
 
         # Final validation: all plants must be watered exactly once
         if len(watered_plants) != len(self.plants):
-            if verbose:
-                unwatered = set(self.plants.keys()) - watered_plants
-                print(f"Not all plants watered. Missing: {unwatered}")
             return False
-        
-        if verbose:
-            print(f"Solution valid! All {len(self.plants)} plants watered within deadlines")
-        
         return True
             
 if __name__ == "__main__":
@@ -271,7 +230,7 @@ if __name__ == "__main__":
             plan = f.read().strip()
         
         # Test the solution
-        result = problem.check_solution(plan, verbose=True)
+        result = problem.check_solution(plan)
         
         # Print summary
         print(f"\n Summary for {example_to_test}:")
