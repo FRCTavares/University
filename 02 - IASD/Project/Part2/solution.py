@@ -255,36 +255,69 @@ class GardenerProblem(search.Problem):
         return "".join(solution_node.solution()) if solution_node else None
             
 if __name__ == "__main__":
-    # Which example to test
-    example_to_test = "ex7"
+    # Test all examples ex0-ex9
+    print("Testing all examples ex0-ex9 with individual timing")
+    print("=" * 60)
     
-    # Test the specified example
-    dat_file = Path(f"public2/{example_to_test}.dat")
+    total_start_time = time.time()
+    results = []
+    
+    for i in range(10):
+        example_to_test = f"ex{i}"
+        dat_file = Path(f"public2/{example_to_test}.dat")
 
-    if not dat_file.exists():
-        print(f"File {dat_file} not found!")
-        exit(1)
-    
-    print(f"\nSolving for {example_to_test}")
-    print("=" * 50)
-    
-    try:
-        # Create problem instance
-        problem = GardenerProblem()
+        if not dat_file.exists():
+            print(f"File {dat_file} not found! Skipping...")
+            continue
         
-        # Load the problem with file handle
-        with open(dat_file, 'r') as f:
-            problem.load(f)
-        print("Problem loaded successfully.")
+        print(f"\nSolving for {example_to_test}")
+        print("-" * 40)
+        
+        try:
+            # Create problem instance
+            problem = GardenerProblem()
+            
+            # Load the problem with file handle
+            with open(dat_file, 'r') as f:
+                problem.load(f)
+            print("Problem loaded successfully.")
 
-        # Solve the problem
-        plan = problem.solve()
+            # Solve the problem with individual timing
+            individual_start = time.time()
+            plan = problem.solve()
+            individual_end = time.time()
+            individual_time = individual_end - individual_start
 
-        # Print results
-        if plan is not None:
-            print(f"Found a valid path plan with {len(plan)} actions: {plan}\n")
-        else:
-            print("No valid plan found.\n")
+            # Print results
+            if plan is not None:
+                print(f"Found a valid path plan with {len(plan)} actions: {plan}")
+                print(f"Individual solve time: {individual_time:.3f} seconds")
+                results.append((example_to_test, len(plan), individual_time, "SUCCESS"))
+            else:
+                print("No valid plan found.")
+                print(f"Individual solve time: {individual_time:.3f} seconds")
+                results.append((example_to_test, 0, individual_time, "FAILED"))
 
-    except Exception as e:
-        print(f"Error testing {example_to_test}: {e}")
+        except Exception as e:
+            print(f"Error testing {example_to_test}: {e}")
+            results.append((example_to_test, 0, 0, f"ERROR: {e}"))
+    
+    total_end_time = time.time()
+    total_time = total_end_time - total_start_time
+    
+    # Summary
+    print("\n" + "=" * 60)
+    print("SUMMARY OF ALL TESTS")
+    print("=" * 60)
+    print(f"{'Example':<8} {'Actions':<8} {'Time(s)':<10} {'Status':<15}")
+    print("-" * 60)
+    
+    for example, actions, solve_time, status in results:
+        print(f"{example:<8} {actions:<8} {solve_time:<10.3f} {status:<15}")
+    
+    print("-" * 60)
+    print(f"Total execution time: {total_time:.3f} seconds")
+    print(f"Tests completed: {len(results)}")
+    successful = sum(1 for _, _, _, status in results if status == "SUCCESS")
+    print(f"Successful: {successful}/{len(results)}")
+    print("=" * 60)
