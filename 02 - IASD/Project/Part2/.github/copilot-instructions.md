@@ -17,6 +17,32 @@ States are tuples: `(robot_pos, water_level, time, watered_plants)`
 - **`search.py`**: Generic search algorithms (use `breadth_first_graph_search` or `uniform_cost_search`)
 - **`utils.py`**: Supporting utilities and data structures
 - **`public2/*.dat`**: Test cases with expected `.plan` solutions
+- **`env/`**: Python virtual environment with numpy dependency
+
+## Development Workflow
+
+### Running Tests
+```bash
+# Activate environment
+source env/bin/activate
+
+# Run all test cases ex0-ex9
+python solution.py
+
+# Test specific example
+python -c "
+from solution import GardenerProblem
+with open('public2/ex0.dat') as f:
+    p = GardenerProblem()
+    p.load(f)
+    print(p.solve())
+"
+```
+
+### Performance Optimization Patterns
+- **Pareto Frontier Pruning**: `prune()` method maintains dominance frontier over (time, water) per (position, watered_plants)
+- **Deadline Pruning**: Early termination when any unwatered plant deadline is exceeded
+- **Simplified State**: Removed backtracking prevention for better performance
 
 ## Critical Semantics & Constraints
 

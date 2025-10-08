@@ -126,7 +126,7 @@ class GardenerProblem(search.Problem):
             raise ValueError("No plants found in grid.")
 
         # --- Initial state ---
-        self.initial = ((0, 0), None , self.water_capacity, 0, 0)
+        self.initial = ((0, 0), self.water_capacity, 0, 0)
         super().__init__(self.initial, None)
 
     def prune(self, pos, mask, time, water):
@@ -153,7 +153,7 @@ class GardenerProblem(search.Problem):
         State: (robot_pos, water_level, time, watered_plants)
         Return: list of actions in {'W','L','R','U','D'} that are legal.
         """
-        robot_pos, prev_pos, water_level, time, watered_plants = state
+        robot_pos, water_level, time, watered_plants = state
 
         # --- Deadline Pruning ---
         for _, idx in self.plant_idx.items():  
@@ -165,71 +165,66 @@ class GardenerProblem(search.Problem):
             return []
 
         possible_actions = []
+        x, y = robot_pos
 
         # --- Watering ---
-        i=self.plant_idx.get(robot_pos, None)
-
-        # Possible water action
+        i = self.plant_idx.get(robot_pos, None)
         if i is not None:
             not_watered = (((watered_plants >> i) & 1) == 0)
             if not_watered and water_level >= self.wk[i] and time <= self.dk[i]:
                 possible_actions.append('W')
 
-        x, y = robot_pos
+        # --- Movement ---
         h, w = self.H, self.W
+        moves = [
+            ('L', x - 1, y),
+            ('R', x + 1, y),
+            ('U', x, y - 1),
+            ('D', x, y + 1)
+        ]
 
-        # --- Possible Moves ---
-        moves = (('L', (x - 1, y)),
-                ('R', (x + 1, y)),
-                ('U', (x, y - 1)),
-                ('D', (x, y + 1)))
-
-        # Filter out invalid moves
-        for a, (nx, ny) in moves:
-            np = (nx, ny)
-            if 0 <= nx < w and 0 <= ny < h and np not in self.obstacles:
-                if prev_pos is None or np != prev_pos:
-                    possible_actions.append(a)
+        for action, nx, ny in moves:
+            if 0 <= nx < w and 0 <= ny < h and (nx, ny) not in self.obstacles:
+                possible_actions.append(action)
 
         return possible_actions
     
     def result(self, state, action):
         """Return the resulting state after applying the action to the given state."""
-        (x, y), prev_pos, water_level, time, watered_plants = state
+        (x, y), water_level, time, watered_plants = state
         
-        # Default new state values
-        new_pos = (x, y)
-        new_prev = prev_pos
-        new_water_level = water_level
-        new_watered_plants = watered_plants
+        new_time = time + 1
 
-        if action == 'L': new_pos = (x-1, y)
-        elif action == 'R': new_pos = (x+1, y)
-        elif action == 'U': new_pos = (x, y-1)
-        elif action == 'D': new_pos = (x, y+1)
-        elif action == 'W':
-            i = self.plant_idx.get((x,y), None)
+        if action == 'W':
+            i = self.plant_idx.get((x, y), None)
             if i is None or ((watered_plants >> i) & 1) == 1:
                 raise ValueError(f"Invalid water action at {(x,y)}")
             
             new_water_level = water_level - self.wk[i]
             new_watered_plants = watered_plants | (1 << i)
-            new_prev = None
+            return ((x, y), new_water_level, new_time, new_watered_plants)
 
-        h, w = self.H, self.W
+        # Movement actions
+        if action == 'L': 
+            new_pos = (x - 1, y)
+        elif action == 'R': 
+            new_pos = (x + 1, y)
+        elif action == 'U': 
+            new_pos = (x, y - 1)
+        elif action == 'D': 
+            new_pos = (x, y + 1)
+        else:
+            raise ValueError(f"Invalid action: {action}")
 
-        # Movement validity + refill
-        if action in ('L', 'R', 'U', 'D'):
-            nx, ny = new_pos
-            if not (0 <= nx < w and 0 <= ny < h) or new_pos in self.obstacles:
-                raise ValueError(f"Invalid move {action} from {(x,y)} to {new_pos}")
-            if new_pos == (0, 0):
-                new_water_level = self.water_capacity
-            new_prev = (x,y)
+        # Validate movement
+        nx, ny = new_pos
+        if not (0 <= nx < self.W and 0 <= ny < self.H) or new_pos in self.obstacles:
+            raise ValueError(f"Invalid move {action} from {(x,y)} to {new_pos}")
+        
+        # Water refill at origin
+        new_water_level = self.water_capacity if new_pos == (0, 0) else water_level
 
-        new_time = time + 1
-
-        return (new_pos, new_prev, new_water_level, new_time, new_watered_plants)
+        return (new_pos, new_water_level, new_time, watered_plants)
 
     def path_cost(self, c, state1, action, state2):
         """Calculate the cost of a path from state1 to state2."""
@@ -237,7 +232,7 @@ class GardenerProblem(search.Problem):
 
     def goal_test(self, state):
         """Goal: all plants are watered."""
-        _, _, _, _, watered_plants = state
+        _, _, _, watered_plants = state
         return watered_plants == (1 << self.P) - 1 
 
     def solve(self):
