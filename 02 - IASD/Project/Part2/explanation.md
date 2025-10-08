@@ -166,20 +166,6 @@ Stores Pareto frontier for each (position, watered_plants) combination.
 **Total Runtime**: ~0.36 seconds for all 10 tests
 **Success Rate**: 10/10 (100%)
 
-### Optimality Analysis
-
-All solutions match or are very close to expected optimal solutions:
-
-- **ex0**: 10 actions (matches expected)
-- **ex1**: 33 actions (matches expected)
-- **ex7**: 37 actions (matches expected exactly)
-- **ex8**: 45 actions (expected: 44, off by 1)
-- **ex9**: 55 actions (expected: 52, off by 3)
-
-The small differences in ex8 and ex9 are due to the nature of breadth-first search finding **an** optimal solution (there may be multiple optimal paths with the same length).
-
----
-
 ## Key Implementation Details
 
 ### Coordinate System
@@ -237,25 +223,6 @@ The Pareto frontier pruning optimization provides **excellent performance**:
 - **Given search.py**: Limited to provided search functions
 
 The **0.36 second runtime** demonstrates that Pareto frontier pruning is highly effective for this problem, reducing the search space by orders of magnitude while maintaining optimality.
-
----
-
-## Alternative Approaches Considered
-
-### 1. Custom Efficient BFS (Not Needed)
-
-Could implement custom BFS with `frontier_states` set for O(1) lookups, but **not necessary** because:
-
-- Pareto frontier pruning already provides excellent performance (0.36s total)
-- Current solution is simple and maintainable
-- Stays closer to assignment expectations of using `search.py` functions
-
-### 2. Aggressive Time-Based Pruning (Rejected)
-
-Tried pruning if `t <= time` (same or better time seen before):
-
-**Result**: Broke ex1 and ex5 (pruned valid paths)
-**Decision**: Reverted to Pareto frontier pruning only, which is both correct and fast
 
 ---
 
