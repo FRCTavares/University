@@ -1,0 +1,25 @@
+#!/bin/bash
+echo ">>> ptxas wrapper called with: $@" >&2
+REAL_PTXAS=/usr/local/cuda/bin/ptxas
+
+ARGS=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --gpu-name)
+      echo ">>> replacing $1 $2 with --gpu-name sm_80" >&2
+      shift
+      ARGS+=( --gpu-name sm_80 )
+      ;;
+    sm_30)
+      # Just in case it's passed standalone
+      echo ">>> replacing standalone sm_30 with sm_80" >&2
+      ARGS+=( sm_80 )
+      ;;
+    *)
+      ARGS+=( "$1" )
+      ;;
+  esac
+  shift
+done
+
+exec "$REAL_PTXAS" "${ARGS[@]}"
