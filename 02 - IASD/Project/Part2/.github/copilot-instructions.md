@@ -25,7 +25,7 @@ States are tuples: `(robot_pos, water_level, time, watered_plants)`
 ### Critical Implementation Details
 - **Coordinate System**: Grid uses (x,y) where x=column, y=row. Map access: `self.map[y][x]`
 - **Plant Indexing**: Row-major order for deterministic bitmask indexes: `for r in range(N): for c in range(M)`
-- **Performance**: Uses Pareto frontier pruning and deadline-based early termination
+- **Performance**: Uses state dominance pruning and deadline-based early termination
 
 ## Development Workflow
 
@@ -53,7 +53,7 @@ with open('public2/ex0.dat') as f:
 - **Total test suite**: ~40 seconds for all 10 examples
 
 ### Performance Optimization Patterns
-- **Pareto Frontier Pruning**: `prune()` method maintains dominance frontier over (time, water) per (position, watered_plants)
+- **State Dominance Pruning**: `prune()` method maintains list of non-dominated states based on (time, water) per (position, watered_plants)
 - **Deadline Pruning**: Early termination when any unwatered plant deadline is exceeded  
 - **Action Ordering**: Water action emitted first when legal (helps solutions surface earlier)
 - **State Pruning**: Simplified state without backtracking prevention for better performance

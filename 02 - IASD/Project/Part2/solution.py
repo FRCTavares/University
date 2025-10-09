@@ -40,7 +40,7 @@ class GardenerProblem(search.Problem):
         self.plants = {}           # (x,y) -> (plant_type, water_needed, deadline)
         self.obstacles = set()     # Set of (x,y) obstacle positions
         self.plant_types = {}      # plant_type_id -> (water_needed, deadline)
-        self.visited_states = {}   # Pareto frontier: (pos, watered_plants) -> [(time, water), ...]
+        self.visited_states = {}   # State dominance tracking: (pos, watered_plants) -> [(time, water), ...]
         
     def load(self, fh):
         """
@@ -159,14 +159,15 @@ class GardenerProblem(search.Problem):
 
     def prune(self, pos, mask, time, water):
         """
-        Pareto frontier pruning to eliminate dominated states.
+        State dominance pruning to eliminate worse states.
         
-        A state is dominated (and should be pruned) if there exists another state
-        with the same (position, watered_plants) that has:
+        For states at the same (position, watered_plants), we only keep states that
+        are not dominated. A state is dominated if another state exists with:
         - Earlier or equal time AND
         - Greater or equal water
         
-        This significantly reduces the search space by eliminating suboptimal paths.
+        This eliminates states that can never lead to better solutions, significantly
+        reducing the search space.
         
         Args:
             pos: Robot position (x, y)
@@ -177,7 +178,7 @@ class GardenerProblem(search.Problem):
         Returns:
             True if state should be pruned (dominated), False otherwise
         """
-        # Get or create frontier list for this (position, watered_plants) combination
+        # Get or create list of non-dominated states for this (position, watered_plants)
         frontier = self.visited_states.setdefault((pos, mask), [])
         
         # Check if current state is dominated by any state in frontier
@@ -201,8 +202,8 @@ class GardenerProblem(search.Problem):
         Generate legal actions from the current state with multiple optimizations.
         
         Optimizations applied:
-        1. Basic deadline pruning: Prune if any unwatered plant deadline has passed
-        2. Pareto frontier pruning: Eliminate dominated states
+        1. Deadline pruning: Prune if any unwatered plant deadline has passed
+        2. State dominance pruning: Eliminate states dominated by better states
         3. Neighbor plant prioritization: Prefer moves toward waterable plants
         
         Args:
@@ -214,7 +215,7 @@ class GardenerProblem(search.Problem):
         robot_pos, water_level, time, watered_plants = state
 
         # ================================================================
-        # OPTIMIZATION 1: Basic Deadline Pruning
+        # OPTIMIZATION 1: Deadline Pruning
         # ================================================================
         # If any unwatered plant's deadline has already passed, prune this branch
         for _, idx in self.plant_idx.items():  
@@ -222,7 +223,7 @@ class GardenerProblem(search.Problem):
                 return []  # Deadline missed -> impossible to complete
 
         # ================================================================
-        # OPTIMIZATION 2: Pareto Frontier Pruning
+        # OPTIMIZATION 2: State Dominance Pruning
         # ================================================================
         # Check if this state is dominated by another with same (pos, watered_plants)
         if self.prune(robot_pos, watered_plants, time, water_level):
@@ -384,21 +385,15 @@ class GardenerProblem(search.Problem):
         """
         Solve the gardening problem using breadth-first tree search.
         
-        Uses breadth_first_tree_search from search.py instead of graph search
-        because our Pareto frontier pruning in actions() already handles
-        duplicate state prevention efficiently, avoiding the O(n²) overhead
-        of the graph search's frontier membership check.
-        
         Returns:
             String of actions (e.g., "RRWDLW") if solution found, None otherwise
         """
         print("Initializing search...")
-        self.visited_states = {}  # Reset Pareto frontier
+        self.visited_states = {}  # Reset state tracking
         
         start_time = time.time()
         
         # Use breadth_first_tree_search from search.py
-        # The Pareto frontier pruning in actions() prevents infinite loops
         result = search.breadth_first_tree_search(self)
         
         end_time = time.time()

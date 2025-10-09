@@ -31,7 +31,7 @@ States are represented as tuples: `(robot_pos, water_level, time, watered_plants
 We use **tree search** instead of graph search because:
 
 1. **Performance**: The `breadth_first_graph_search` in `search.py` has an O(n) `child not in frontier` check that creates O(n²) behavior
-2. **Duplicate Prevention**: Our Pareto frontier pruning in `actions()` handles duplicate state prevention efficiently
+2. **Duplicate Prevention**: Our state dominance pruning in `actions()` handles duplicate state prevention efficiently
 3. **Optimality**: Still finds optimal solutions while being much faster
 
 ---
@@ -40,23 +40,25 @@ We use **tree search** instead of graph search because:
 
 We implement 5 key optimizations to reduce the search space while maintaining correctness:
 
-### 1. **Pareto Frontier Pruning** (Lines 130-147)
+### 1. **State Dominance Pruning** (Lines 160-197)
 
 ```python
 def prune(self, pos, mask, time, water):
-    """Keep a Pareto frontier over (time, water) per (pos, mask)."""
+    """Eliminate states dominated by better states at same (pos, watered_plants)."""
 ```
 
-**What it does**: For each (position, watered_plants) combination, maintains a frontier of states. Prunes a new state if there exists a dominating state with:
+**What it does**: For each (position, watered_plants) combination, maintains a list of non-dominated states. Prunes a new state if there exists a dominating state with:
 
 - Earlier or equal time AND
 - Greater or equal water
+
+**Why this works**: If State A has better time and water than State B at the same position with the same plants watered, then State A can always achieve anything State B can achieve, but faster and with more resources. State B can never lead to a better solution.
 
 **Impact**: Massive reduction in state space by eliminating dominated states
 
 ---
 
-### 2. **Deadline Pruning** (Lines 157-159)
+### 2. **Deadline Pruning**
 
 Prunes branches where any unwatered plant's deadline has already passed.
 
@@ -142,7 +144,7 @@ self.obstacles = set()  # (x,y) positions of obstacles
 self.visited_states = {}  # (pos, watered_plants) -> [(time, water), ...]
 ```
 
-Stores Pareto frontier for each (position, watered_plants) combination.
+Stores non-dominated states for each (position, watered_plants) combination. Used by state dominance pruning to eliminate worse states.
 
 ---
 
@@ -190,26 +192,27 @@ Stores Pareto frontier for each (position, watered_plants) combination.
 
 ## Performance Bottlenecks
 
-### Excellent Performance with Pareto Frontier Pruning
+### Excellent Performance with State Dominance Pruning
 
-The Pareto frontier pruning optimization provides **excellent performance**:
+The state dominance pruning optimization provides **excellent performance**:
 
 - **Fast examples** (ex0-ex6, ex9): < 0.01 seconds each
 - **Previously slow examples** (ex7, ex8): Now only 0.133-0.167 seconds (improved from 17-20s!)
 - **Total test suite**: Only ~0.36 seconds for all 10 examples
 
-### Why Pareto Frontier Pruning is Effective
+### Why State Dominance Pruning is Effective
 
 1. **State Space Reduction**:
    - 10×10 grid = 100 positions
    - 11-12 plants = 2^11 to 2^12 watered states
    - Without pruning: Millions of possible states
-   - With Pareto pruning: Massive reduction by eliminating dominated states
+   - With dominance pruning: Massive reduction by eliminating dominated states
 
 2. **Dominance Relation**:
-   - For each (position, watered_plants) combination, maintains a frontier
-   - Prunes states that are dominated (worse time AND worse water)
-   - Keeps only non-dominated states in the search space
+   - For each (position, watered_plants) combination, tracks non-dominated states
+   - A state dominates another if it has better (or equal) time AND water
+   - Prunes states that are strictly worse on both dimensions
+   - Keeps only states that could potentially lead to optimal solutions
 
 3. **Performance Gain**:
    - **ex7**: From ~17s to 0.133s (128x speedup!)
@@ -222,7 +225,26 @@ The Pareto frontier pruning optimization provides **excellent performance**:
 - **Optimality required**: Must find optimal solution
 - **Given search.py**: Limited to provided search functions
 
-The **0.36 second runtime** demonstrates that Pareto frontier pruning is highly effective for this problem, reducing the search space by orders of magnitude while maintaining optimality.
+The **0.36 second runtime** demonstrates that state dominance pruning is highly effective for this problem, reducing the search space by orders of magnitude while maintaining optimality.
+
+---
+
+## Alternative Approaches Considered
+
+### 1. Custom Efficient BFS (Not Needed)
+
+Could implement custom BFS with `frontier_states` set for O(1) lookups, but **not necessary** because:
+
+- State dominance pruning already provides excellent performance (0.36s total)
+- Current solution is simple and maintainable
+- Stays closer to assignment expectations of using `search.py` functions
+
+### 2. Aggressive Time-Based Pruning (Rejected)
+
+Tried pruning if `t <= time` (same or better time seen before):
+
+**Result**: Broke ex1 and ex5 (pruned valid paths)
+**Decision**: Reverted to state dominance pruning only, which is both correct and fast
 
 ---
 
@@ -236,4 +258,4 @@ The solution successfully implements an autonomous Mars gardening robot using un
 - ✅ **Excellent performance (~0.36s total runtime)**
 - ✅ Clean, maintainable code structure
 
-The optimizations work synergistically to reduce the search space while maintaining correctness and optimality. The **Pareto frontier pruning** is the key optimization that provides a **94x speedup** compared to simpler approaches, demonstrating that even uninformed search can be highly efficient with proper state space pruning techniques.
+The optimizations work synergistically to reduce the search space while maintaining correctness and optimality. The **state dominance pruning** is the key optimization that provides a **94x speedup** compared to simpler approaches, demonstrating that even uninformed search can be highly efficient with proper state space pruning techniques.
